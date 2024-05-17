@@ -64,13 +64,13 @@ Leveraging a GPU can significantly speed up the process of topic naming and is h
 to a GPU install llama.cpp as follows:
 If you have:
 
-===Linux and Mac no GPU===
+**Linux and Mac no GPU**
 
 .. code-block::bash
 
     CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install llama-cpp-python
 
-===Linux and Mac with GPU===
+**Linux and Mac with GPU**
 
 .. code-block::bash
 
@@ -96,7 +96,8 @@ our represenation.  This can be very expensive without a GPU so we recommend sto
 needed.  For faster encodeing change device to: "cuda", "mps", "npu" or "cpu" depending on hardware availability.  Once we 
 generate document vectors we will need to construct a low dimensional representation.  Here we do that via our UMAP library.
 
-.. code-block:: python
+.. code-block::python
+
     data = pd.read_csv('doc/ai_papers.zip')
     text =data.title+" "+data.abstract
     embedding_model = sentence_transformers.SentenceTransformer("all-mpnet-base-v2", device="cpu") 
@@ -105,7 +106,8 @@ generate document vectors we will need to construct a low dimensional representa
 
 Once these 
 
-.. code-block:: python
+.. code-block::python
+
     from topicnaming import TopicNaming
 
     llm = Llama(model_path=str("openhermes-2.5-mistral-7b.Q4_K_M.gguf"), n_gpu_layers=0, n_ctx=4096, stop=["--", "\n"], verbose=False, n_threads=48)
