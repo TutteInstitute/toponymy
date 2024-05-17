@@ -27,14 +27,13 @@ used in this library are broadly similar to the prompt engineering methods descr
 
 The primary differences are:
 
- * the layered approach we use for clustering our documents into topics tailored towards hierarchical topic modeling.
- * the cluster sampling strategies that we employ
- * the prompt engineering used for naming our topics
- * and a final step for dealing with duplicate topics within our hierarchy
+* the layered approach we use for clustering our documents into topics tailored towards hierarchical topic modeling.
+* the cluster sampling strategies that we employ
+* the prompt engineering used for naming our topics
+* and a final step for dealing with duplicate topics within our hierarchy 
 
- As of now this is very much an early beta version of the library. Things can and will break right now.
- We would welcome feedback, use cases and feature suggestions however.
-
+As of now this is very much an early beta version of the library. Things can and will break right now.
+We would welcome feedback, use cases and feature suggestions however.
 
 ------------------
 Basic Installation
