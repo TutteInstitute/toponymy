@@ -23,13 +23,14 @@ but requires extra work such as document segmentation to be effective on longer 
 
 Finally a representation must be chosen for each cluster or topic, which is the focus of this library.  The Techniques
 used in this library are broadly similar to the prompt engineering methods described in 
-`BERTopic 6B LLM & Generative AI <https://maartengr.github.io/BERTopic/getting_started/representation/llm.html>`_`.  
+`BERTopic 6B LLM & Generative AI <https://maartengr.github.io/BERTopic/getting_started/representation/llm.html>`_.  
 
 The primary differences are:
-* the layered approach we use for clustering our documents into topics tailored towards hierarchical topic modeling.
-* the cluster sampling strategies that we employ
-* the prompt engineering used for naming our topics
-* and a final step for dealing with duplicate topics within our hierarchy
+
+ * the layered approach we use for clustering our documents into topics tailored towards hierarchical topic modeling.
+ * the cluster sampling strategies that we employ
+ * the prompt engineering used for naming our topics
+ * and a final step for dealing with duplicate topics within our hierarchy
 
  As of now this is very much an early beta version of the library. Things can and will break right now.
  We would welcome feedback, use cases and feature suggestions however.
@@ -61,18 +62,25 @@ be found `here <https://github.com/abetlen/llama-cpp-python?tab=readme-ov-file#i
 
 Leveraging a GPU can significantly speed up the process of topic naming and is highly recommended.  If you don't have access 
 to a GPU install llama.cpp as follows:
-If you have 
+If you have:
+
 ===Linux and Mac no GPU===
+
 .. code-block::bash
+
     CMAKE_ARGS="-DLLAMA_BLAS=ON -DLLAMA_BLAS_VENDOR=OpenBLAS" pip install llama-cpp-python
 
 ===Linux and Mac with GPU===
+
 .. code-block::bash
+
     CMAKE_ARGS="-DLLAMA_CUDA=on" pip install llama-cpp-python
 
 We will also need a large language model downloaded.  In our experiments we find that the 
 `mistral-7B <https://arxiv.org/abs/2310.06825>`_ model gives solid results.
+
 .. code-block::bash
+
     wget https://huggingface.co/TheBloke/OpenHermes-2.5-Mistral-7B-GGUF/resolve/main/openhermes-2.5-mistral-7b.Q4_K_M.gguf
     
 We will use sentence_transformers for embedding out documents (and eventually keywords) into a consistent space.  
