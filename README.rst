@@ -128,33 +128,6 @@ Once these
     topic_namer.clean_topic_names()
 
 
-
-------------
-Installation
-------------
-
-EVōC has a small set of dependencies:
-
- * numpy
- * scikit-learn
- * numba
- * tqdm
- * tbb
-
-At some point in the near future ... you can install EVōC from PyPI using pip:
-
-.. code-block:: bash
-
-    pip install evoc
-
-For now install the latest version of EVōC from source you can do so by cloning the repository and running:
-
-.. code-block:: bash
-
-    git clone https://github.com/TutteInstitute/evoc
-    cd evoc
-    pip install .
-
 -------
 License
 -------
