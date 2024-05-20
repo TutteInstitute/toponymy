@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import datasets
 import fast_hdbscan
-import umap
 import numba
 
 import sklearn.metrics
@@ -18,7 +17,6 @@ import sentence_transformers
 from sklearn.utils.extmath import randomized_svd
 from sklearn.preprocessing import normalize
 from dataclasses import dataclass
-from sklearn.utils.validation import check_is_fitted
 
 import tqdm
 import string

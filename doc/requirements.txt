@@ -1,0 +1,11 @@
+numpy
+pandas
+numba
+datasets
+scikit-learn
+vectorizers
+scipy
+fast_hdbscan
+sentence_transformers
+dataclasses
+tqdm
