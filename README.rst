@@ -28,7 +28,7 @@ used in this library are broadly similar to the prompt engineering methods descr
 The primary differences are:
 
 * the layered approach we use for clustering our documents into topics tailored towards hierarchical topic modeling.
-* the cluster sampling strategies that we employ (see `evoc <https://github.com/TutteInstitute/evoc/>`_ for more details)
+* the cluster sampling strategies that we employ (see `EVōC <https://github.com/TutteInstitute/evoc/>`_ for more details)
 * the prompt engineering used for naming our topics
 * and a final step for dealing with duplicate topics within our hierarchy 
 
