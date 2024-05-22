@@ -39,13 +39,7 @@ We would welcome feedback, use cases and feature suggestions however.
 Basic Installation
 ------------------
 
-At some point in the near future ... you can install TopicNaming from PyPI using pip:
-
-.. code-block:: bash
-
-    pip install topicnaming
-
-For now install the latest version of EVōC from source you can do so by cloning the repository and running:
+For now install the latest version of TopicNaming from source you can do so by cloning the repository and running:
 
 .. code-block:: bash
 
