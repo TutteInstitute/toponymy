@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import datasets
 import fast_hdbscan
+from fast_hdbscan import cluster_trees, hdbscan, numba_kdtree, boruvka
+
 import numba
 
 import sklearn.metrics
@@ -75,17 +77,17 @@ def build_cluster_layers(
     
     min_cluster_size = base_min_cluster_size
     
-    sklearn_tree = fast_hdbscan.hdbscan.KDTree(point_locations)
-    numba_tree = fast_hdbscan.numba_kdtree.kdtree_to_numba(sklearn_tree)
-    edges = fast_hdbscan.boruvka.parallel_boruvka(
+    sklearn_tree = hdbscan.KDTree(point_locations)
+    numba_tree = numba_kdtree.kdtree_to_numba(sklearn_tree)
+    edges = boruvka.parallel_boruvka(
         numba_tree, min_samples=min_cluster_size if min_samples is None else min_samples
     )
     sorted_mst = edges[np.argsort(edges.T[2])]
-    uncondensed_tree = fast_hdbscan.cluster_trees.mst_to_linkage_tree(sorted_mst)
-    new_tree = fast_hdbscan.cluster_trees.condense_tree(uncondensed_tree, base_min_cluster_size)
-    leaves = fast_hdbscan.cluster_trees.extract_leaves(new_tree)
-    clusters = fast_hdbscan.cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0)
-    point_probs = fast_hdbscan.cluster_trees.get_point_membership_strength_vector(new_tree, leaves, clusters)
+    uncondensed_tree = cluster_trees.mst_to_linkage_tree(sorted_mst)
+    new_tree = cluster_trees.condense_tree(uncondensed_tree, base_min_cluster_size)
+    leaves = cluster_trees.extract_leaves(new_tree)
+    clusters = cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0)
+    point_probs = cluster_trees.get_point_membership_strength_vector(new_tree, leaves, clusters)
 
 
     cluster_ids = np.unique(clusters[clusters >= 0])
@@ -125,10 +127,10 @@ def build_cluster_layers(
         min_cluster_size = int(np.quantile([len(x) for x in layer_pointsets], next_cluster_size_quantile))
         print(f'cluster={len(layer_vectors)}, last_min_cluster_size={last_min_cluster_size}, min_cluster_size={min_cluster_size}')
         
-        new_tree = fast_hdbscan.cluster_trees.condense_tree(uncondensed_tree, min_cluster_size)
-        leaves = fast_hdbscan.cluster_trees.extract_leaves(new_tree)
-        clusters = fast_hdbscan.cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0)
-        point_probs = fast_hdbscan.cluster_trees.get_point_membership_strength_vector(new_tree, leaves, clusters)
+        new_tree = cluster_trees.condense_tree(uncondensed_tree, min_cluster_size)
+        leaves = cluster_trees.extract_leaves(new_tree)
+        clusters = cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0)
+        point_probs = cluster_trees.get_point_membership_strength_vector(new_tree, leaves, clusters)
         
         cluster_ids = np.unique(clusters[clusters >= 0])
         n_clusters_in_layer = np.max(clusters) + 1
@@ -413,6 +415,7 @@ class TopicNaming:
     def fit_clusters(self, base_min_cluster_size=100, min_clusters=6):
         """
         Constructs a layered hierarchical clustering well suited for layered topic modeling.
+        TODO: Add a check to ensure that there were any cluster generated at the specified base_min_cluster_size.
         """
         if self.verbose:
             print(f'constructing cluster layers')
