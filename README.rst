@@ -28,7 +28,7 @@ used in this library are broadly similar to the prompt engineering methods descr
 The primary differences are:
 
 * the layered approach we use for clustering our documents into topics tailored towards hierarchical topic modeling.
-* the cluster sampling strategies that we employ
+* the cluster sampling strategies that we employ (see `EVōC <https://github.com/TutteInstitute/evoc/>`_ for more details)
 * the prompt engineering used for naming our topics
 * and a final step for dealing with duplicate topics within our hierarchy 
 
@@ -39,13 +39,7 @@ We would welcome feedback, use cases and feature suggestions however.
 Basic Installation
 ------------------
 
-At some point in the near future ... you can install TopicNaming from PyPI using pip:
-
-.. code-block:: bash
-
-    pip install topicnaming
-
-For now install the latest version of EVōC from source you can do so by cloning the repository and running:
+For now install the latest version of TopicNaming from source you can do so by cloning the repository and running:
 
 .. code-block:: bash
 
