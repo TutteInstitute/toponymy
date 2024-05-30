@@ -332,7 +332,7 @@ def trim_text(text, llm, token_trim_length):
     This function tokenizes a string then trims off all tokens beyond a certain length specified by token_trim_length 
     and maps it back to a string.
     """
-    tokenized = np.array(llm.tokenize(text.encode('utf-8')))
+    tokenized = llm.tokenize(text.encode('utf-8'))
     return llm.detokenize(tokenized[:token_trim_length])
 
 
@@ -604,8 +604,9 @@ class TopicNaming:
         for cluster_id in range(layer_size):
             prompt = self.build_base_prompt(cluster_id, layer_id, max_docs_per_cluster, max_adjacent_clusters, max_adjacent_docs)
             prompt_length = len(self.llm.tokenize(prompt.encode('utf-8')))
+            reduced_docs_per_cluster = max_docs_per_cluster
             while prompt_length > self.llm.n_ctx():
-                reduced_docs_per_cluster = max_docs_per_cluster//2
+                reduced_docs_per_cluster = reduced_docs_per_cluster//2
                 prompt = self.build_base_prompt(cluster_id, layer_id, reduced_docs_per_cluster, max_adjacent_clusters, max_adjacent_docs)
                 prompt_length = len(self.llm.tokenize(prompt.encode('utf-8')))
                 if reduced_docs_per_cluster<1:
