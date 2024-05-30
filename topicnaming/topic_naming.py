@@ -383,6 +383,8 @@ class TopicNaming:
         verbose = True,
         trim_percentile=99,
         trim_length=100,
+        keyphrase_min_occurrences=25,
+        keyphrase_ngram_range=(1,4),
     ):
         self.documents = documents
         self.document_vectors = document_vectors
@@ -400,6 +402,8 @@ class TopicNaming:
         self.verbose = verbose
         self.trim_percentile = trim_percentile
         self.trim_length = trim_length
+        self.keyphrase_min_occurrences = keyphrase_min_occurrences
+        self.keyphrase_ngram_range = keyphrase_ngram_range
         #Determine trim length used
         self.token_distribution = [len(llm.tokenize(text.encode('utf-8'))) for text in documents]
         self.token_trim_length = int(np.percentile(self.token_distribution, trim_percentile))
@@ -492,7 +496,12 @@ class TopicNaming:
             self.fit_clusters()
         # Check if embedding_model is set and has an encode function
         
-        cv = sklearn.feature_extraction.text.CountVectorizer(lowercase=True, min_df=25, token_pattern='(?u)\\b\\w[-\'\\w]+\\b', ngram_range=(1,4)) 
+        cv = sklearn.feature_extraction.text.CountVectorizer(
+            lowercase=True, 
+            min_df=self.keyphrase_min_occurrences,
+            token_pattern='(?u)\\b\\w[-\'\\w]+\\b', 
+            ngram_range=self.keyphrase_ngram_range
+        ) 
         full_count_matrix = cv.fit_transform(self.documents)
         acceptable_vocab = [v for v in cv.vocabulary_ 
                             if v.split()[0] not in sklearn.feature_extraction.text.ENGLISH_STOP_WORDS 
@@ -501,6 +510,9 @@ class TopicNaming:
         full_count_matrix = full_count_matrix[:, acceptable_indices]
         inverse_vocab = {i:w for i, w in enumerate(acceptable_vocab)}
         vocab = acceptable_vocab
+
+        if self.verbose:
+            print(f"Created a potential keyphrase vocabulary of {len(vocab)} potential keyphrases")
         
         vocab_vectors = dict(zip(vocab, self.embedding_model.encode(vocab, show_progress_bar=True)))
         
