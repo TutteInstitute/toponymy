@@ -15,12 +15,14 @@ Techniques such as top2vec or BERTopic work by using the a sequence of four step
 
 #. Embed documents (or other objects) into a semantic space using techniques such as a Sentence Transformer. This initial embedding gives a vector representation of the documents.
 #. Use dimension reduction to get a low dimensional space.
-#. Employ robust clustering techniques to find dense clusters of documents discussing a single concept. As part of this step, it is useful to leverage clustering techniques that are robust to noise (such as `hdbscan <https://github.com/scikit-learn-contrib/hdbscan>`_) to identify these topical clusters. Using robust clustering techniques in step 3 can allow for more filtering of background documents that don't have a sufficiently large number of similar documents within your corpus to be considered a topic.
+#. Employ robust clustering techniques to find dense clusters of documents discussing a single concept. As part of this step, it is useful to leverage clustering techniques that are robust to noise (such as `hdbscan <https://github.com/scikit-learn-contrib/hdbscan>`_) to identify these topical clusters.
 #. Choose a representation for each cluster or topic. This final step is the focus of this library. The techniques
 used in this library are broadly similar to the prompt engineering methods described in 
 `BERTopic 6B LLM & Generative AI <https://maartengr.github.io/BERTopic/getting_started/representation/llm.html>`_.  
 
 This style of topic modeling works well for short to medium length homogeneous documents that are about a single topic, but requires extra work such as document segmentation to be effective on long or heterogeneous documents.
+
+Note that using robust clustering techniques in step 3 can allow for more filtering of background documents that don't have a sufficiently large number of similar documents within your corpus to be considered a topic.
 
 The primary differences are:
 
