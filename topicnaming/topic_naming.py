@@ -11,7 +11,7 @@ import vectorizers
 import vectorizers.transformers
 import sklearn.feature_extraction
 import scipy.sparse
-from warnings import warn
+import warnings
 from random import sample
 
 import sentence_transformers
@@ -20,7 +20,7 @@ from sklearn.utils.extmath import randomized_svd
 from sklearn.preprocessing import normalize
 from dataclasses import dataclass
 
-import tqdm
+from tqdm.auto import tqdm
 import string
 
 @numba.njit(fastmath=True)
@@ -623,7 +623,7 @@ class TopicNaming:
                 prompt_length = len(self.llm.tokenize(prompt.encode('utf-8')))
                 if reduced_docs_per_cluster<1:
                     warnings.warn(f"A prompt was too long for the context window and was trimmed: {prompt_length}> {self.llm.n_ctx()}")
-                    prompt = trim_text(prompt, llm, self.llm.n_ctx())
+                    prompt = trim_text(prompt, self.llm, self.llm.n_ctx())
             prompts.append(prompt)
         prompt_lengths = [len(self.llm.tokenize(prompt.encode('utf-8'))) for prompt in prompts]
         self.base_layer_prompts_ = prompts
@@ -634,7 +634,7 @@ class TopicNaming:
         Takes a prompt layer and applies an llm to convert these prompts into topics.
         """
         topic_names = []
-        for i in tqdm.tqdm_notebook(range(len(prompt_layer))):
+        for i in tqdm(range(len(prompt_layer))):
             topic_name = self.llm(prompt_layer[i])['choices'][0]['text']
             if "\n" in topic_name:
                 topic_name = topic_name.lstrip("\n ")
