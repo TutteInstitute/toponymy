@@ -247,25 +247,23 @@ def contrastive_keywords_for_layer(
    
     contrastive_keyword_layer = []
    
-    from_row = 0
     for i in range(len(pointset_layer)):
-        if i in row_mask:
+        cluster_indices = np.where(class_labels==i)[0]
+        if len(cluster_indices) == 0:
             contrastive_keyword_layer.append(["no keywords were found"])
         else:
-            to_row = from_row + len(pointset_layer[i])
-            contrastive_scores = np.squeeze(np.asarray(weighted_matrix[from_row:to_row].sum(axis=0)))
+            contrastive_scores = np.squeeze(np.asarray(weighted_matrix[cluster_indices].sum(axis=0)))
             contrastive_keyword_indices = np.argsort(contrastive_scores)[-4 * n_keywords:]
             contrastive_keywords = [inverse_vocab[column_map[j]] for j in reversed(contrastive_keyword_indices)]
             contrastive_keywords = longest_keyphrases(contrastive_keywords)
-
+    
             centroid_vector = np.mean(doc_vectors[pointset_layer[i]], axis=0)
             keyword_vectors = np.asarray([vocab_vectors[word] for word in contrastive_keywords])
             chosen_indices = diversify(centroid_vector, keyword_vectors, alpha=0.66)[:n_keywords]
             contrastive_keywords = [contrastive_keywords[j] for j in chosen_indices]
-
+    
             contrastive_keyword_layer.append(contrastive_keywords)
-            from_row = to_row
-       
+      
     return contrastive_keyword_layer
 
 
