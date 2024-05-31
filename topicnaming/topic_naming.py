@@ -11,7 +11,7 @@ import vectorizers
 import vectorizers.transformers
 import sklearn.feature_extraction
 import scipy.sparse
-import warnings
+from warnings import warn
 from random import sample
 
 import sentence_transformers
@@ -20,7 +20,7 @@ from sklearn.utils.extmath import randomized_svd
 from sklearn.preprocessing import normalize
 from dataclasses import dataclass
 
-from tqdm.auto import tqdm
+import tqdm
 import string
 
 @numba.njit(fastmath=True)
@@ -247,25 +247,23 @@ def contrastive_keywords_for_layer(
    
     contrastive_keyword_layer = []
    
-    from_row = 0
     for i in range(len(pointset_layer)):
-        if i in row_mask:
+        cluster_indices = np.where(class_labels==i)[0]
+        if len(cluster_indices) == 0:
             contrastive_keyword_layer.append(["no keywords were found"])
         else:
-            to_row = from_row + len(pointset_layer[i])
-            contrastive_scores = np.squeeze(np.asarray(weighted_matrix[from_row:to_row].sum(axis=0)))
+            contrastive_scores = np.squeeze(np.asarray(weighted_matrix[cluster_indices].sum(axis=0)))
             contrastive_keyword_indices = np.argsort(contrastive_scores)[-4 * n_keywords:]
             contrastive_keywords = [inverse_vocab[column_map[j]] for j in reversed(contrastive_keyword_indices)]
             contrastive_keywords = longest_keyphrases(contrastive_keywords)
-
+    
             centroid_vector = np.mean(doc_vectors[pointset_layer[i]], axis=0)
             keyword_vectors = np.asarray([vocab_vectors[word] for word in contrastive_keywords])
             chosen_indices = diversify(centroid_vector, keyword_vectors, alpha=0.66)[:n_keywords]
             contrastive_keywords = [contrastive_keywords[j] for j in chosen_indices]
-
+    
             contrastive_keyword_layer.append(contrastive_keywords)
-            from_row = to_row
-       
+      
     return contrastive_keyword_layer
 
 
@@ -623,7 +621,7 @@ class TopicNaming:
                 prompt_length = len(self.llm.tokenize(prompt.encode('utf-8')))
                 if reduced_docs_per_cluster<1:
                     warnings.warn(f"A prompt was too long for the context window and was trimmed: {prompt_length}> {self.llm.n_ctx()}")
-                    prompt = trim_text(prompt, self.llm, self.llm.n_ctx())
+                    prompt = trim_text(prompt, llm, self.llm.n_ctx())
             prompts.append(prompt)
         prompt_lengths = [len(self.llm.tokenize(prompt.encode('utf-8'))) for prompt in prompts]
         self.base_layer_prompts_ = prompts
@@ -634,7 +632,7 @@ class TopicNaming:
         Takes a prompt layer and applies an llm to convert these prompts into topics.
         """
         topic_names = []
-        for i in tqdm(range(len(prompt_layer))):
+        for i in tqdm.tqdm_notebook(range(len(prompt_layer))):
             topic_name = self.llm(prompt_layer[i])['choices'][0]['text']
             if "\n" in topic_name:
                 topic_name = topic_name.lstrip("\n ")
