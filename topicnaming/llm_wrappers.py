@@ -76,7 +76,8 @@ try:
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
-You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups. 
+You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups.
+The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
 The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """
             elif kind == "intermediate_layer":

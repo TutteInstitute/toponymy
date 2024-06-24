@@ -227,9 +227,9 @@ def distinctive_sentences_for_cluster(
         sum([pointset_layer[x] for x in cluster_neighbors], [])
     ]
     vectors_for_svd = normalize(local_vectors - local_vectors.mean(axis=0))
-    U, S, Vh = randomized_svd(vectors_for_svd, 64)
+    U, S, Vh = randomized_svd(vectors_for_svd, min(int(np.sqrt(vectors_for_svd.shape[0])), 64))
     transformed_docs = local_vectors @ Vh.T
-    transformed_docs = np.where(transformed_docs > 0, transformed_docs, 0)
+    transformed_docs = np.maximum(transformed_docs, 0)
     class_labels = np.repeat(
         np.arange(len(cluster_neighbors)),
         [len(pointset_layer[x]) for x in cluster_neighbors],
@@ -498,6 +498,10 @@ class TopicNaming:
         trim_length=100,
         keyphrase_min_occurrences=25,
         keyphrase_ngram_range=(1, 4),
+        n_sentence_examples_per_cluster=16,
+        n_keyphrases_per_cluster=16,
+        max_subtopics_per_cluster=32,
+        max_neighbors_per_cluster=6,
     ):
         self.documents = documents
         self.document_vectors = document_vectors
@@ -521,6 +525,10 @@ class TopicNaming:
         self.trim_length = trim_length
         self.keyphrase_min_occurrences = keyphrase_min_occurrences
         self.keyphrase_ngram_range = keyphrase_ngram_range
+        self.n_sentence_examples_per_cluster = n_sentence_examples_per_cluster
+        self.n_keyphrases_per_cluster = n_keyphrases_per_cluster
+        self.max_subtopics_per_cluster = max_subtopics_per_cluster
+        self.max_neighbors_per_cluster = max_neighbors_per_cluster
         # Determine trim length used
         self.token_distribution = [len(llm.tokenize(text)) for text in documents]
         self.token_trim_length = int(
@@ -560,7 +568,7 @@ class TopicNaming:
         layer_cluster_neighbours = [
             np.argsort(
                 sklearn.metrics.pairwise_distances(layer, metric="cosine"), axis=1
-            )[:, :16]
+            )[:, :self.max_neighbors_per_cluster]
             for layer in vector_layers
         ]
         self.cluster_layers_ = ClusterLayers(
@@ -571,7 +579,7 @@ class TopicNaming:
             layer_cluster_neighbours,
         )
 
-    def get_topical_layers(self):
+    def get_topical_layers(self, n_sentence_examples=16):
         """
         Fits a set of topical documents to describe a cluster.
         If the cluster_layers_ have not yet been generated or is None it will generate them as necessary.
@@ -584,22 +592,23 @@ class TopicNaming:
         topical_sentences_per_cluster = [
             [
                 topical_sentences_for_cluster(
-                    self.documents, self.document_vectors, pointset, cluster_vector
+                    self.documents, self.document_vectors, pointset, cluster_vector, n_sentence_examples=n_sentence_examples
                 )
-                for pointset, cluster_vector in tqdm.tqdm(
+                for pointset, cluster_vector in tqdm(
                     zip(
                         self.cluster_layers_.pointset_layers[i],
                         self.cluster_layers_.vector_layers[i],
                     ),
                     desc=f"Topical sentences for layer {i}",
-                    disable=self.verbose,
+                    total=len(self.cluster_layers_.pointset_layers[i]),
+                    disable=(not self.verbose),
                 )
             ]
             for i in range(len(self.cluster_layers_.pointset_layers))
         ]
         return topical_sentences_per_cluster
 
-    def get_distinctive_layers(self):
+    def get_distinctive_layers(self, n_sentence_examples=16):
         """
         Fits a set of distincts documents to describe a cluster.
         If the cluster_layers_ have not yet been generated or is None it will generate them as necessary.
@@ -618,18 +627,19 @@ class TopicNaming:
                     self.document_vectors,
                     self.cluster_layers_.pointset_layers[i],
                     self.cluster_layers_.layer_cluster_neighbours[i][topic_num],
+                    n_sentence_examples=n_sentence_examples,
                 )
-                for topic_num in tqdm.tqdm(
+                for topic_num in tqdm(
                     range(len(self.cluster_layers_.pointset_layers[i])),
                     desc=f"Distinctive sentences for layer {i}",
-                    disable=self.verbose,
+                    disable=(not self.verbose),
                 )
             ]
             for i in range(len(self.cluster_layers_.pointset_layers))
         ]
         return distinctive_sentences_per_cluster
 
-    def get_contrastive_keyword_layers(self):
+    def get_contrastive_keyword_layers(self, n_keyphrases_per_cluster=16):
         """
         Fits a set of contrastive keywords to describe a cluster.
         If the cluster_layers_ have not yet been generated or is None it will generate them as necessary.
@@ -676,11 +686,12 @@ class TopicNaming:
                 self.cluster_layers_.pointset_layers[layer_num],
                 self.document_vectors,
                 vocab_vectors,
+                n_keywords=n_keyphrases_per_cluster,
             )
-            for layer_num in tqdm.tqdm(
+            for layer_num in tqdm(
                 range(len(self.cluster_layers_.pointset_layers)),
                 desc=f"Finding contrastive keywords",
-                disable=self.verbose,
+                disable=(not self.verbose),
             )
         ]
         return contrastive_keyword_layers
@@ -699,11 +710,11 @@ class TopicNaming:
         self.representation_ = dict()
         for rep in self.representation_techniques:
             if rep == "topical":
-                self.representation_[rep] = self.get_topical_layers()
+                self.representation_[rep] = self.get_topical_layers(n_sentence_examples=self.n_sentence_examples_per_cluster)
             elif rep == "distinctive":
-                self.representation_[rep] = self.get_distinctive_layers()
+                self.representation_[rep] = self.get_distinctive_layers(n_sentence_examples=self.n_sentence_examples_per_cluster)
             elif rep == "contrastive":
-                self.representation_[rep] = self.get_contrastive_keyword_layers()
+                self.representation_[rep] = self.get_contrastive_keyword_layers(n_keyphrases_per_cluster=self.n_keyphrases_per_cluster)
             else:
                 warnings.warn(f"{rep} is not a supported representation")
         return None
@@ -796,7 +807,7 @@ class TopicNaming:
             self.fit_representation()
         layer_size = len(self.cluster_layers_.location_layers[layer_id])
         prompts = []
-        for cluster_id in tqdm.tqdm(range(layer_size), desc="Generating base layer prompts", disable=self.verbose):
+        for cluster_id in tqdm(range(layer_size), desc="Generating base layer prompts", disable=(not self.verbose)):
             prompt = self.build_base_prompt(
                 cluster_id,
                 layer_id,
@@ -832,7 +843,7 @@ class TopicNaming:
         Takes a prompt layer and applies an llm to convert these prompts into topics.
         """
         topic_names = []
-        for i in tqdm(range(len(prompt_layer)), desc="Generating topicsfor layer {layer_num}", disable=self.verbose):
+        for i in tqdm(range(len(prompt_layer)), desc=f"Generating topics for layer {layer_num}", disable=(not self.verbose)):
             topic_name = self.llm.generate_topic_name(prompt_layer[i])
             topic_names.append(topic_name)
         return topic_names
@@ -847,7 +858,7 @@ class TopicNaming:
         self.base_layer_topics_ = self.get_topic_name(self.base_layer_prompts_, 0)
         return None
 
-    def fit_subtopic_layers(self):
+    def fit_subtopic_layers(self, max_subtopics_per_cluster=32):
         """
         Fits the topical and contrastive subtopics for each intermadiate topic.
         If the base_layer_topics_ have not yet been generated or is None it will generate them as necessary.
@@ -866,13 +877,13 @@ class TopicNaming:
                     self.document_vectors,
                     self.base_layer_topics_,
                     self.cluster_layers_.pointset_layers[0],
-                    n_subtopics=32,
+                    n_subtopics=max_subtopics_per_cluster,
                 )
                 for cluster_num in range(
                     len(self.cluster_layers_.metacluster_layers[layer_num])
                 )
             ]
-            for layer_num in tqdm.tqdm(range(1, len(self.cluster_layers_.metacluster_layers)), desc="Finding topical subtopics", disable=self.verbose)
+            for layer_num in tqdm(range(1, len(self.cluster_layers_.metacluster_layers)), desc="Finding topical subtopics", disable=(not self.verbose))
         ]
         self.subtopic_layers_["contrastive"] = [
             [
@@ -883,13 +894,13 @@ class TopicNaming:
                     self.cluster_layers_.metacluster_layers[layer_num],
                     base_layer_topic_embedding,
                     self.base_layer_topics_,
-                    n_subtopics=24,
+                    n_subtopics=max_subtopics_per_cluster,
                 )
                 for cluster_num in range(
                     len(self.cluster_layers_.metacluster_layers[layer_num])
                 )
             ]
-            for layer_num in tqdm.tqdm(range(1, len(self.cluster_layers_.metacluster_layers)), desc="Finding contrastive subtopics", disable=self.verbose)
+            for layer_num in tqdm(range(1, len(self.cluster_layers_.metacluster_layers)), desc="Finding contrastive subtopics", disable=(not self.verbose))
         ]
         return None
 
@@ -904,10 +915,10 @@ class TopicNaming:
         llm_instruction="The short distinguising topic name is:",
     ):
         if getattr(self, "subtopic_layers_", None) is None:
-            self.fit_subtopic_layers()
+            self.fit_subtopic_layers(self.max_subtopics_per_cluster)
         layer_size = len(self.cluster_layers_.location_layers[layer_id])
         prompts = []
-        for cluster_id in tqdm.tqdm(range(layer_size), desc=f"Generating prompts for layer {layer_id}", disable=self.verbose):
+        for cluster_id in tqdm(range(layer_size), desc=f"Generating prompts for layer {layer_id}", disable=(not self.verbose)):
             prompt_text = f"--\n\nBelow is a information about a group of {self.document_type} from {self.corpus_description} that are all on the same topic:\n\n"
             # Add some contrastive keywords
             if "contrastive" in self.representation_techniques:
@@ -971,7 +982,7 @@ class TopicNaming:
         """
 
         if getattr(self, "subtopic_layers_", None) is None:
-            self.fit_subtopic_layers()
+            self.fit_subtopic_layers(self.max_subtopics_per_cluster)
         if self.verbose:
             print(f"fitting intermediate layers")
         self.topic_prompt_layers_ = [self.base_layer_prompts_]
@@ -981,7 +992,7 @@ class TopicNaming:
 
         for layer_id in range(1, len(self.cluster_layers_.metacluster_layers)):
             subtopics_layer = [
-                a + b
+                list(zip(a, b))
                 for a, b in zip(
                     self.subtopic_layers_["topical"][layer_id - 1],
                     self.subtopic_layers_["contrastive"][layer_id - 1],
@@ -1015,17 +1026,16 @@ class TopicNaming:
             [""]
         )  # Start with empty string so we fix any topics that failed to get a name
         for n in range(len(self.topic_name_layers_) - 1, -1, -1):
-            for i, (name, indices) in tqdm.tqdm(
+            for i, (name, indices) in tqdm(
                 enumerate(
                     zip(self.topic_name_layers_[n], self.cluster_layers_.pointset_layers[n])
                 ),
-                desc=f"Cleaning layer topic names for layer {n}", disable=self.verbose
+                total=len(self.topic_name_layers_[n]),
+                desc=f"Cleaning layer topic names for layer {n}", 
+                disable=(not self.verbose),
             ):
                 n_attempts = 0
-                recapped_name = string.capwords(
-                    name.strip(string.punctuation + string.whitespace)
-                )
-                unique_name = recapped_name
+                unique_name = name
                 original_topic_names = [unique_name]
                 while unique_name in unique_names and n_attempts < 8:
                     prompt_text = create_final_remedy_prompt(
