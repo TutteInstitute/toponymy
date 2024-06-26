@@ -271,68 +271,6 @@ def longest_keyphrases(candidate_keyphrases):
     return result
 
 
-def contrastive_keywords_for_layer(
-    full_count_matrix,
-    inverse_vocab,
-    pointset_layer,
-    doc_vectors,
-    vocab_vectors,
-    n_keywords=16,
-    prior_strength=0.1,
-    weight_power=2.0,
-):
-    count_matrix = full_count_matrix[sum(pointset_layer, []), :]
-    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
-    count_matrix = count_matrix[:, column_mask]
-    column_map = np.arange(full_count_matrix.shape[1])[column_mask]
-    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
-    count_matrix = count_matrix[row_mask, :]
-    bad_rows = set(np.where(~row_mask)[0])
-
-    class_labels = np.repeat(
-        np.arange(len(pointset_layer)), [len(x) for x in pointset_layer]
-    )[row_mask]
-    iwt = vectorizers.transformers.InformationWeightTransformer(
-        prior_strength=prior_strength, weight_power=weight_power
-    ).fit(count_matrix, class_labels)
-    count_matrix.data = np.log(count_matrix.data + 1)
-    count_matrix.eliminate_zeros()
-
-    weighted_matrix = iwt.transform(count_matrix)
-
-    contrastive_keyword_layer = []
-
-    for i in range(len(pointset_layer)):
-        cluster_indices = np.where(class_labels == i)[0]
-        if len(cluster_indices) == 0:
-            contrastive_keyword_layer.append(["no keywords were found"])
-        else:
-            contrastive_scores = np.squeeze(
-                np.asarray(weighted_matrix[cluster_indices].sum(axis=0))
-            )
-            contrastive_keyword_indices = np.argsort(contrastive_scores)[
-                -4 * n_keywords :
-            ]
-            contrastive_keywords = [
-                inverse_vocab[column_map[j]]
-                for j in reversed(contrastive_keyword_indices)
-            ]
-            contrastive_keywords = longest_keyphrases(contrastive_keywords)
-
-            centroid_vector = np.mean(doc_vectors[pointset_layer[i]], axis=0)
-            keyword_vectors = np.asarray(
-                [vocab_vectors[word] for word in contrastive_keywords]
-            )
-            chosen_indices = diversify(centroid_vector, keyword_vectors, alpha=0.66)[
-                :n_keywords
-            ]
-            contrastive_keywords = [contrastive_keywords[j] for j in chosen_indices]
-
-            contrastive_keyword_layer.append(contrastive_keywords)
-
-    return contrastive_keyword_layer
-
-
 def create_final_remedy_prompt(
     original_topic_names,
     docs,
@@ -459,7 +397,7 @@ class TopicNaming:
 
     def _trim_text(self, text):
         tokenized = self.llm.tokenize(text)
-        return self.llm.detokenize(tokenized[:self.token_trim_length])
+        return self.llm.detokenize(tokenized[: self.token_trim_length])
 
     def fit_clusters(self, base_min_cluster_size=100, min_clusters=6):
         """
@@ -559,6 +497,73 @@ class TopicNaming:
         ]
         return distinctive_sentences_per_cluster
 
+    def _contrastive_keywords_for_layer(
+        self,
+        layer_num,
+        full_count_matrix,
+        inverse_vocab,
+        vocab_vectors,
+        n_keywords=16,
+        prior_strength=0.1,
+        weight_power=2.0,
+    ):
+        pointset_layer = self.cluster_layers_.pointset_layers[layer_num]
+        count_matrix = full_count_matrix[sum(pointset_layer, []), :]
+        column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+        count_matrix = count_matrix[:, column_mask]
+        column_map = np.arange(full_count_matrix.shape[1])[column_mask]
+        row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+        count_matrix = count_matrix[row_mask, :]
+        bad_rows = set(np.where(~row_mask)[0])
+
+        class_labels = np.repeat(
+            np.arange(len(pointset_layer)), [len(x) for x in pointset_layer]
+        )[row_mask]
+        iwt = vectorizers.transformers.InformationWeightTransformer(
+            prior_strength=prior_strength, weight_power=weight_power
+        ).fit(count_matrix, class_labels)
+        count_matrix.data = np.log(count_matrix.data + 1)
+        count_matrix.eliminate_zeros()
+
+        weighted_matrix = iwt.transform(count_matrix)
+
+        contrastive_keyword_layer = []
+
+        from_row = 0
+
+        for i in range(len(pointset_layer)):
+            if i in bad_rows:
+                contrastive_keyword_layer.append(["no keywords were found"])
+            else:
+                to_row = from_row + len(pointset_layer[i])
+                contrastive_scores = np.squeeze(
+                    np.asarray(weighted_matrix[from_row:to_row].sum(axis=0))
+                )
+                contrastive_keyword_indices = np.argsort(contrastive_scores)[
+                    -4 * n_keywords :
+                ]
+                contrastive_keywords = [
+                    inverse_vocab[column_map[j]]
+                    for j in reversed(contrastive_keyword_indices)
+                ]
+                contrastive_keywords = longest_keyphrases(contrastive_keywords)
+
+                centroid_vector = np.mean(
+                    self.document_vectors[pointset_layer[i]], axis=0
+                )
+                keyword_vectors = np.asarray(
+                    [vocab_vectors[word] for word in contrastive_keywords]
+                )
+                chosen_indices = diversify(
+                    centroid_vector, keyword_vectors, alpha=0.66
+                )[:n_keywords]
+                contrastive_keywords = [contrastive_keywords[j] for j in chosen_indices]
+
+                contrastive_keyword_layer.append(contrastive_keywords)
+                from_row = to_row
+
+        return contrastive_keyword_layer
+
     def get_contrastive_keyword_layers(self, n_keyphrases_per_cluster=16):
         """
         Fits a set of contrastive keywords to describe a cluster.
@@ -603,11 +608,10 @@ class TopicNaming:
         )
 
         contrastive_keyword_layers = [
-            contrastive_keywords_for_layer(
+            self._contrastive_keywords_for_layer(
+                layer_num,
                 full_count_matrix,
                 inverse_vocab,
-                self.cluster_layers_.pointset_layers[layer_num],
-                self.document_vectors,
                 vocab_vectors,
                 n_keywords=n_keyphrases_per_cluster,
             )
