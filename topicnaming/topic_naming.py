@@ -769,7 +769,7 @@ class TopicNaming:
                     warnings.warn(
                         f"A prompt was too long for the context window and was trimmed: {prompt_length}> {self.llm.n_ctx()}"
                     )
-                    prompt = _trim_text(prompt, self.llm, self.llm.n_ctx())
+                    prompt = self._trim_text(prompt, self.llm, self.llm.n_ctx())
             prompts.append(prompt)
         prompt_lengths = [len(self.llm.tokenize(prompt)) for prompt in prompts]
         self.base_layer_prompts_ = prompts
