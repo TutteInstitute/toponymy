@@ -459,7 +459,7 @@ class TopicNaming:
 
     def _trim_text(self, text):
         tokenized = self.llm.tokenize(text)
-        return self.llm.detokenize(tokenized[:token_trim_length])
+        return self.llm.detokenize(tokenized[:self.token_trim_length])
 
     def fit_clusters(self, base_min_cluster_size=100, min_clusters=6):
         """
