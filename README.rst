@@ -85,7 +85,7 @@ To download this model:
     wget https://huggingface.co/TheBloke/OpenHermes-2.5-Mistral-7B-GGUF/resolve/main/openhermes-2.5-mistral-7b.Q4_K_M.gguf
     
 We will use ``sentence_transformers`` for embedding out documents (and eventually keywords) into a consistent space.  
-Since ``sentence_transformers`` is a a dependency of ``topicnaming`` it will be installed by default. Note that ``sentence_transformers`` 
+Since ``sentence_transformers`` is a dependency of ``topicnaming`` it will be installed by default. Note that ``sentence_transformers`` 
 is capable of downloading its own models.  
 
 -----------
@@ -93,7 +93,7 @@ Basic Usage
 -----------
 
 We will need documents, document vectors and a low dimensional representation of these document vector to construct
-a represenation.  This can be very expensive without a GPU so we recommend storing and reloading these vectors as 
+a representation.  This can be very expensive without a GPU so we recommend storing and reloading these vectors as 
 needed.  For faster encoding change device to: "cuda", "mps", "npu" or "cpu" depending on hardware availability.  Once we 
 generate document vectors we will need to construct a low dimensional representation.  Here we do that via our UMAP library.
 
