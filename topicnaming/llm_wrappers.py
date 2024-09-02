@@ -59,8 +59,8 @@ try:
                 self.tokenizer = self.llm
         
         def generate_topic_name(self, prompt, temperature=0.5):
-            topic_name_info_raw = self.llm.chat(message=prompt, temperature=temperature).text
             try:
+                topic_name_info_raw = self.llm.chat(message=prompt, temperature=temperature).text
                 topic_name_info = json.loads(topic_name_info_raw)
                 topic_name = topic_name_info["topic_name"]
             except:
