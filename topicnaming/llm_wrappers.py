@@ -59,8 +59,8 @@ try:
                 self.tokenizer = self.llm
         
         def generate_topic_name(self, prompt, temperature=0.5):
-            topic_name_info_raw = self.llm.chat(message=prompt, temperature=temperature).text
             try:
+                topic_name_info_raw = self.llm.chat(message=prompt, temperature=temperature).text
                 topic_name_info = json.loads(topic_name_info_raw)
                 topic_name = topic_name_info["topic_name"]
             except:
@@ -76,7 +76,8 @@ try:
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
-You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups. 
+You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups.
+The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
 The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """
             elif kind == "intermediate_layer":
