@@ -1,8 +1,11 @@
 ===========
-TopicNaming
+Toponymy
 ===========
+The package name Toponymy is derived from the Greek topos ‘place’ + onuma ‘name’.  Thus, the naming of places.  
+This is an apt name for this project since our approach to topic naming is intrinsically tied to an embedding or datamap representation of our 
+data.
 
-TopicNaming is a simple class for smoothing out the process of abstractive cluster description for vector based 
+Toponymy is a simple class for smoothing out the process of abstractive cluster description for vector based 
 topic modeling techniques such as top2vec or BERTopic.  This is the problem often described as topic representation.
 
 .. image:: doc/topic_modeling_flow_representation.png
@@ -22,7 +25,7 @@ This style of topic modeling works well for short to medium length homogeneous d
 
 Note that using robust clustering techniques in Step 3 can allow for more filtering of background documents that don't have a sufficiently large number of similar documents within your corpus to be considered a topic.
 
-The techniques used in this ``topicnaming`` library are broadly similar to the prompt engineering methods described in 
+The techniques used in this ``toponymy`` library are broadly similar to the prompt engineering methods described in 
 `BERTopic 6B LLM & Generative AI <https://maartengr.github.io/BERTopic/getting_started/representation/llm.html>`_.
 
 The primary differences are:
@@ -43,8 +46,8 @@ For now install the latest version of TopicNaming from source you can do so by c
 
 .. code-block:: bash
 
-    git clone https://github.com/TutteInstitute/topicnaming
-    cd topicnaming
+    git clone https://github.com/TutteInstitute/toponymy
+    cd toponymy
     pip install .
 
 
@@ -109,7 +112,7 @@ Once the low-dimensional representation is available (``document_map`` in this c
 
 .. code-block::python
 
-    from topicnaming import TopicNaming
+    from toponymy import TopicNaming
 
     llm = Llama(model_path=str("openhermes-2.5-mistral-7b.Q4_K_M.gguf"), n_gpu_layers=0, n_ctx=4096, stop=["--", "\n"], verbose=False, n_threads=48)
     embedding_model = sentence_transformers.SentenceTransformer("all-mpnet-base-v2", device="cpu")
