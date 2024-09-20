@@ -312,7 +312,7 @@ class ClusterLayers:
     layer_cluster_neighbours: list[list[list]]
 
 
-class TopicNaming:
+class Toponymy:
     """
     documents: list of strings
         A list of objects to topic model.  Our current LLM topic naming functions currently presume these to be strings.
