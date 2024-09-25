@@ -101,3 +101,64 @@ except:
     pass
 
 
+try:
+     
+    import anthropic
+    import json
+
+    class AnthropicWrapper:
+        def __init__(self, API_KEY, model="claude-3-haiku-20240307", local_tokenizer=None):
+            self.llm = anthropic.Anthropic(api_key=API_KEY)
+            self.model = model
+            if local_tokenizer is not None:
+                self.tokenizer = local_tokenizer
+            else:
+                raise ValueError("Anthropic does not provide a tokenizer")
+        
+        def generate_topic_name(self, prompt, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm.messages.create(
+                    model=self.model,
+                    max_tokens=256,
+                    messages=[{"role": "user", "content": prompt}], 
+                    temperature=temperature
+                )
+                topic_name_info_text = topic_name_info_raw.content[0].text
+                topic_name_info = json.loads(topic_name_info_text)
+                topic_name = topic_name_info["topic_name"]
+            except:
+                topic_name = ""
+            return topic_name
+        
+        def tokenize(self, text):
+            return self.tokenizer.tokenize(text)
+        
+        def detokenize(self, tokens):
+            return self.tokenizer.detokenize(tokens)
+        
+        def llm_instruction(self, kind="base_layer"):
+            if kind == "base_layer":
+                return """
+You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups.
+The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
+The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+                """
+            elif kind == "intermediate_layer":
+                return """
+You are to give a brief (three to ten word) name describing this group of papers and distinguishing it from other nearby groups.
+The topic should be the most specific topic that encompasses the full breadth of sub-topics.
+The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+                """
+            elif kind == "remedy":
+                return """
+You are to give a brief (five to ten word) name describing this group of papers that better captures the specific details of this group.
+The topic should be the most specific topic that encompasses the full breadth of sub-topics.
+The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+"""
+            else:
+                raise ValueError(f"Invalid llm_imnstruction kind; should be one of \'base_layer\', \'intermediate_layer\', or \'remedy\' not \'{kind}\'")
+            
+        def n_ctx(self):
+            return 128_000
+except:
+    pass
