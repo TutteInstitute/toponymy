@@ -10,9 +10,12 @@ import sklearn.metrics
 import vectorizers
 import vectorizers.transformers
 import sklearn.feature_extraction
+from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics import pairwise_distances
 import scipy.sparse
 import warnings
 from random import sample
+from collections import defaultdict
 
 import sentence_transformers
 
@@ -300,6 +303,30 @@ def create_final_remedy_prompt(
     prompt_text += "\n" + llm_instruction
     return prompt_text
 
+
+def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
+    n_samples = distances.shape[0]
+    clustering = AgglomerativeClustering(
+        n_clusters=None,
+        distance_threshold=None,
+        compute_full_tree=True,
+        metric='precomputed',
+        linkage='complete'
+    )
+    clustering.fit(distances)
+    cluster_sizes = defaultdict(lambda: 1)
+    merge_distances = clustering.distances_
+    
+    for i, (cluster1, cluster2) in enumerate(clustering.children_):
+        new_size = cluster_sizes[cluster1] + cluster_sizes[cluster2]
+        if new_size > max_cluster_size:
+            return merge_distances[i - 1] if i > 0 else 0
+        
+        cluster_sizes[n_samples + i] = new_size
+        del cluster_sizes[cluster1]
+        del cluster_sizes[cluster2]
+    
+    return merge_distances[-1]
 
 @dataclass
 class ClusterLayers:
@@ -657,8 +684,6 @@ class Toponymy:
         cluster_id,
         layer_id=0,
         max_docs_per_cluster=100,
-        max_adjacent_clusters=3,
-        max_adjacent_docs=2,
         llm_instruction="The short distinguising topic name is:",
     ):
         """
@@ -674,7 +699,7 @@ class Toponymy:
         # Add some contrastive keywords (might drop this in favor of the last one. Let the experiments commence!)
         if "contrastive" in self.representation_techniques:
             prompt_text += (
-                'Distinguishing keywords for this group:\n - "'
+                'keywords for this group:\n - "'
                 + ", ".join(self.representation_["contrastive"][layer_id][cluster_id])
                 + '"\n'
             )
@@ -687,16 +712,6 @@ class Toponymy:
                 :max_docs_per_cluster
             ]:
                 prompt_text += f' - "{self._trim_text(text)}"\n'
-            # Grab some of the same docs from nearby clusters for context.
-            prompt_text += f"\n\nSimilar {self.document_type} from different groups with distinct topics include:\n"
-            for adjacent_cluster_index in self.cluster_layers_.layer_cluster_neighbours[
-                layer_id
-            ][cluster_id][1:max_adjacent_clusters]:
-                for text in self.representation_["topical"][layer_id][
-                    adjacent_cluster_index
-                ][:max_adjacent_docs]:
-                    prompt_text += f'- "{self._trim_text(text)}"\n'
-        # Add some documents from nearby clusters for contrast
         if "distinctive" in self.representation_techniques:
             prompt_text += (
                 f"\nSample distinctive {self.document_type} from the group include:\n"
@@ -705,10 +720,6 @@ class Toponymy:
                 :max_docs_per_cluster
             ]:
                 prompt_text += f' - "{self._trim_text(text)}"\n'
-            prompt_text += f"\n\nSimilar {self.document_type} from different groups with distinct topics include:\n"
-            for adjacent_cluster_index in self.cluster_layers_.layer_cluster_neighbours[layer_id][cluster_id][1:max_adjacent_clusters]:
-                for text in self.representation_['distinctive'][layer_id][adjacent_cluster_index][:max_adjacent_docs]:
-                    prompt_text += f"- \"{text}\"\n"
         prompt_text += "\n\n" + llm_instruction
         return prompt_text
 
@@ -792,6 +803,40 @@ class Toponymy:
             topic_name = self.llm.generate_topic_name(prompt_layer[i])
             topic_names.append(topic_name)
         return topic_names
+    
+    
+    def distinguish_base_layer_topics(self):
+        if getattr(self, "base_layer_topics_", None) is None:
+            self.fit_base_layer_topics()
+        new_topic_names = self.base_layer_topics_[:]
+        base_layer_topic_embedding = self.embedding_model.encode(
+            self.base_layer_topics_, show_progress_bar=True
+        )
+        base_layer_topic_distances = pairwise_distances(base_layer_topic_embedding, metric="cosine")
+        distance_threshold = find_threshold_for_max_cluster_size(base_layer_topic_distances)
+        cls = AgglomerativeClustering(n_clusters=None, compute_full_tree=True, distance_threshold=distance_threshold, metric="precomputed", linkage="complete")
+        cls.fit(base_layer_topic_distances)
+        cluster_sizes = np.bincount(cls.labels_)
+        clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
+        for c in tqdm(clusters_for_renaming, desc="Distinguishing similar topics", disable=(not self.verbose)):
+            cluster_indices = np.hstack([self.cluster_layers_.pointset_layers[0][x] for x in np.where(cls.labels_ == c)[0]])
+            prompt = f"There are collections of {self.corpus_description} with somewhat similar auto-generated topic names, all in your field of expertise.\n"
+            prompt += f"Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area."
+            for x in np.where(cls.labels_ == c)[0]:
+                prompt += f"\n\n**{self.base_layer_topics_[x]}**\n"
+                prompt += "    - keywords: " + ", ".join(self.representation_["contrastive"][0][x]) + "\n"
+                prompt += "    - sample titles:\n"
+                for text in self.representation_["topical"][0][x]:
+                    prompt += f'        + "{self._trim_text(text)}"\n'
+            prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and {self.document_type} information to generate new better and more specific topic names."
+            prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
+            prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
+            cluster_topic_names = self.llm.generate_topic_cluster_names(prompt, temperature=0.8)
+            for new_topic_name, topic_index in zip(cluster_topic_names, np.where(cls.labels_ == c)[0]):
+                new_topic_names[topic_index] = new_topic_name
+
+        self.base_layer_topics_ = new_topic_names
+
 
     def fit_base_layer_topics(self):
         """
@@ -801,7 +846,9 @@ class Toponymy:
         if getattr(self, "base_layer_prompts_", None) is None:
             self.fit_base_level_prompts()
         self.base_layer_topics_ = self._get_topic_name(self.base_layer_prompts_, 0)
+        self.distinguish_base_layer_topics()
         return None
+
 
     def _topical_subtopics_for_cluster(
         self,

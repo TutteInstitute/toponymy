@@ -22,6 +22,22 @@ try:
                 topic_name = topic_name.split("\n")[0]
             topic_name = string.capwords(topic_name.strip(string.punctuation + string.whitespace))
             return topic_name
+
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm(prompt, temperature=temperature)
+                topic_name_info_text = topic_name_info_raw['choices'][0]['text']
+                topic_name_info = json.loads(topic_name_info_text)
+                result = []
+                for old_name, name_mapping in zip(old_names, topic_name_info):
+                    if old_name.lower() == list(name_mapping.keys())[0].lower():
+                        result.append(list(name_mapping.values()[0]))
+                    else:
+                        result.append(old_name)
+                        
+                return result
+            except:
+                return old_names
         
         def tokenize(self, text):
             return self.llm.tokenize(text.encode('utf-8'))
@@ -66,7 +82,26 @@ try:
             except:
                 topic_name = ""
             return topic_name
-        
+
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm.chat(
+                    message=prompt, 
+                    temperature=temperature
+                )
+                topic_name_info_text = topic_name_info_raw.text
+                topic_name_info = json.loads(topic_name_info_text)
+                result = []
+                for old_name, name_mapping in zip(old_names, topic_name_info):
+                    if old_name.lower() == list(name_mapping.keys())[0].lower():
+                        result.append(list(name_mapping.values()[0]))
+                    else:
+                        result.append(old_name)
+                        
+                return result
+            except:
+                return old_names
+                    
         def tokenize(self, text):
             return self.tokenizer.tokenize(text)
         
@@ -76,13 +111,13 @@ try:
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
-You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups.
+You are to give a brief (five to ten word) name describing this group and distinguishing it from other nearby groups.
 The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
 The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """
             elif kind == "intermediate_layer":
                 return """
-You are to give a brief (three to ten word) name describing this group of papers and distinguishing it from other nearby groups.
+You are to give a brief (three to five word) name describing this group of papers and distinguishing it from other nearby groups.
 The topic should be the most specific topic that encompasses the full breadth of sub-topics.
 The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """
@@ -130,6 +165,27 @@ try:
                 topic_name = ""
             return topic_name
         
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm.messages.create(
+                    model=self.model,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}], 
+                    temperature=temperature
+                )
+                topic_name_info_text = topic_name_info_raw.content[0].text
+                topic_name_info = json.loads(topic_name_info_text)
+                result = []
+                for old_name, name_mapping in zip(old_names, topic_name_info):
+                    if old_name.lower() == list(name_mapping.keys())[0].lower():
+                        result.append(list(name_mapping.values()[0]))
+                    else:
+                        result.append(old_name)
+
+                return result
+            except:
+                return old_names
+        
         def tokenize(self, text):
             return self.tokenizer.tokenize(text)
         
@@ -139,13 +195,13 @@ try:
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
-You are to give a brief (three to ten word) name describing this group and distinguishing it from other nearby groups.
+You are to give a brief (five to ten word) name describing this group and distinguishing it from other nearby groups.
 The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
 The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """
             elif kind == "intermediate_layer":
                 return """
-You are to give a brief (three to ten word) name describing this group of papers and distinguishing it from other nearby groups.
+You are to give a brief (three to five word) name describing this group of papers and distinguishing it from other nearby groups.
 The topic should be the most specific topic that encompasses the full breadth of sub-topics.
 The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """

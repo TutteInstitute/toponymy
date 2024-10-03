@@ -1,0 +1,15 @@
+doc/.ipynb_checkpoints/arxiv_topic_labelling-checkpoint.ipynb
+topicnaming/.ipynb_checkpoints/llm_wrappers-checkpoint.py
+topicnaming/.ipynb_checkpoints/topic_naming-checkpoint.py
+topicnaming/__pycache__/__init__.cpython-311.pyc
+topicnaming/__pycache__/llm_wrappers.cpython-311.pyc
+topicnaming/__pycache__/topic_naming.cpython-311.pyc
+topicnaming.egg-info/dependency_links.txt
+topicnaming.egg-info/not-zip-safe
+topicnaming.egg-info/PKG-INFO
+topicnaming.egg-info/requires.txt
+topicnaming.egg-info/SOURCES.txt
+topicnaming.egg-info/top_level.txt
+toponymy/__pycache__/__init__.cpython-311.pyc
+toponymy/__pycache__/llm_wrappers.cpython-311.pyc
+toponymy/__pycache__/topic_naming.cpython-311.pyc
