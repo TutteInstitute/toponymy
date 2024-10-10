@@ -168,6 +168,53 @@ def build_cluster_layers(
     ]
     return vector_layers, location_layers, pointset_layers, metacluster_layers
 
+@numba.njit()
+def _build_cluster_tree(labels):
+    mapping = [(-1, -1, -1, -1) for i in range(0)]
+    found = [set([-1]) for i in range(len(labels))]
+    mapping_idx = 0
+    for upper_layer in range(1, len(labels)):
+        upper_layer_unique_labels = np.unique(labels[upper_layer])
+        for lower_layer in range(upper_layer - 1, -1, -1):
+            upper_cluster_order = np.argsort(labels[upper_layer])
+            cluster_groups = np.split(
+                labels[lower_layer][upper_cluster_order],
+                np.cumsum(np.bincount(labels[upper_layer] + 1))[:-1],
+            )
+            for i, label in enumerate(upper_layer_unique_labels):
+                if label >= 0:
+                    for child in cluster_groups[i]:
+                        if child >= 0 and child not in found[lower_layer]:
+                            mapping.append((upper_layer, label, lower_layer, child))
+                            found[lower_layer].add(child)
+
+    for lower_layer in range(len(labels) - 1, -1, -1):
+        for child in range(labels[lower_layer].max() + 1):
+            if child >= 0 and child not in found[lower_layer]:
+                mapping.append((len(labels), 0, lower_layer, child))
+
+    return mapping
+
+
+def build_cluster_tree(labels):
+    result = {}
+    raw_mapping = _build_cluster_tree(labels)
+    for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
+        parent_name = (parent_layer, parent_cluster)
+        if parent_name in result:
+            result[parent_name].append((child_layer, child_cluster))
+        else:
+            result[parent_name] = [(child_layer, child_cluster)]
+    return result
+
+def pointsets_to_label_layers(pointsets_layers, n_points):
+    result = []
+    for pointsets in pointsets_layers:
+        label_layer = np.full(n_points, -1)
+        for i, pointset in enumerate(pointsets):
+            label_layer[pointset] = i
+        result.append(label_layer)
+    return result
 
 def diversify(query_vector, candidate_neighbor_vectors, alpha=1.0, max_candidates=16):
     distance_to_query = np.squeeze(
@@ -307,9 +354,10 @@ def create_final_remedy_prompt(
 def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
     n_samples = distances.shape[0]
     clustering = AgglomerativeClustering(
-        n_clusters=None,
+        n_clusters=2,
         distance_threshold=None,
         compute_full_tree=True,
+        compute_distances=True,
         metric='precomputed',
         linkage='complete'
     )
@@ -319,7 +367,7 @@ def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
     
     for i, (cluster1, cluster2) in enumerate(clustering.children_):
         new_size = cluster_sizes[cluster1] + cluster_sizes[cluster2]
-        if new_size > max_cluster_size:
+        if new_size > max_cluster_size and merge_distances[i - 1] > 0.0:
             return merge_distances[i - 1] if i > 0 else 0
         
         cluster_sizes[n_samples + i] = new_size
@@ -370,7 +418,7 @@ class Toponymy:
         llm,
         embedding_model=None,  # The embedding model that the document_vectors was constructed with.
         cluster_layers=None,  # ClusterLayer dataclass
-        representation_techniques=["topical", "distinctive", "contrastive"],
+        representation_techniques=["topical", "contrastive"],
         document_type="titles",
         corpus_description="academic articles",
         verbose=True,
@@ -459,6 +507,9 @@ class Toponymy:
             metacluster_layers,
             layer_cluster_neighbours,
         )
+
+        clustering_label_layers = pointsets_to_label_layers(pointset_layers, self.document_vectors.shape[0])
+        self.cluster_tree_  = build_cluster_tree(clustering_label_layers)
 
     def get_topical_layers(self, n_sentence_examples=16):
         """
@@ -722,13 +773,12 @@ class Toponymy:
                 prompt_text += f' - "{self._trim_text(text)}"\n'
         prompt_text += "\n\n" + llm_instruction
         return prompt_text
+    
 
     def fit_base_level_prompts(
         self,
         layer_id=0,
         max_docs_per_cluster=100,
-        max_adjacent_clusters=3,
-        max_adjacent_docs=2,
     ):
         """
         This returns a list of prompts for the layer_id independent of any other layer.
@@ -763,8 +813,6 @@ class Toponymy:
                 cluster_id,
                 layer_id,
                 max_docs_per_cluster,
-                max_adjacent_clusters,
-                max_adjacent_docs,
                 llm_instruction=self.llm.llm_instruction(kind="base_layer"),
             )
             prompt_length = len(self.llm.tokenize(prompt))
@@ -775,8 +823,6 @@ class Toponymy:
                     cluster_id,
                     layer_id,
                     reduced_docs_per_cluster,
-                    max_adjacent_clusters,
-                    max_adjacent_docs,
                     llm_instruction=self.llm.llm_instruction(kind="base_layer"),
                 )
                 prompt_length = len(self.llm.tokenize(prompt))
@@ -800,11 +846,14 @@ class Toponymy:
             desc=f"Generating topics for layer {layer_num}",
             disable=(not self.verbose),
         ):
+            if prompt_layer[i].startswith("SKIP"):
+                topic_names.append( prompt_layer[i].split(":")[1].strip())
+                continue
             topic_name = self.llm.generate_topic_name(prompt_layer[i])
             topic_names.append(topic_name)
         return topic_names
     
-    
+
     def distinguish_base_layer_topics(self):
         if getattr(self, "base_layer_topics_", None) is None:
             self.fit_base_layer_topics()
@@ -819,20 +868,20 @@ class Toponymy:
         cluster_sizes = np.bincount(cls.labels_)
         clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
         for c in tqdm(clusters_for_renaming, desc="Distinguishing similar topics", disable=(not self.verbose)):
-            cluster_indices = np.hstack([self.cluster_layers_.pointset_layers[0][x] for x in np.where(cls.labels_ == c)[0]])
+            label_indices = np.where(cls.labels_ == c)[0]
             prompt = f"There are collections of {self.corpus_description} with somewhat similar auto-generated topic names, all in your field of expertise.\n"
             prompt += f"Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area."
-            for x in np.where(cls.labels_ == c)[0]:
+            for x in label_indices:
                 prompt += f"\n\n**{self.base_layer_topics_[x]}**\n"
                 prompt += "    - keywords: " + ", ".join(self.representation_["contrastive"][0][x]) + "\n"
-                prompt += "    - sample titles:\n"
+                prompt += f"    - sample {self.document_type}:\n"
                 for text in self.representation_["topical"][0][x]:
                     prompt += f'        + "{self._trim_text(text)}"\n'
             prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and {self.document_type} information to generate new better and more specific topic names."
             prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
             prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
-            cluster_topic_names = self.llm.generate_topic_cluster_names(prompt, temperature=0.8)
-            for new_topic_name, topic_index in zip(cluster_topic_names, np.where(cls.labels_ == c)[0]):
+            cluster_topic_names = self.llm.generate_topic_cluster_names(prompt, [self.base_layer_topics_[x] for x in label_indices], temperature=0.8)
+            for new_topic_name, topic_index in zip(cluster_topic_names, label_indices):
                 new_topic_names[topic_index] = new_topic_name
 
         self.base_layer_topics_ = new_topic_names
@@ -890,7 +939,7 @@ class Toponymy:
         ]
         return topical_subtopics
 
-    def _contrastive_subtopics_for_cluster(
+    def _distinctive_subtopics_for_cluster(
         self,
         layer_num,
         cluster_num,
@@ -961,32 +1010,32 @@ class Toponymy:
                 disable=(not self.verbose),
             )
         ]
-        self.subtopic_layers_["contrastive"] = [
-            [
-                self._contrastive_subtopics_for_cluster(
-                    layer_num,
-                    cluster_num,
-                    base_layer_topic_embedding,
-                    n_subtopics=max_subtopics_per_cluster,
-                )
-                for cluster_num in range(
-                    len(self.cluster_layers_.metacluster_layers[layer_num])
-                )
-            ]
-            for layer_num in tqdm(
-                range(1, len(self.cluster_layers_.metacluster_layers)),
-                desc="Finding contrastive subtopics",
-                disable=(not self.verbose),
-            )
-        ]
+        # self.subtopic_layers_["distinctive"] = [
+        #     [
+        #         self._distinctive_subtopics_for_cluster(
+        #             layer_num,
+        #             cluster_num,
+        #             base_layer_topic_embedding,
+        #             n_subtopics=max_subtopics_per_cluster,
+        #         )
+        #         for cluster_num in range(
+        #             len(self.cluster_layers_.metacluster_layers[layer_num])
+        #         )
+        #     ]
+        #     for layer_num in tqdm(
+        #         range(1, len(self.cluster_layers_.metacluster_layers)),
+        #         desc="Finding distinctive subtopics",
+        #         disable=(not self.verbose),
+        #     )
+        # ]
         return None
 
     def _create_prompt_from_subtopics(
         self,
         previous_layer_topics,  # Need to find the previous layer topic that contained each topic.
         layer_id,
-        max_subtopics=24,
-        max_docs_per_cluster=4,
+        max_subtopics=12,
+        max_docs_per_cluster=12,
         max_adjacent_clusters=3,
         max_adjacent_docs=2,
         llm_instruction="The short distinguising topic name is:",
@@ -1000,61 +1049,128 @@ class Toponymy:
             desc=f"Generating prompts for layer {layer_id}",
             disable=(not self.verbose),
         ):
-            prompt_text = f"--\n\nBelow is a information about a group of {self.document_type} from {self.corpus_description} that are all on the same topic:\n\n"
+            prompt_text = f"Below is a information about a group of {self.document_type} from {self.corpus_description} that are all on the same topic:\n\n"
             # Add some contrastive keywords
             if "contrastive" in self.representation_techniques:
                 prompt_text += (
-                    'Distinguishing keywords for this group:\n - "'
+                    'Keywords for this group:\n - "'
                     + ", ".join(
                         self.representation_["contrastive"][layer_id][cluster_id]
                     )
                     + '"\n'
                 )
-            # Use the previous layer information to inject knowledge into this cluster.
-            prompt_text += "Sample sub-topics from the group include:\n"
-            for text in previous_layer_topics[cluster_id][:max_subtopics]:
-                prompt_text += f'- "{text}"\n'
-            # Add some topical documents
-            if "topical" in self.representation_techniques:
-                prompt_text += (
-                    f"\nSample topical {self.document_type} from the group include:\n"
-                )
-                for text in self.representation_["topical"][layer_id][cluster_id][
-                    :max_docs_per_cluster
-                ]:
-                    prompt_text += f' - "{text}"\n'
-                # Grab some of the same docs from nearby clusters for context.
-                prompt_text += f"\n\nSimilar {self.document_type} from different groups with distinct topics include:\n"
-                for (
-                    adjacent_cluster_index
-                ) in self.cluster_layers_.layer_cluster_neighbours[layer_id][
-                    cluster_id
-                ][
-                    :max_adjacent_clusters
-                ]:
-                    for text in self.representation_["topical"][layer_id][
-                        adjacent_cluster_index
-                    ][:max_adjacent_docs]:
-                        prompt_text += f'- "{text}"\n'
-            # Add some distinctive keywords from this cluster and adjacent ones
-            if "distinctive" in self.representation_techniques:
-                prompt_text += f"\nSample distinctive {self.document_type} from the group include:\n"
-                for text in self.representation_["distinctive"][layer_id][cluster_id][
-                    :max_docs_per_cluster
-                ]:
-                    prompt_text += f' - "{text}"\n'
+            # Get tree based subtopics
+            tree_subtopics = self.cluster_tree_[(layer_id, cluster_id)]
 
-            prompt_text += "\nSub-topics from different but similar groups include:\n"
-            for adjacent_cluster_index in self.cluster_layers_.layer_cluster_neighbours[
-                layer_id
-            ][cluster_id][:max_adjacent_clusters]:
-                for text in previous_layer_topics[adjacent_cluster_index][
-                    1:max_subtopics
-                ]:
+            if len(tree_subtopics) == 1:
+                prompts.append(f"SKIP: {self.topic_name_layers_[tree_subtopics[0][0]][tree_subtopics[0][1]]}")
+                continue
+
+            # Subtopics one layer down are major subtopics; two layers down are minor
+            major_subtopics = [x[1] for x in tree_subtopics if x[0] == layer_id - 1]
+            minor_subtopics = [x[1] for x in tree_subtopics if x[0] == layer_id - 2]
+            other_subtopics = [x for x in tree_subtopics if x[0] < layer_id - 2]
+
+            if len(major_subtopics) > 0:
+                prompt_text += "\nMajor sub-topics for this group are:\n"
+                for subtopic_id in major_subtopics:
+                    prompt_text += f'- "{self.topic_name_layers_[layer_id - 1][subtopic_id]}"\n'
+
+            if len(minor_subtopics) > 0:
+                prompt_text += "\nMinor sub-topics for this group are:\n"
+                for subtopic_id in minor_subtopics:
+                    prompt_text += f'- "{self.topic_name_layers_[layer_id - 2][subtopic_id]}"\n'
+
+            if len(other_subtopics) > 0:
+                prompt_text += "\nOther sub-topics for this group not included in major or minor sub-topics are:\n"
+                for layer_num, subtopic_id in other_subtopics[:max_subtopics]:
+                    prompt_text += f'- "{self.topic_name_layers_[layer_num][subtopic_id]}"\n'
+
+            if len(tree_subtopics) < max_subtopics:
+                # Use the previous layer information to inject knowledge into this cluster.
+                prompt_text += "\nA sampling of detailed sub-topics from the group include:\n"
+                for text in previous_layer_topics[cluster_id][:(max_subtopics - len(tree_subtopics))]:
                     prompt_text += f'- "{text}"\n'
-            prompt_text += "\n\n" + llm_instruction
+
+            # Add some topical documents if we don't have many subtopics
+            if len(tree_subtopics) < max_subtopics:
+                if "topical" in self.representation_techniques:
+                    prompt_text += (
+                        f"\nSample topical {self.document_type} from the group include:\n"
+                    )
+                    for text in self.representation_["topical"][layer_id][cluster_id][
+                        :max_docs_per_cluster - len(tree_subtopics)
+                    ]:
+                        prompt_text += f' - "{text}"\n'
+
+            prompt_text += "\n" + llm_instruction
             prompts.append(prompt_text)
+
         return prompts
+
+    def distinguish_intermediate_layer_topics(self, layer_id, previous_layer_topics, max_subtopics=12):
+        new_topic_names = self.topic_name_layers_[layer_id][:]
+        layer_topic_embedding = self.embedding_model.encode(
+            self.topic_name_layers_[layer_id], show_progress_bar=True
+        )
+        layer_topic_distances = pairwise_distances(layer_topic_embedding, metric="cosine")
+        distance_threshold = find_threshold_for_max_cluster_size(layer_topic_distances, max_cluster_size=8)
+        cls = AgglomerativeClustering(n_clusters=None, compute_full_tree=True, distance_threshold=distance_threshold, metric="precomputed", linkage="complete")
+        cls.fit(layer_topic_distances)
+        cluster_sizes = np.bincount(cls.labels_)
+        clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
+        for c in tqdm(clusters_for_renaming, desc=f"Distinguishing similar topics in layer {layer_id}", disable=(not self.verbose)):
+            label_indices = np.where(cls.labels_ == c)[0]
+            prompt = f"There are collections of {self.corpus_description} with somewhat similar auto-generated topic names, all in your field of expertise.\n"
+            prompt += f"Below are the auto-generated topic names, along with some keywords associated to each topic, and sub-topics from the topic area."
+            for x in label_indices:
+                prompt += f"\n\n**{self.topic_name_layers_[layer_id][x]}**\n"
+                prompt += "    - keywords: " + ", ".join(self.representation_["contrastive"][layer_id][x]) + "\n"
+                # Get tree based subtopics
+                tree_subtopics = self.cluster_tree_[(layer_id, x)]
+
+                # Subtopics one layer down are major subtopics; two layers down are minor
+                major_subtopics = [a[1] for a in tree_subtopics if a[0] == layer_id - 1]
+                minor_subtopics = [a[1] for a in tree_subtopics if a[0] == layer_id - 2]
+                other_subtopics = [a for a in tree_subtopics if a[0] < layer_id - 2]
+
+                if len(major_subtopics) > 0:
+                    prompt += "\nMajor sub-topics for this group are:\n"
+                    for subtopic_id in major_subtopics:
+                        prompt += f'- "{self.topic_name_layers_[layer_id - 1][subtopic_id]}"\n'
+
+                if len(minor_subtopics) > 0:
+                    prompt += "\nMinor sub-topics for this group are:\n"
+                    for subtopic_id in minor_subtopics:
+                        prompt += f'- "{self.topic_name_layers_[layer_id - 2][subtopic_id]}"\n'
+
+                if len(other_subtopics) > 0:
+                    prompt += "\nOther sub-topics for this group not included in major or minor sub-topics are:\n"
+                    for layer_num, subtopic_id in other_subtopics[:max_subtopics]:
+                        prompt += f'- "{self.topic_name_layers_[layer_num][subtopic_id]}"\n'
+
+                if len(tree_subtopics) < max_subtopics:
+                    # Use the previous layer information to inject knowledge into this cluster.
+                    prompt += "\nA sampling of detailed sub-topics from the group include:\n"
+                    for text in previous_layer_topics[x][:(max_subtopics - len(tree_subtopics))]:
+                        prompt += f'- "{text}"\n'
+
+                # Add some topical documents if we don't have many subtopics
+                if len(tree_subtopics) < max_subtopics:
+                    prompt += f"    - sample {self.document_type}:\n"
+                    for text in self.representation_["topical"][0][x][:max_subtopics - len(tree_subtopics)]:
+                        prompt += f'        + "{self._trim_text(text)}"\n'
+
+            prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and sub-topic information to generate new topic names."
+            prompt += "\nStrive to provide the simplest possible topic name (ideally a few words) that distinguishes a given topic from the other topics listed."
+            prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
+            prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
+
+            cluster_topic_names = self.llm.generate_topic_cluster_names(prompt, [self.topic_name_layers_[layer_id][x] for x in label_indices], temperature=0.8)
+            for new_topic_name, topic_index in zip(cluster_topic_names, label_indices):
+                new_topic_names[topic_index] = new_topic_name
+
+        self.topic_name_layers_[layer_id] = new_topic_names
 
     def fit_layers(self):
         """
@@ -1068,17 +1184,9 @@ class Toponymy:
             print(f"fitting intermediate layers")
         self.topic_prompt_layers_ = [self.base_layer_prompts_]
         self.topic_name_layers_ = [self.base_layer_topics_]
-        # if(self.verbose):
-        #     print(self.topic_name_layers_)
 
         for layer_id in range(1, len(self.cluster_layers_.metacluster_layers)):
-            subtopics_layer = [
-                list(zip(a, b))
-                for a, b in zip(
-                    self.subtopic_layers_["topical"][layer_id - 1],
-                    self.subtopic_layers_["contrastive"][layer_id - 1],
-                )
-            ]
+            subtopics_layer = self.subtopic_layers_["topical"][layer_id - 1]
             topic_naming_prompts = self._create_prompt_from_subtopics(
                 subtopics_layer,
                 layer_id,
@@ -1087,7 +1195,20 @@ class Toponymy:
             self.topic_prompt_layers_.append(topic_naming_prompts)
             topic_names = self._get_topic_name(topic_naming_prompts, layer_id)
             self.topic_name_layers_.append(topic_names)
+            self.distinguish_intermediate_layer_topics(layer_id, subtopics_layer, max_subtopics=12)
+
         return None
+
+
+    def _get_singleton_subclusters(self):
+        result_list = []
+        result_dict = {}
+        for parent in self.cluster_tree_:
+            if len(self.cluster_tree_[parent]) == 1:
+                singleton_child = self.cluster_tree_[parent][0]
+                result_list.append((parent, singleton_child))
+                result_dict[singleton_child] = parent
+        return result_list, result_dict
 
     def clean_topic_names(self):
         """
@@ -1106,6 +1227,9 @@ class Toponymy:
         unique_names = set(
             [""]
         )  # Start with empty string so we fix any topics that failed to get a name
+
+        # Find the singletons so we can skip them
+        singleton_subclusters, singleton_dict = self._get_singleton_subclusters() 
         for n in range(len(self.topic_name_layers_) - 1, -1, -1):
             for i, (name, indices) in tqdm(
                 enumerate(
@@ -1121,6 +1245,9 @@ class Toponymy:
                 n_attempts = 0
                 unique_name = name
                 original_topic_names = [unique_name]
+                if (n, i) in singleton_dict:
+                    continue
+
                 while unique_name in unique_names and n_attempts < 8:
                     prompt_text = create_final_remedy_prompt(
                         original_topic_names,
