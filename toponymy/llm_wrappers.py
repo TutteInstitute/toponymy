@@ -227,3 +227,92 @@ The response should be only JSON with no preamble formatted as {"topic_name":<NA
             return 128_000
 except:
     pass
+
+try:
+    import openai
+    import tiktoken
+    import json
+
+    class OpenAIWrapper:
+        def __init__(self, API_KEY, model="gpt-4o-mini", verbose=False):
+            self.llm = openai.OpenAI(api_key=API_KEY)
+            self.model = model
+            self.tokenizer = tiktoken.encoding_for_model(model)
+            self.verbose=verbose
+
+
+        
+        def generate_topic_name(self, prompt, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm.chat.completions.create(
+                    model=self.model,
+                    max_tokens=256,
+                    messages=[{"role": "user", "content": prompt}], 
+                    temperature=temperature,
+                    response_format = {'type': 'json_object'}
+                )
+                topic_name_info_text = topic_name_info_raw.choices[0].message.content
+
+                topic_name_info = json.loads(topic_name_info_text)
+                topic_name = topic_name_info["topic_name"]
+                if self.verbose:
+                    print(topic_name_info)
+            except Exception as e:
+                topic_name = ""
+                warn(f'{e}\n{prompt}\n{topic_name_info_text}')
+            return topic_name
+        
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm.chat.completions.create(
+                    model=self.model,
+                    max_tokens=1024,
+                    messages=[{"role": "user", "content": prompt}], 
+                    temperature=temperature,
+                    response_format = {'type': 'json_object'}
+                )
+                topic_name_info_text = topic_name_info_raw.choices[0].message.content
+                topic_name_info = json.loads(topic_name_info_text)
+                result = []
+                for old_name, name_mapping in zip(old_names, topic_name_info):
+                    if old_name.lower() == list(name_mapping.keys())[0].lower():
+                        result.append(list(name_mapping.values()[0]))
+                    else:
+                        result.append(old_name)
+
+                return result
+            except:
+                return old_names
+        
+        def tokenize(self, text):
+            return self.tokenizer.encode(text)
+        
+        def detokenize(self, tokens):
+            return self.tokenizer.decode(tokens)
+        
+        def llm_instruction(self, kind="base_layer"):
+            if kind == "base_layer":
+                return """
+You are to give a brief (five to ten word) name describing this group.
+The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
+The response must be **ONLY** JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+                """
+            elif kind == "intermediate_layer":
+                return """
+You are to give a brief (three to five word) name describing this group of papers.
+The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
+The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+                """
+            elif kind == "remedy":
+                return """
+You are to give a brief (five to ten word) name describing this group of papers that better captures the specific details of this group.
+The topic should be the most specific topic that encompasses the full breadth of sub-topics.
+The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+"""
+            else:
+                raise ValueError(f"Invalid llm_imnstruction kind; should be one of \'base_layer\', \'intermediate_layer\', or \'remedy\' not \'{kind}\'")
+            
+        def n_ctx(self):
+            return 128_000
+except:
+    pass

@@ -97,7 +97,7 @@ def build_cluster_layers(
     uncondensed_tree = cluster_trees.mst_to_linkage_tree(sorted_mst)
     new_tree = cluster_trees.condense_tree(uncondensed_tree, base_min_cluster_size)
     leaves = cluster_trees.extract_leaves(new_tree)
-    clusters = cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0)
+    clusters = cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0, len(point_locations))
     point_probs = cluster_trees.get_point_membership_strength_vector(
         new_tree, leaves, clusters
     )
@@ -154,7 +154,7 @@ def build_cluster_layers(
 
         new_tree = cluster_trees.condense_tree(uncondensed_tree, min_cluster_size)
         leaves = cluster_trees.extract_leaves(new_tree)
-        clusters = cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0)
+        clusters = cluster_trees.get_cluster_label_vector(new_tree, leaves, 0.0, len(point_locations))
         point_probs = cluster_trees.get_point_membership_strength_vector(
             new_tree, leaves, clusters
         )
