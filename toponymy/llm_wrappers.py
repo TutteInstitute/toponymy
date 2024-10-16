@@ -234,10 +234,12 @@ try:
     import json
 
     class OpenAIWrapper:
-        def __init__(self, API_KEY, model="gpt-4o-mini"):
+        def __init__(self, API_KEY, model="gpt-4o-mini", verbose=False):
             self.llm = openai.OpenAI(api_key=API_KEY)
             self.model = model
             self.tokenizer = tiktoken.encoding_for_model(model)
+            self.verbose=verbose
+
 
         
         def generate_topic_name(self, prompt, temperature=0.5):
@@ -246,13 +248,18 @@ try:
                     model=self.model,
                     max_tokens=256,
                     messages=[{"role": "user", "content": prompt}], 
-                    temperature=temperature
+                    temperature=temperature,
+                    response_format = {'type': 'json_object'}
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
+
                 topic_name_info = json.loads(topic_name_info_text)
                 topic_name = topic_name_info["topic_name"]
-            except:
+                if self.verbose:
+                    print(topic_name_info)
+            except Exception as e:
                 topic_name = ""
+                warn(f'{e}\n{prompt}\n{topic_name_info_text}')
             return topic_name
         
         def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
@@ -261,7 +268,8 @@ try:
                     model=self.model,
                     max_tokens=1024,
                     messages=[{"role": "user", "content": prompt}], 
-                    temperature=temperature
+                    temperature=temperature,
+                    response_format = {'type': 'json_object'}
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
                 topic_name_info = json.loads(topic_name_info_text)
@@ -287,7 +295,7 @@ try:
                 return """
 You are to give a brief (five to ten word) name describing this group.
 The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+The response must be **ONLY** JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
                 """
             elif kind == "intermediate_layer":
                 return """
