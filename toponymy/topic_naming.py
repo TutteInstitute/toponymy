@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 import numba
 import numpy as np
-import sentence_transformers
 import sklearn.feature_extraction
 import sklearn.metrics
 import vectorizers
@@ -420,10 +419,10 @@ class Toponymy:
         self.documents = documents
         self.document_vectors = document_vectors
         self.document_map = document_map
-        if (cluster_layers is not None) and (type(cluster_layers).__name__
-                                             != "ClusterLayers"):
+        if (cluster_layers
+                is not None) and not isinstance(cluster_layers, ClusterLayers):
             raise ValueError(
-                f"cluster_layers must be of type ClusterLayers class not {type(cluster_layers).__name__}"
+                f"cluster_layers must be of type ClusterLayers not {type(cluster_layers)}"
             )
         if cluster_layers:
             self.cluster_layers_ = cluster_layers

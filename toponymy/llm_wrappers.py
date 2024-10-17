@@ -81,8 +81,20 @@ try:
 
     class CohereWrapper:
 
-        def __init__(self, API_KEY, local_tokenizer=None):
-            self.llm = cohere.Client(API_KEY)
+        def __init__(self,
+                     API_KEY,
+                     model="command-r-08-2024",
+                     local_tokenizer=None):
+            self.llm = cohere.Client(api_key=API_KEY)
+
+            try:
+                self.llm.models.get(model)
+            except cohere.errors.not_found_error.NotFoundError:
+                models = [x.name for x in self.llm.models.list().models]
+                msg = f"Model '{model}' not found, try one of {models}"
+                raise ValueError(msg)
+            self.model = model
+
             if local_tokenizer is not None:
                 self.tokenizer = local_tokenizer
             else:
@@ -91,7 +103,10 @@ try:
         def generate_topic_name(self, prompt, temperature=0.5):
             try:
                 topic_name_info_raw = self.llm.chat(
-                    message=prompt, temperature=temperature).text
+                    message=prompt,
+                    model=self.model,
+                    temperature=temperature,
+                ).text
                 topic_name_info = json.loads(topic_name_info_raw)
                 topic_name = topic_name_info["topic_name"]
             except:
@@ -103,13 +118,16 @@ try:
                                          old_names,
                                          temperature=0.5):
             try:
-                topic_name_info_raw = self.llm.chat(message=prompt,
-                                                    temperature=temperature)
+                topic_name_info_raw = self.llm.chat(
+                    message=prompt,
+                    model=self.model,
+                    temperature=temperature,
+                )
                 topic_name_info_text = topic_name_info_raw.text
                 topic_name_info = json.loads(topic_name_info_text)
             except Exception as e:
-                warn("Failed to generate topic cluster names with Cohere: " +
-                     str(e))
+                warn(
+                    f"Failed to generate topic cluster names with Cohere: {e}")
                 return old_names
 
             result = []
@@ -122,18 +140,19 @@ try:
                         warn(
                             f"Old name {old_name} does not match the new name {list(name_mapping.keys())[0]}"
                         )
-                        result.append(list(
-                            name_mapping.values())[0])  # use old_name?
+                        # use old_name?
+                        result.append(list(name_mapping.values())[0])
                 except:
                     result.append(old_name)
 
             return result
 
         def tokenize(self, text):
-            return self.tokenizer.tokenize(text)
+            return self.tokenizer.tokenize(text=text, model=self.model).tokens
 
         def detokenize(self, tokens):
-            return self.tokenizer.detokenize(tokens)
+            return self.tokenizer.detokenize(tokens=tokens,
+                                             model=self.model).text
 
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
@@ -160,7 +179,7 @@ The response should be in JSON formatted as {"topic_name":<NAME>, "less_specific
                 )
 
         def n_ctx(self):
-            return 128_000
+            return self.llm.models.get(self.model).context_length
 except:
     pass
 
