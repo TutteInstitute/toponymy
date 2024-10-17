@@ -112,7 +112,7 @@ Once the low-dimensional representation is available (``document_map`` in this c
 
 .. code-block::python
 
-    from toponymy import TopicNaming
+    from toponymy import Toponymy
 
     llm = Llama(model_path=str("openhermes-2.5-mistral-7b.Q4_K_M.gguf"), n_gpu_layers=0, n_ctx=4096, stop=["--", "\n"], verbose=False, n_threads=48)
     embedding_model = sentence_transformers.SentenceTransformer("all-mpnet-base-v2", device="cpu")
@@ -120,7 +120,7 @@ Once the low-dimensional representation is available (``document_map`` in this c
     data_map = np.load('examples/ai_arxiv_coordinates.npz.npy')
     data_vectors = np.load('examples/ai_arxiv_vectors.npy')
 
-    topic_namer = TopicNaming(documents=data.title,
+    topic_namer = Toponymy(documents=data.title,
                           document_vectors=data_vectors, 
                           document_map=data_map, 
                           embedding_model=embedding_model,  
