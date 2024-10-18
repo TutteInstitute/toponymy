@@ -19,7 +19,7 @@ Techniques for topic modeling such as top2vec or BERTopic work by using the a se
 #. **Embed documents** (or other objects) into a semantic space using techniques such as a Sentence Transformer. This initial embedding gives a vector representation of the documents.
 #. Use **dimension reduction** to get a low dimensional space.
 #. Employ **robust clustering** techniques to find dense clusters of documents discussing a single concept. As part of this step, it is useful to leverage clustering techniques that are robust to noise (such as `hdbscan <https://github.com/scikit-learn-contrib/hdbscan>`_) to identify these topical clusters.
-#. **Represent clusters** as topics. This final step is the focus of this ``topicnaming`` library. 
+#. **Represent clusters** as topics. This final step is the focus of the ``toponymy`` library. 
 
 This style of topic modeling works well for short to medium length homogeneous documents that are about a single topic, but requires extra work such as document segmentation to be effective on long or heterogeneous documents.
 
@@ -42,7 +42,7 @@ We welcome feedback, use cases and feature suggestions.
 Basic Installation
 ------------------
 
-For now install the latest version of TopicNaming from source you can do so by cloning the repository and running:
+For now install the latest version of Toponymy from source you can do so by cloning the repository and running:
 
 .. code-block:: bash
 
@@ -88,7 +88,7 @@ To download this model:
     wget https://huggingface.co/TheBloke/OpenHermes-2.5-Mistral-7B-GGUF/resolve/main/openhermes-2.5-mistral-7b.Q4_K_M.gguf
     
 We will use ``sentence_transformers`` for embedding out documents (and eventually keywords) into a consistent space.  
-Since ``sentence_transformers`` is a dependency of ``topicnaming`` it will be installed by default. Note that ``sentence_transformers`` 
+Since ``sentence_transformers`` is a dependency of ``toponymy`` it will be installed by default. Note that ``sentence_transformers`` 
 is capable of downloading its own models.  
 
 -----------
@@ -136,7 +136,7 @@ Once the low-dimensional representation is available (``document_map`` in this c
 License
 -------
 
-TopicNaming is MIT licensed. See the LICENSE file for details.
+Toponymy is MIT licensed. See the LICENSE file for details.
 
 ------------
 Contributing
@@ -144,5 +144,5 @@ Contributing
 
 Contributions are more than welcome! If you have ideas for features of projects please get in touch. Everything from
 code to notebooks to examples and documentation are all *equally valuable* so please don't feel you can't contribute.
-To contribute please `fork the project <https://github.com/TutteInstitute/topicnaming/issues#fork-destination-box>`_ make your
+To contribute please `fork the project <https://github.com/TutteInstitute/toponymy/fork>`_ make your
 changes and submit a pull request. We will do our best to work through any issues with you and get your code merged in.
