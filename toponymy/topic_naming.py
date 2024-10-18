@@ -15,6 +15,78 @@ from sklearn.preprocessing import normalize
 from sklearn.utils.extmath import randomized_svd
 from tqdm.auto import tqdm
 
+import jinja2
+_ENV = jinja2.Environment()
+_ENV.globals.update(zip=zip)
+
+_PROMPT_TEMPLATES = {
+    "remedy": jinja2.Template(
+"""
+You are an expert in {{larger_topic}} and have been asked to provide a more specific name for a group of 
+{{document_type}} from {{corpus_description}}. The group of {{document_type}} has been described as having a topic of one of 
+{{attempted_topic_names}}. These topic names were not specific enough.
+
+The other groups of {{document_type}} that can be confused with this topic are:
+
+{% for topic in matching_topics  %}
+{{topic}}:
+ - Keywords: {{", ".join(matching_topic_keywords[topic])}}
+{% if matching_topic_subtopics[topic] %}
+ - Subtopics: {{", ".join(matching_topic_subtopics[topic])}}
+{% endif %}
+ - Sample {{document_type}}:
+{% for sentence in matching_topic_sentences[topic] %}
+      - "{{sentence}}"
+{% endfor %}
+{% endfor %}
+
+As an expert in {{larger_topic}}, you need to provide a more specific name for this group of {{document_type}}:
+ - Keywords: {{", ".join(cluster_keywords)}}
+{% if cluster_subtopics %}
+ - Subtopics: {{", ".join(cluster_subtopics)}}
+{% endif %}
+ - Sample {{document_type}}:
+{% for sentence in cluster_sentences %}
+      - "{{sentence}}"
+{% endfor %}
+
+You should make use of the relative relationships between these topics as well as the keywords
+and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new 
+better and more *specific* topic name.
+
+The response should be only JSON with no preamble formatted as 
+  {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} 
+where SCORE is a value in the range 0 to 1.
+"""
+    ),
+    "distinguish_base_layer_topics": jinja2.Template(
+"""
+You are an expert in {{larger_topic}} and have been asked to provide a more specific names for various groups of
+{{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
+
+Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area.
+
+{% for topic, keywords, sentences in zip(base_layer_topics, base_layer_keywords, base_layer_sentences) %}
+"{{topic}}":
+ - Keywords: {{", ".join(keywords)}}
+ - Sample {{document_type}}:
+{% for sentence in sentences %}
+      - "{{sentence}}"
+{% endfor %}
+{% endfor %}
+
+Your should make use of the relative relationships between these topics as well as the keywords
+and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new
+better and more distinguishing topic names.
+
+The result should be formatted as JSON in the format 
+  [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...]
+The result must contain only JSON with no preamble and must have one entry for each topic to be renamed.
+"""
+    )
+}
+
+COSINE_DISTANCE_EPSILON = 1e-6
 
 @numba.njit(fastmath=True)
 def layer_from_clustering(
@@ -307,72 +379,105 @@ def longest_keyphrases(candidate_keyphrases):
     return result
 
 
+def create_distinguish_base_layer_topics_prompt(
+    topic_indices,
+    attempted_topic_names,
+    representations,
+    document_type,
+    corpus_description,
+    max_keywords=16,
+    max_sentences=16,
+):
+    template = _PROMPT_TEMPLATES["distinguish_base_layer_topics"]
+
+    unique_topic_names = list(set(attempted_topic_names))
+    if len(unique_topic_names) == 1:
+        larger_topic = unique_topic_names[0]
+    else:
+        larger_topic = ", ".join(unique_topic_names[:-1]) + " and " + unique_topic_names[-1]
+
+    keywords_per_topic = [representations["contrastive"][i][:max_keywords] for i in topic_indices]
+    sentences_per_topic = [representations["topical"][i][:max_sentences] for i in topic_indices]
+
+    prompt_text = template.render(
+        larger_topic=larger_topic,
+        base_layer_topics=attempted_topic_names,
+        base_layer_keywords=keywords_per_topic,
+        base_layer_sentences=sentences_per_topic,
+        document_type=document_type,
+        corpus_description=corpus_description,
+    )
+    return prompt_text
+
 def create_topic_discernment_prompt(
     layer,
     topic_index,
     attempted_topic_names,
-    cluster_indices,
-    matching_topic_layer,
-    matching_topic_index,
+    matching_topics,
     representations,
+    subtopic_layers,
     document_type,
     corpus_description,
-    llm_instruction,
+    max_keywords=16,
+    max_subtopics=16,
+    max_sentences=16,
 ):
-    template = _PROMPT_TEMPLATES["topic_discernment"]
-
-
-def create_final_remedy_prompt(
-    original_topic_names,
-    docs,
-    vector_array,
-    pointset,
-    centroid_vector,
-    doc_type,
-    corpus_type,
-    llm_instruction="A better and more specific name that still captures the topic of these article titles is:",
-):
-    sentences = topical_sentences_for_cluster(docs,
-                                              vector_array,
-                                              pointset,
-                                              centroid_vector,
-                                              n_sentence_examples=64)
-    prompt_text = (
-        f"A set of {doc_type} from {corpus_type} was described as having a topic of one of "
-        + ", ".join(original_topic_names) + ".\n")
-    prompt_text += "These topic names were not specific enough and were shared with other different but similar groups of titles.\n"
-    prompt_text += "A sampling of titles from this specific set of titles includes:\n"
-    for sentence in np.random.choice(sentences,
-                                     size=min(len(sentences), 512),
-                                     replace=False):
-        prompt_text += f"- {sentence}\n"
-
-    prompt_text += f"\n\nThe current name for this topic of these paragraphs is: {original_topic_names[-1]}\n"
-    prompt_text += "\n" + llm_instruction
+    template = _PROMPT_TEMPLATES["remedy"]
+    larger_topic = attempted_topic_names[0]
+    cluster_keywords = representations["contrastive"][layer][topic_index][:max_keywords]
+    cluster_subtopics = subtopic_layers[layer - 1][topic_index][:max_subtopics] if layer > 0 else None
+    cluster_sentences = representations["topical"][layer][topic_index][:max_sentences]
+    matching_topic_keywords = {
+        (matching_topic_layer, matching_topic_index): representations["contrastive"][matching_topic_layer][matching_topic_index][:max_keywords]
+        for matching_topic_layer, matching_topic_index in matching_topics
+    }
+    matching_topic_subtopics = {
+        (matching_topic_layer, matching_topic_index): subtopic_layers[matching_topic_layer - 1][matching_topic_index][:max_subtopics]
+        for matching_topic_layer, matching_topic_index in matching_topics if matching_topic_layer > 0
+    }
+    matching_topic_sentences = {
+        (matching_topic_layer, matching_topic_index): representations["topical"][matching_topic_layer][matching_topic_index][:max_sentences]
+        for matching_topic_layer, matching_topic_index in matching_topics
+    }
+    prompt_text = template.render(
+        larger_topic=larger_topic,
+        attempted_topic_names=attempted_topic_names,
+        matching_topics=matching_topics,
+        matching_topic_keywords=matching_topic_keywords,
+        matching_topic_subtopics=matching_topic_subtopics,
+        matching_topic_sentences=matching_topic_sentences,
+        cluster_keywords=cluster_keywords,
+        cluster_subtopics=cluster_subtopics,
+        cluster_sentences=cluster_sentences,
+        document_type=document_type,
+        corpus_description=corpus_description,
+    )
     return prompt_text
 
 
 def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
     n_samples = distances.shape[0]
-    clustering = AgglomerativeClustering(n_clusters=2,
-                                         distance_threshold=None,
-                                         compute_full_tree=True,
-                                         compute_distances=True,
-                                         metric='precomputed',
-                                         linkage='complete')
+    clustering = AgglomerativeClustering(
+        n_clusters=2,
+        distance_threshold=None,
+        compute_full_tree=True,
+        compute_distances=True,
+        metric='precomputed',
+        linkage='complete'
+    )
     clustering.fit(distances)
     cluster_sizes = defaultdict(lambda: 1)
     merge_distances = clustering.distances_
-
+    
     for i, (cluster1, cluster2) in enumerate(clustering.children_):
         new_size = cluster_sizes[cluster1] + cluster_sizes[cluster2]
-        if new_size > max_cluster_size and merge_distances[i - 1] > 0.0:
+        if new_size > max_cluster_size and merge_distances[i - 1] > COSINE_DISTANCE_EPSILON:
             return merge_distances[i - 1] if i > 0 else 0
-
+        
         cluster_sizes[n_samples + i] = new_size
         del cluster_sizes[cluster1]
         del cluster_sizes[cluster2]
-
+    
     return merge_distances[-1]
 
 
