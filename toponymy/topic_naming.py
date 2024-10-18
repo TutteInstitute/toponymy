@@ -17,9 +17,6 @@ from tqdm.auto import tqdm
 
 import jinja2
 
-_ENV = jinja2.Environment()
-_ENV.globals.update(zip=zip)
-
 _PROMPT_TEMPLATES = {
     "remedy": jinja2.Template(
         """
@@ -67,7 +64,7 @@ You are an expert in {{larger_topic}} and have been asked to provide a more spec
 
 Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area.
 
-{% for topic, keywords, sentences in zip(base_layer_topics, base_layer_keywords, base_layer_sentences) %}
+{% for topic, keywords, sentences in base_layer_topic_data) %}
 "{{topic}}":
  - Keywords: {{", ".join(keywords)}}
  - Sample {{document_type}}:
@@ -417,11 +414,11 @@ def create_distinguish_base_layer_topics_prompt(
         representations["topical"][i][:max_sentences] for i in topic_indices
     ]
 
+    base_layer_topic_data = list(zip(attempted_topic_names, keywords_per_topic, sentences_per_topic))
+
     prompt_text = template.render(
         larger_topic=larger_topic,
-        base_layer_topics=attempted_topic_names,
-        base_layer_keywords=keywords_per_topic,
-        base_layer_sentences=sentences_per_topic,
+        base_layer_topic_data=base_layer_topic_data,
         document_type=document_type,
         corpus_description=corpus_description,
     )
