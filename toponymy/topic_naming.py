@@ -500,7 +500,7 @@ def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
             new_size > max_cluster_size
             and merge_distances[i - 1] > COSINE_DISTANCE_EPSILON
         ):
-            return merge_distances[i - 1] if i > 0 else 0
+            return merge_distances[i - 1] if i > 0 else merge_distances[0]
 
         cluster_sizes[n_samples + i] = new_size
         del cluster_sizes[cluster1]
@@ -974,8 +974,10 @@ class Toponymy:
             metric="precomputed",
             linkage="complete",
         )
+        print("Distance threshold", distance_threshold)
         cls.fit(base_layer_topic_distances)
         cluster_sizes = np.bincount(cls.labels_)
+        print("Cluster sizes", cluster_sizes)
         clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
         for c in tqdm(
             clusters_for_renaming,
@@ -1394,32 +1396,19 @@ class Toponymy:
                 if (n, i) in singleton_dict:
                     continue
 
+                matching_topics = []
                 while unique_name in unique_names and n_attempts < 3:
-                    matching_topic_layer, matching_topic_index = unique_names[
-                        unique_name
-                    ]
+                    matching_topics.append(unique_names[unique_name])
                     prompt_text = create_topic_discernment_prompt(
                         layer=n,
                         topic_index=i,
                         attempted_topic_names=original_topic_names,
-                        cluster_indices=indices,
-                        matching_topic_layer=matching_topic_layer,
-                        matching_topic_index=matching_topic_index,
+                        matching_topics=matching_topics,
                         representations=self.representation_,
+                        subtopic_layers=self.subtopic_layers_["topical"],
                         document_type=self.document_type,
                         corpus_description=self.corpus_description,
-                        llm_instruction=self.llm.llm_instruction(kind="remedy"),
                     )
-                    # prompt_text = create_final_remedy_prompt(
-                    #     original_topic_names,
-                    #     self.documents,
-                    #     self.document_vectors,
-                    #     indices,
-                    #     self.cluster_layers_.vector_layers[n][i],
-                    #     self.document_type,
-                    #     self.corpus_description,
-                    #     self.llm.llm_instruction(kind="remedy"),
-                    # )
                     unique_name = self.llm.generate_topic_name(prompt_text)
                     original_topic_names.append(unique_name)
                     n_attempts += 1
