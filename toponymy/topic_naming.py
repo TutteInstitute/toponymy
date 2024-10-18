@@ -881,7 +881,7 @@ class Toponymy:
             for text in self.representation_["topical"][layer_id][cluster_id][
                 :max_docs_per_cluster
             ]:
-                prompt_text += f' - "{self._trim_text(text)}"\n'
+                prompt_text += f' - "{text}"\n'
         if "distinctive" in self.representation_techniques:
             prompt_text += (
                 f"\nSample distinctive {self.document_type} from the group include:\n"
@@ -889,7 +889,7 @@ class Toponymy:
             for text in self.representation_["distinctive"][layer_id][cluster_id][
                 :max_docs_per_cluster
             ]:
-                prompt_text += f' - "{self._trim_text(text)}"\n'
+                prompt_text += f' - "{text}"\n'
         prompt_text += "\n\n" + llm_instruction
         return prompt_text
 
@@ -1294,7 +1294,7 @@ class Toponymy:
                     for text in self.representation_["topical"][0][x][
                         : max_subtopics - len(tree_subtopics)
                     ]:
-                        prompt += f'        + "{self._trim_text(text)}"\n'
+                        prompt += f'        + "{text}"\n'
 
             prompt += "\n\nYou should make use of the relative relationships between these topics as well as the keywords and sub-topic information to generate new topic names."
             prompt += "\nStrive to provide the simplest possible topic name (ideally a few words) that distinguishes a given topic from the other topics listed."
