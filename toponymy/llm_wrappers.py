@@ -84,6 +84,7 @@ try:
                     message=prompt,
                     model=self.model,
                     temperature=temperature,
+                    response_format={ "type": "json_object" },
                 ).text
                 topic_name_info = json.loads(topic_name_info_raw)
                 topic_name = topic_name_info["topic_name"]
