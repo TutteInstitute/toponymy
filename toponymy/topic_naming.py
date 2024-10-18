@@ -64,7 +64,7 @@ You are an expert in {{larger_topic}} and have been asked to provide a more spec
 
 Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area.
 
-{% for topic, keywords, sentences in base_layer_topic_data) %}
+{% for topic, keywords, sentences in base_layer_topic_data %}
 "{{topic}}":
  - Keywords: {{", ".join(keywords)}}
  - Sample {{document_type}}:
