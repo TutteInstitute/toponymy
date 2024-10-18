@@ -271,6 +271,21 @@ def longest_keyphrases(candidate_keyphrases):
     return result
 
 
+def create_topic_discernment_prompt(
+    layer,
+    topic_index,
+    attempted_topic_names,
+    cluster_indices,
+    matching_topic_layer,
+    matching_topic_index,
+    representations,
+    document_type,
+    corpus_description,
+    llm_instruction,
+):
+    template = _PROMPT_TEMPLATES["topic_discernment"]
+
+
 def create_final_remedy_prompt(
     original_topic_names,
     docs,
@@ -914,24 +929,6 @@ class Toponymy:
                 disable=(not self.verbose),
             )
         ]
-        self.subtopic_layers_["contrastive"] = [
-            [
-                self._contrastive_subtopics_for_cluster(
-                    layer_num,
-                    cluster_num,
-                    base_layer_topic_embedding,
-                    n_subtopics=max_subtopics_per_cluster,
-                )
-                for cluster_num in range(
-                    len(self.cluster_layers_.metacluster_layers[layer_num])
-                )
-            ]
-            for layer_num in tqdm(
-                range(1, len(self.cluster_layers_.metacluster_layers)),
-                desc="Finding contrastive subtopics",
-                disable=(not self.verbose),
-            )
-        ]
         return None
 
     def _create_prompt_from_subtopics(
@@ -1056,9 +1053,10 @@ class Toponymy:
             np.full(self.document_map.shape[0], "Unlabelled", dtype=object)
             for i in range(len(self.topic_name_layers_))
         ]
-        unique_names = set(
-            [""]
-        )  # Start with empty string so we fix any topics that failed to get a name
+        unique_names = {"": (-1,-1)}  # Start with empty string so we fix any topics that failed to get a name
+
+        # Find the singletons so we can skip them
+        singleton_subclusters, singleton_dict = self._get_singleton_subclusters() 
         for n in range(len(self.topic_name_layers_) - 1, -1, -1):
             for i, (name, indices) in tqdm(
                 enumerate(
@@ -1074,21 +1072,41 @@ class Toponymy:
                 n_attempts = 0
                 unique_name = name
                 original_topic_names = [unique_name]
-                while unique_name in unique_names and n_attempts < 8:
-                    prompt_text = create_final_remedy_prompt(
-                        original_topic_names,
-                        self.documents,
-                        self.document_vectors,
-                        indices,
-                        self.cluster_layers_.vector_layers[n][i],
-                        self.document_type,
-                        self.corpus_description,
-                        self.llm.llm_instruction(kind="remedy"),
+                if (n, i) in singleton_dict:
+                    # This is a singleton cluster, and doesn't need a name
+                    continue
+
+                while unique_name in unique_names and n_attempts < 3:
+                    matching_topic_layer, matching_topic_index = unique_names[unique_name]
+                    prompt_text = create_topic_discernment_prompt(
+                        layer=n,
+                        topic_index=i,
+                        attempted_topic_names=original_topic_names,
+                        cluster_indices=indices,
+                        matching_topic_layer=matching_topic_layer,
+                        matching_topic_index=matching_topic_index,
+                        representations=self.representation_,
+                        document_type=self.document_type,
+                        corpus_description=self.corpus_description,
+                        llm_instruction=self.llm.llm_instruction(kind="remedy"),
                     )
+                    # prompt_text = create_final_remedy_prompt(
+                    #     original_topic_names,
+                    #     self.documents,
+                    #     self.document_vectors,
+                    #     indices,
+                    #     self.cluster_layers_.vector_layers[n][i],
+                    #     self.document_type,
+                    #     self.corpus_description,
+                    #     self.llm.llm_instruction(kind="remedy"),
+                    # )
                     unique_name = self.llm.generate_topic_name(prompt_text)
                     original_topic_names.append(unique_name)
                     n_attempts += 1
+
                 if n_attempts > 0 and self.verbose:
                     print(f"{name} --> {unique_name} after {n_attempts} attempts")
-                unique_names.add(unique_name)
+                if unique_name not in unique_names:
+                    unique_names[unique_name] = (n, i)
+
                 self.layer_clusters[n][indices] = unique_name
