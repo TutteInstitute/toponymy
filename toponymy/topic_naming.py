@@ -945,40 +945,28 @@ class Toponymy:
             self.fit_base_layer_topics()
         new_topic_names = self.base_layer_topics_[:]
         base_layer_topic_embedding = self.embedding_model.encode(
-            self.base_layer_topics_, show_progress_bar=True)
-        base_layer_topic_distances = pairwise_distances(
-            base_layer_topic_embedding, metric="cosine")
-        distance_threshold = find_threshold_for_max_cluster_size(
-            base_layer_topic_distances)
-        cls = AgglomerativeClustering(n_clusters=None,
-                                      compute_full_tree=True,
-                                      distance_threshold=distance_threshold,
-                                      metric="precomputed",
-                                      linkage="complete")
+            self.base_layer_topics_, show_progress_bar=True
+        )
+        base_layer_topic_distances = pairwise_distances(base_layer_topic_embedding, metric="cosine")
+        distance_threshold = find_threshold_for_max_cluster_size(base_layer_topic_distances)
+        cls = AgglomerativeClustering(n_clusters=None, compute_full_tree=True, distance_threshold=distance_threshold, metric="precomputed", linkage="complete")
         cls.fit(base_layer_topic_distances)
         cluster_sizes = np.bincount(cls.labels_)
         clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
-        for c in tqdm(clusters_for_renaming,
-                      desc="Distinguishing similar topics",
-                      disable=(not self.verbose)):
+        for c in tqdm(clusters_for_renaming, desc="Distinguishing similar topics", disable=(not self.verbose)):
             label_indices = np.where(cls.labels_ == c)[0]
-            prompt = f"There are collections of {self.corpus_description} with somewhat similar auto-generated topic names, all in your field of expertise.\n"
-            prompt += f"Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area."
-            for x in label_indices:
-                prompt += f"\n\n**{self.base_layer_topics_[x]}**\n"
-                prompt += "    - keywords: " + ", ".join(
-                    self.representation_["contrastive"][0][x]) + "\n"
-                prompt += f"    - sample {self.document_type}:\n"
-                for text in self.representation_["topical"][0][x]:
-                    prompt += f'        + "{self._trim_text(text)}"\n'
-            prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and {self.document_type} information to generate new better and more specific topic names."
-            prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
-            prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
-            cluster_topic_names = self.llm.generate_topic_cluster_names(
-                prompt, [self.base_layer_topics_[x] for x in label_indices],
-                temperature=0.8)
-            for new_topic_name, topic_index in zip(cluster_topic_names,
-                                                   label_indices):
+            prompt = create_distinguish_base_layer_topics_prompt(
+                label_indices,
+                [self.base_layer_topics_[x] for x in label_indices],
+                {
+                    "topical": self.representation_["topical"][0],
+                    "contrastive": self.representation_["contrastive"][0],
+                },
+                self.document_type,
+                self.corpus_description,
+            )
+            cluster_topic_names = self.llm.generate_topic_cluster_names(prompt, [self.base_layer_topics_[x] for x in label_indices], temperature=1.0)
+            for new_topic_name, topic_index in zip(cluster_topic_names, label_indices):
                 new_topic_names[topic_index] = new_topic_name
 
         self.base_layer_topics_ = new_topic_names
