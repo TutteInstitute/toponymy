@@ -55,6 +55,7 @@ better and more *specific* topic name.
 The response should be only JSON with no preamble formatted as 
   {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} 
 where SCORE is a value in the range 0 to 1.
+The response must contain only JSON with no preamble.
 """
     ),
     "distinguish_base_layer_topics": jinja2.Template(
