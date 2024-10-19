@@ -1418,4 +1418,7 @@ class Toponymy:
                 if unique_name not in unique_names:
                     unique_names[unique_name] = (n, i)
 
-                self.layer_clusters[n][indices] = unique_name
+                if unique_name != "":
+                    self.layer_clusters[n][indices] = unique_name
+                else:
+                    self.layer_clusters[n][indices] = name # If we failed to get a name, keep the old one
