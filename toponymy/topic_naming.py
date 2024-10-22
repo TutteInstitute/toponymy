@@ -524,49 +524,67 @@ class ClusterLayers:
 
 
 class Toponymy:
-    """
-    documents: iterable of strings
-        An iterable of objects to topic model.  Our current LLM topic naming functions currently presume these to be strings.
-    document_vectors: numpy array
-        A numpy array of shape number_of_objects by features.  These are vectors which encode the semantic similarity of our
-        documents being topic modeled.
-    document_map: numpy array
-        A numpy array of shape number_of_objects by 2 (or 3).  These are two dimensional vectors often corresponding
-        to a 2 dimensional umap of the document_vectors.
-    cluster_layers: ClusterLayers (optional, default None):
-        A ClusterLayers object containing information on each layer in your
-        hierarchical clustering.
-    representative_sentences: dict (optional, default None):
-        A dictionary from one of a set of ways to represent a document cluster to a the cluster representation.
-    trim_percentile: int (between 0 and 100)
-        Trim any document with a token length longer than the 99th percentile. This prevents very long outlier documents from swamping our prompts.
-        The trim length will be the maximum of this value and trim_length.  Set to 100 if you don't want any trimming.
-    trim_length: int
-        Maximum number of tokens to keep from each document. This prevents very long outlier documents from swamping our prompts.
-        The trim length will be the maximum of this value and trim_length. Set to None if you don't want any trimming.
-    """
+    """ """
 
     def __init__(
         self,
         documents: Iterable,
-        document_vectors,
-        document_map,
+        document_vectors: np.ndarray[float],
+        document_map: np.ndarray[float],
         llm,
-        embedding_model,  # The embedding model that the document_vectors was constructed with.
+        embedding_model,
         cluster_layers: ClusterLayers = None,
-        representation_techniques=["topical", "contrastive"],
-        document_type="titles",
-        corpus_description="academic articles",
-        verbose=True,
+        representation_techniques: list[str] = ["topical", "contrastive"],
+        document_type: str = "titles",
+        corpus_description: str = "academic articles",
+        verbose: bool = True,
         trim_percentile=99,
         trim_length=100,
-        keyphrase_min_occurrences=25,
-        keyphrase_ngram_range=(1, 4),
-        n_sentence_examples_per_cluster=16,
-        n_keyphrases_per_cluster=16,
-        max_subtopics_per_cluster=32,
-        max_neighbors_per_cluster=6,
+        keyphrase_min_occurrences: int = 25,
+        keyphrase_ngram_range: tuple[int] = (1, 4),
+        n_sentence_examples_per_cluster: int = 16,
+        n_keyphrases_per_cluster: int = 16,
+        max_subtopics_per_cluster: int = 32,
+        max_neighbors_per_cluster: int = 6,
     ):
+        """
+        Parameters
+        ----------
+        documents: iterable of strings
+            An iterable of objects to topic model.  Currently our LLM topic naming functions presume these to be strings.
+        document_vectors: numpy array
+            A numpy array of shape number_of_objects by features.  These are vectors which encode the semantic similarity of our
+            documents being topic modeled.
+        document_map: numpy array
+            A numpy array of shape number_of_objects by 2 (or 3).  These are two dimensional vectors often corresponding
+            to a 2 dimensional umap of the document_vectors.
+        llm :
+            A wrapper from toponymy.llm_wrappers around the LLM that will be used
+            to generate topic names.
+        embedding_model :
+            The embedding model that the document_vectors was constructed with. Has an encode method.
+        cluster_layers: ClusterLayers (optional, default None):
+            A ClusterLayers object containing information on each layer in your
+            hierarchical clustering.
+        representation_techniques :
+        document_type : str
+        corpus_description :
+        verbose :
+        keyphrase_min_occurrences :
+        keyphrase_ngram_range :
+        n_sentence_examples_per_cluster :
+        n_keyphrases_per_cluster :
+        max_subtopics_per_cluster :
+        max_neighbors_per_cluster :
+        representative_sentences: dict (optional, default None):
+            A dictionary from one of a set of ways to represent a document cluster to a the cluster representation.
+        trim_percentile: int (between 0 and 100)
+            Trim any document with a token length longer than the 99th percentile. This prevents very long outlier documents from swamping our prompts.
+            The trim length will be the maximum of this value and trim_length.  Set to 100 if you don't want any trimming.
+        trim_length: int
+            Maximum number of tokens to keep from each document. This prevents very long outlier documents from swamping our prompts.
+            The trim length will be the maximum of this value and trim_length. Set to None if you don't want any trimming.
+        """
         if cluster_layers is not None and not isinstance(cluster_layers, ClusterLayers):
             raise ValueError(
                 f"cluster_layers must be of type ClusterLayers not {type(cluster_layers)}"
