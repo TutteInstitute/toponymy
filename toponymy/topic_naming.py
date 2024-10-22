@@ -1,5 +1,6 @@
 import warnings
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import numba
@@ -311,7 +312,7 @@ def diversify(query_vector, candidate_neighbor_vectors, alpha=1.0, max_candidate
 def topical_sentences_for_cluster(
     docs, vector_array, pointset, centroid_vector, n_sentence_examples=16
 ):
-    sentences = docs.values[pointset]
+    sentences = docs[pointset]
 
     sent_vectors = vector_array[pointset]
     candidate_neighbor_indices = np.argsort(
@@ -338,7 +339,7 @@ def distinctive_sentences_for_cluster(
     n_sentence_examples=16,
 ):
     pointset = pointset_layer[cluster_num]
-    sentences = docs.values[pointset]
+    sentences = docs[pointset]
 
     local_vectors = vector_array[
         sum([pointset_layer[x] for x in cluster_neighbors], [])
@@ -524,8 +525,8 @@ class ClusterLayers:
 
 class Toponymy:
     """
-    documents: list of strings
-        A list of objects to topic model.  Our current LLM topic naming functions currently presume these to be strings.
+    documents: iterable of strings
+        An iterable of objects to topic model.  Our current LLM topic naming functions currently presume these to be strings.
     document_vectors: numpy array
         A numpy array of shape number_of_objects by features.  These are vectors which encode the semantic similarity of our
         documents being topic modeled.
@@ -533,8 +534,8 @@ class Toponymy:
         A numpy array of shape number_of_objects by 2 (or 3).  These are two dimensional vectors often corresponding
         to a 2 dimensional umap of the document_vectors.
     cluster_layers: ClusterLayers (optional, default None):
-        A ClusterLayers with one element for each layer in your hierarchical clustering.
-        Each layer is a list
+        A ClusterLayers object containing information on each layer in your
+        hierarchical clustering.
     representative_sentences: dict (optional, default None):
         A dictionary from one of a set of ways to represent a document cluster to a the cluster representation.
     trim_percentile: int (between 0 and 100)
@@ -547,7 +548,7 @@ class Toponymy:
 
     def __init__(
         self,
-        documents,
+        documents: Iterable,
         document_vectors,
         document_map,
         llm,
@@ -591,7 +592,7 @@ class Toponymy:
                 )
             )
 
-        self.documents = documents
+        self.documents = np.asarray(documents)
         self.document_map = np.asarray(document_map)
         self.representation_techniques = representation_techniques
         self.document_type = document_type
