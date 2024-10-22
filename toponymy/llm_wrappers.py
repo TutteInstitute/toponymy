@@ -1,12 +1,18 @@
 import string
+import re
 from warnings import warn
+import json
 
 import tokenizers
 import transformers
 
+_GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?, "topic_specificity":\s*\d+\.\d+\s*\}'
+_GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"topic_names":\s*.*?, "topic_specificity": .*?\}'
+
 try:
 
     import llama_cpp
+
 
     class LlamaCppWrapper:
 
@@ -32,14 +38,9 @@ try:
             try:
                 topic_name_info_raw = self.llm(prompt, temperature=temperature)
                 topic_name_info_text = topic_name_info_raw["choices"][0]["text"]
-                topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
+                topic_name_info = re.findall(_GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text)[0]
+                topic_name_info = json.loads(topic_name_info)
+                result = topic_name_info["topic_names"]
                 return result
             except:
                 return old_names
@@ -60,9 +61,66 @@ except ImportError:
     pass
 
 try:
+    import huggingface_hub
+    import transformers
 
-    import json
+    class HuggingFaceWrapper:
 
+        def __init__(self, model, **kwargs):
+            self.model = model
+            self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
+
+        def generate_topic_name(self, prompt, temperature=0.8):
+            try:
+                topic_name_info_raw = self.llm(prompt, max_length=256, temperature=temperature)
+                topic_name_info_text = topic_name_info_raw[0]["generated_text"][-1]['content']
+                topic_name_info = re.findall(_GET_TOPIC_NAME_REGEX, topic_name_info_text)[0]
+                topic_name_info = json.loads(topic_name_info)
+                topic_name = topic_name_info["topic_name"]
+            except:
+                topic_name = ""
+
+            return topic_name
+        
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm(prompt, max_length=1024, temperature=temperature)
+                topic_name_info_text = topic_name_info_raw[0]["generated_text"][-1]['content']
+                topic_name_info = re.findall(_GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text)[0]
+                topic_name_info = json.loads(topic_name_info)
+                result = topic_name_info["topic_names"]
+                return result
+            except:
+                return old_names
+            
+        def llm_instruction(self, kind="base_layer"):
+            if kind == "base_layer":
+                return """
+You are to give a brief (five to ten word) name describing this group.
+The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
+The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+                """
+            elif kind == "intermediate_layer":
+                return """
+You are to give a brief (three to five word) name describing this group of papers.
+The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
+The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+                """
+            elif kind == "remedy":
+                return """
+You are to give a brief (three to ten word) name describing this group of papers that better captures the specific details of this group.
+The topic should be the most specific topic that encompasses the full breadth of sub-topics.
+The response should be in JSON formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
+"""
+            else:
+                raise ValueError(
+                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
+                )
+
+except ImportError:
+    pass
+
+try:
     import cohere
 
     class CohereWrapper:
@@ -92,33 +150,23 @@ try:
                 topic_name = ""
             return topic_name
 
-        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.8):
             try:
                 topic_name_info_raw = self.llm.chat(
                     message=prompt,
                     model=self.model,
                     temperature=temperature,
+                    response_format={ "type": "json_object" },
+                    max_tokens=2048,
                 )
                 topic_name_info_text = topic_name_info_raw.text
                 topic_name_info = json.loads(topic_name_info_text)
             except Exception as e:
                 warn(f"Failed to generate topic cluster names with Cohere: {e}")
+                print(topic_name_info_text)
                 return old_names
 
-            result = []
-            for old_name, name_mapping in zip(old_names, topic_name_info):
-                try:
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values())[0])
-                    else:
-                        warn(
-                            f"Old name {old_name} does not match the new name {list(name_mapping.keys())[0]}"
-                        )
-                        # use old_name?
-                        result.append(list(name_mapping.values())[0])
-                except:
-                    result.append(old_name)
-
+            result = topic_name_info["topic_names"]
             return result
 
         def llm_instruction(self, kind="base_layer"):
@@ -149,9 +197,6 @@ except:
     pass
 
 try:
-
-    import json
-
     import anthropic
 
     class AnthropicWrapper:
@@ -187,13 +232,7 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
                 topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
+                result = topic_name_info["topic_names"]
                 return result
             except:
                 return old_names
@@ -226,8 +265,6 @@ except:
     pass
 
 try:
-    import json
-
     import openai
 
     class OpenAIWrapper:
@@ -268,13 +305,7 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
                 topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
+                result = topic_name_info["topic_names"]
                 return result
             except:
                 return old_names

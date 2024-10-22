@@ -60,13 +60,13 @@ The response must contain only JSON with no preamble.
     ),
     "distinguish_base_layer_topics": jinja2.Template(
         """
-You are an expert in {{larger_topic}} and have been asked to provide a more specific names for various groups of
+You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
-Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area.
+Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {{self.document_type}} from the topic area.
 
 {% for topic, keywords, sentences in base_layer_topic_data %}
-"{{topic}}":
+"{{loop.index}}. {{topic}}":
  - Keywords: {{", ".join(keywords)}}
  - Sample {{document_type}}:
 {% for sentence in sentences %}
@@ -76,11 +76,12 @@ Below are the auto-generated topic names, along with some keywords associated to
 
 Your should make use of the relative relationships between these topics as well as the keywords
 and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new
-better and more distinguishing topic names.
+better and more distinguishing topic names. There should be no duplicate topic names in the final list.
 
-The result should be formatted as JSON in the format 
-  [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...]
-The result must contain only JSON with no preamble and must have one entry for each topic to be renamed.
+The response should be formatted as JSON in the format 
+    {"topic_names": [<NAME1>, <NAME2>, ...], "previous_topic_names": [<OLD_NAME1>, <OLD_NAME2>, ...], topic_specificity": [<SCORE1>, <SCORE2>, ...]}
+where SCORE is a value in the range 0 to 1.
+The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
 """
     ),
 }
@@ -958,6 +959,8 @@ class Toponymy:
     def distinguish_base_layer_topics(self):
         if getattr(self, "base_layer_topics_", None) is None:
             self.fit_base_layer_topics()
+
+        import pandas as pd
         new_topic_names = self.base_layer_topics_[:]
         base_layer_topic_embedding = self.embedding_model.encode(
             self.base_layer_topics_, show_progress_bar=True
@@ -978,7 +981,8 @@ class Toponymy:
         print("Distance threshold", distance_threshold)
         cls.fit(base_layer_topic_distances)
         cluster_sizes = np.bincount(cls.labels_)
-        print("Cluster sizes", cluster_sizes)
+        print("Cluster sizes", np.sort(cluster_sizes)[::-1])
+        print(pd.Series(new_topic_names).value_counts())
         clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
         for c in tqdm(
             clusters_for_renaming,
@@ -1004,6 +1008,7 @@ class Toponymy:
             for new_topic_name, topic_index in zip(cluster_topic_names, label_indices):
                 new_topic_names[topic_index] = new_topic_name
 
+        print(pd.Series(new_topic_names).value_counts())
         self.base_layer_topics_ = new_topic_names
 
     def fit_base_layer_topics(self):
