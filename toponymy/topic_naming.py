@@ -414,7 +414,9 @@ def create_distinguish_base_layer_topics_prompt(
         representations["topical"][i][:max_sentences] for i in topic_indices
     ]
 
-    base_layer_topic_data = list(zip(attempted_topic_names, keywords_per_topic, sentences_per_topic))
+    base_layer_topic_data = list(
+        zip(attempted_topic_names, keywords_per_topic, sentences_per_topic)
+    )
 
     prompt_text = template.render(
         larger_topic=larger_topic,
@@ -530,8 +532,8 @@ class Toponymy:
     document_map: numpy array
         A numpy array of shape number_of_objects by 2 (or 3).  These are two dimensional vectors often corresponding
         to a 2 dimensional umap of the document_vectors.
-    cluster_layers: list of lists (optional, default None):
-        A list with one element for each layer in your hierarchical clustering.
+    cluster_layers: ClusterLayers (optional, default None):
+        A ClusterLayers with one element for each layer in your hierarchical clustering.
         Each layer is a list
     representative_sentences: dict (optional, default None):
         A dictionary from one of a set of ways to represent a document cluster to a the cluster representation.
@@ -549,8 +551,8 @@ class Toponymy:
         document_vectors,
         document_map,
         llm,
-        embedding_model=None,  # The embedding model that the document_vectors was constructed with.
-        cluster_layers=None,  # ClusterLayer dataclass
+        embedding_model,  # The embedding model that the document_vectors was constructed with.
+        cluster_layers: ClusterLayers = None,
         representation_techniques=["topical", "contrastive"],
         document_type="titles",
         corpus_description="academic articles",
@@ -564,20 +566,34 @@ class Toponymy:
         max_subtopics_per_cluster=32,
         max_neighbors_per_cluster=6,
     ):
-        self.documents = documents
-        self.document_vectors = document_vectors
-        self.document_map = document_map
-        if (cluster_layers is not None) and not isinstance(
-            cluster_layers, ClusterLayers
-        ):
+        if cluster_layers is not None and not isinstance(cluster_layers, ClusterLayers):
             raise ValueError(
                 f"cluster_layers must be of type ClusterLayers not {type(cluster_layers)}"
             )
         if cluster_layers:
             self.cluster_layers_ = cluster_layers
-        self.representation_techniques = representation_techniques
+
+        if not (
+            hasattr(embedding_model, "encode") and callable(embedding_model.encode)
+        ):
+            raise ValueError("embedding_model must have an encode method")
         self.embedding_model = embedding_model
-        # Check that this is either None or has an embed function.
+
+        self.document_vectors = np.asarray(document_vectors)
+        embedding_dimension = len(embedding_model.encode([""])[0])
+        vectors_dimension = self.document_vectors.shape[1]
+        if embedding_dimension != vectors_dimension:
+            raise ValueError(
+                (
+                    "embedding_model must be the same model that produced "
+                    "document_vectors, but it has embedding dimension "
+                    f"{embedding_dimension} and not {vectors_dimension}."
+                )
+            )
+
+        self.documents = documents
+        self.document_map = np.asarray(document_map)
+        self.representation_techniques = representation_techniques
         self.document_type = document_type
         self.corpus_description = corpus_description
         self.llm = llm
