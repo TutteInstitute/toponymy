@@ -3,6 +3,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+import jinja2
 import numba
 import numpy as np
 import sklearn.feature_extraction
@@ -15,8 +16,6 @@ from sklearn.metrics import pairwise_distances
 from sklearn.preprocessing import normalize
 from sklearn.utils.extmath import randomized_svd
 from tqdm.auto import tqdm
-
-import jinja2
 
 _PROMPT_TEMPLATES = {
     "remedy": jinja2.Template(
@@ -538,8 +537,6 @@ class Toponymy:
         document_type: str = "titles",
         corpus_description: str = "academic articles",
         verbose: bool = True,
-        trim_percentile=99,
-        trim_length=100,
         keyphrase_min_occurrences: int = 25,
         keyphrase_ngram_range: tuple[int] = (1, 4),
         n_sentence_examples_per_cluster: int = 16,
@@ -576,14 +573,6 @@ class Toponymy:
         n_keyphrases_per_cluster :
         max_subtopics_per_cluster :
         max_neighbors_per_cluster :
-        representative_sentences: dict (optional, default None):
-            A dictionary from one of a set of ways to represent a document cluster to a the cluster representation.
-        trim_percentile: int (between 0 and 100)
-            Trim any document with a token length longer than the 99th percentile. This prevents very long outlier documents from swamping our prompts.
-            The trim length will be the maximum of this value and trim_length.  Set to 100 if you don't want any trimming.
-        trim_length: int
-            Maximum number of tokens to keep from each document. This prevents very long outlier documents from swamping our prompts.
-            The trim length will be the maximum of this value and trim_length. Set to None if you don't want any trimming.
         """
         if cluster_layers is not None and not isinstance(cluster_layers, ClusterLayers):
             raise ValueError(
@@ -617,8 +606,6 @@ class Toponymy:
         self.corpus_description = corpus_description
         self.llm = llm
         self.verbose = verbose
-        self.trim_percentile = trim_percentile
-        self.trim_length = trim_length
         self.keyphrase_min_occurrences = keyphrase_min_occurrences
         self.keyphrase_ngram_range = keyphrase_ngram_range
         self.n_sentence_examples_per_cluster = n_sentence_examples_per_cluster
@@ -894,8 +881,6 @@ class Toponymy:
         """
         Take a cluster_id and layer_id and extracts the relevant information from the representation_ and cluster_layers_ properties to
         construct a representative prompt to present to a large langauge model.
-
-        Each represenative is trimmed to be at most self.token_trim_length tokens in size.
         """
         prompt_text = f"Below is a information about a group of {self.document_type} from {self.corpus_description}:\n\n"
 
@@ -937,10 +922,6 @@ class Toponymy:
         This returns a list of prompts for the layer_id independent of any other layer.
         This is commonly used for the base layer of a hierarchical topic clustering (hence the layer_id=0)
 
-        If any of the prompt lengths (in llm tokenze) are longere than the max tokens for our llm (as defined by llm.n_ctx)
-        then we reduce the maximum documents sampled from each cluster by a half and try again.  If we ever have to sample
-        a single document per cluster we will declaire failure and raise and error.
-
         If the representation_ have not yet been generated or is None it will generate them as necessary.
 
         FUTURE: We hope to include improved subsampling and document partitioning method in future releases to allow
@@ -951,7 +932,7 @@ class Toponymy:
         )
         if self.verbose:
             print(
-                f"generating base layer topic names with at most {max_docs_per_cluster} {self.document_type} per cluster."
+                f"Generating base layer topic names with at most {max_docs_per_cluster} {self.document_type} per cluster."
             )
         if getattr(self, "representation_", None) is None:
             self.fit_representation()
