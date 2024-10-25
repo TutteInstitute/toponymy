@@ -40,7 +40,8 @@ try:
                 topic_name_info_text = topic_name_info_raw["choices"][0]["text"]
                 topic_name_info = re.findall(_GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text)[0]
                 topic_name_info = json.loads(topic_name_info)
-                result = topic_name_info["topic_names"]
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [mapping.get(f"{n}. {name}", name) for n, name in enumerate(old_names)]
                 return result
             except:
                 return old_names
@@ -88,7 +89,8 @@ try:
                 topic_name_info_text = topic_name_info_raw[0]["generated_text"][-1]['content']
                 topic_name_info = re.findall(_GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text)[0]
                 topic_name_info = json.loads(topic_name_info)
-                result = topic_name_info["topic_names"]
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [mapping.get(f"{n}. {name}", name) for n, name in enumerate(old_names)]
                 return result
             except:
                 return old_names
@@ -161,13 +163,12 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.text
                 topic_name_info = json.loads(topic_name_info_text)
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [mapping.get(f"{n}. {name}", name) for n, name in enumerate(old_names)]
+                return result
             except Exception as e:
                 warn(f"Failed to generate topic cluster names with Cohere: {e}")
-                print(topic_name_info_text)
                 return old_names
-
-            result = topic_name_info["topic_names"]
-            return result
 
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
@@ -232,7 +233,8 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
                 topic_name_info = json.loads(topic_name_info_text)
-                result = topic_name_info["topic_names"]
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [mapping.get(f"{n}. {name}", name) for n, name in enumerate(old_names)]
                 return result
             except:
                 return old_names
@@ -305,7 +307,8 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
                 topic_name_info = json.loads(topic_name_info_text)
-                result = topic_name_info["topic_names"]
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [mapping.get(f"{n}. {name}", name) for n, name in enumerate(old_names)]
                 return result
             except:
                 return old_names
