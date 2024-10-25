@@ -7,7 +7,7 @@ import tokenizers
 import transformers
 
 _GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?, "topic_specificity":\s*\d+\.\d+\s*\}'
-_GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"topic_names":\s*.*?, "topic_specificity": .*?\}'
+_GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"new_topic_name_mapping":\s*.*?, "topic_specificities": .*?\}'
 
 try:
 
@@ -46,18 +46,6 @@ try:
             except:
                 return old_names
 
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return "\nThe short distinguising topic name is:\n"
-            elif kind == "intermediate_layer":
-                return "\nThe short topic name that encompasses the sub-topics is:\n"
-            elif kind == "remedy":
-                return "\nA better and more specific name that still captures the topic of these article titles is:\n"
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
-
 except ImportError:
     pass
 
@@ -94,30 +82,7 @@ try:
                 return result
             except:
                 return old_names
-            
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (three to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be in JSON formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
+
 
 except ImportError:
     pass
@@ -170,29 +135,6 @@ try:
                 warn(f"Failed to generate topic cluster names with Cohere: {e}")
                 return old_names
 
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (three to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be in JSON formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
 
 except:
     pass
@@ -238,30 +180,6 @@ try:
                 return result
             except:
                 return old_names
-
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (five to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
 
 except:
     pass
@@ -312,30 +230,6 @@ try:
                 return result
             except:
                 return old_names
-
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response must be **ONLY** JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (five to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
 
 except:
     pass
