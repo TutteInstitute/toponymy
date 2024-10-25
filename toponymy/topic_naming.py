@@ -136,30 +136,30 @@ Below are the auto-generated topic names, along with some keywords associated to
 {% for topic in topics %}
 
 "{{loop.index}}. {{topic}}":
-{% if cluster_keywords[loop.index] %}
- - Keywords for this group include: {{", ".join(cluster_keywords[loop.index])}}
+{% if cluster_keywords[loop.index - 1] %}
+ - Keywords for this group include: {{", ".join(cluster_keywords[loop.index - 1])}}
 {% endif %}
-{%- if cluster_subtopics["major"][loop.index] %}
+{%- if cluster_subtopics["major"][loop.index - 1] %}
  - Major subtopics of this group are: 
-{%- for subtopic in cluster_subtopics["major"][loop.index] %}
+{%- for subtopic in cluster_subtopics["major"][loop.index - 1] %}
       * {{subtopic}}
 {%- endfor %}
 {%- endif %}
-{%- if cluster_subtopics["minor"][loop.index] %}
+{%- if cluster_subtopics["minor"][loop.index - 1] %}
  - Minor subtopics of this group are:
-{%- for subtopic in cluster_subtopics["minor"][loop.index] %}
+{%- for subtopic in cluster_subtopics["minor"][loop.index - 1] %}
       * {{subtopic}}
 {%- endfor %}
 {%- endif %}
-{%- if cluster_subtopics["misc"][loop.index] %}
+{%- if cluster_subtopics["misc"][loop.index - 1] %}
  - Other miscellaneous specific subtopics of this group include:
-{%- for subtopic in cluster_subtopics["misc"][loop.index] %}
+{%- for subtopic in cluster_subtopics["misc"][loop.index - 1] %}
         * {{subtopic}}
 {%- endfor %}
 {%- endif %}
-{%- if cluster_sentences[loop.index] %}
+{%- if cluster_sentences[loop.index - 1] %}
  - Sample {{document_type}} from this group include:
-{%- for sentence in cluster_sentences[loop.index] %}
+{%- for sentence in cluster_sentences[loop.index - 1] %}
       - "{{sentence}}"
 {%- endfor %}
 {%- endif %}
@@ -1316,14 +1316,15 @@ class Toponymy:
 
             tree_subtopics_per_topic = [self.cluster_tree_[(layer_id, x)] for x in label_indices]
             major_subtopics_per_topic = [
-                [a[1] for a in tree_subtopics if a[0] == layer_id - 1] for tree_subtopics in tree_subtopics_per_topic
+                [self.topic_name_layers_[layer_id - 1][a[1]] for a in tree_subtopics if a[0] == layer_id - 1] for tree_subtopics in tree_subtopics_per_topic
             ]
             minor_subtopics_per_topic = [
-                [a[1] for a in tree_subtopics if a[0] == layer_id - 2] for tree_subtopics in tree_subtopics_per_topic
+                [self.topic_name_layers_[layer_id - 2][a[1]] for a in tree_subtopics if a[0] == layer_id - 2] for tree_subtopics in tree_subtopics_per_topic
             ]
             other_subtopics_per_topic = [
                 [a for a in tree_subtopics if a[0] < layer_id - 2] for tree_subtopics in tree_subtopics_per_topic
             ]
+            other_subtopics_per_topic = [[self.topic_name_layers_[a[0]][a[1]] for a in topic] for topic in other_subtopics_per_topic]
 
             prompt = template.render(
                 larger_topic=larger_topic,
