@@ -1,6 +1,7 @@
 import warnings
 from collections import defaultdict
 from dataclasses import dataclass
+import asyncio
 
 import numba
 import numpy as np
@@ -136,30 +137,30 @@ Below are the auto-generated topic names, along with some keywords associated to
 {% for topic in topics %}
 
 "{{loop.index}}. {{topic}}":
-{% if cluster_keywords[loop.index] %}
- - Keywords for this group include: {{", ".join(cluster_keywords[loop.index])}}
+{% if cluster_keywords[loop.index - 1] %}
+ - Keywords for this group include: {{", ".join(cluster_keywords[loop.index - 1])}}
 {% endif %}
-{%- if cluster_subtopics["major"][loop.index] %}
+{%- if cluster_subtopics["major"][loop.index - 1] %}
  - Major subtopics of this group are: 
-{%- for subtopic in cluster_subtopics["major"][loop.index] %}
+{%- for subtopic in cluster_subtopics["major"][loop.index - 1] %}
       * {{subtopic}}
 {%- endfor %}
 {%- endif %}
-{%- if cluster_subtopics["minor"][loop.index] %}
+{%- if cluster_subtopics["minor"][loop.index - 1] %}
  - Minor subtopics of this group are:
-{%- for subtopic in cluster_subtopics["minor"][loop.index] %}
+{%- for subtopic in cluster_subtopics["minor"][loop.index - 1] %}
       * {{subtopic}}
 {%- endfor %}
 {%- endif %}
-{%- if cluster_subtopics["misc"][loop.index] %}
+{%- if cluster_subtopics["misc"][loop.index - 1] %}
  - Other miscellaneous specific subtopics of this group include:
-{%- for subtopic in cluster_subtopics["misc"][loop.index] %}
+{%- for subtopic in cluster_subtopics["misc"][loop.index - 1] %}
         * {{subtopic}}
 {%- endfor %}
 {%- endif %}
-{%- if cluster_sentences[loop.index] %}
+{%- if cluster_sentences[loop.index - 1] %}
  - Sample {{document_type}} from this group include:
-{%- for sentence in cluster_sentences[loop.index] %}
+{%- for sentence in cluster_sentences[loop.index - 1] %}
       - "{{sentence}}"
 {%- endfor %}
 {%- endif %}
@@ -1036,6 +1037,24 @@ class Toponymy:
             topic_name = self.llm.generate_topic_name(prompt_layer[i])
             topic_names.append(topic_name)
         return topic_names
+    
+    async def _get_topic_name_async(self, prompt_layer, layer_num):
+        prompts_for_calling = [prompt for prompt in prompt_layer if not prompt.startswith("SKIP")]
+        generated_topic_names = await self.llm.generate_topic_names_batch(prompts_for_calling)
+        n = 0
+        topic_names = []
+        for i in tqdm(
+            range(len(prompt_layer)),
+            desc=f"Generating topics for layer {layer_num}",
+            disable=(not self.verbose),
+        ):
+            if prompt_layer[i].startswith("SKIP"):
+                topic_names.append(prompt_layer[i].split(":")[1].strip())
+            else:
+                topic_names.append(generated_topic_names[n])
+                n += 1
+
+        return topic_names
 
     def distinguish_base_layer_topics(self):
         if getattr(self, "base_layer_topics_", None) is None:
@@ -1098,6 +1117,18 @@ class Toponymy:
         if getattr(self, "base_layer_prompts_", None) is None:
             self.fit_base_level_prompts()
         self.base_layer_topics_ = self._get_topic_name(self.base_layer_prompts_, 0)
+        # self.base_layer_topics_ = await self._get_topic_name_async(self.base_layer_prompts_, 0)
+        self.distinguish_base_layer_topics()
+        return None
+    
+    async def fit_base_layer_topics_async(self):
+        """
+        Uses the llm to fit a topic name for each base level cluster based on the base_layer_prompts_
+        If the base_layer_prompts_ have not yet been generated or is None it will generate them as necessary.
+        """
+        if getattr(self, "base_layer_prompts_", None) is None:
+            self.fit_base_level_prompts()
+        self.base_layer_topics_ = await self._get_topic_name_async(self.base_layer_prompts_, 0)
         self.distinguish_base_layer_topics()
         return None
 
@@ -1316,14 +1347,15 @@ class Toponymy:
 
             tree_subtopics_per_topic = [self.cluster_tree_[(layer_id, x)] for x in label_indices]
             major_subtopics_per_topic = [
-                [a[1] for a in tree_subtopics if a[0] == layer_id - 1] for tree_subtopics in tree_subtopics_per_topic
+                [self.topic_name_layers_[layer_id - 1][a[1]] for a in tree_subtopics if a[0] == layer_id - 1] for tree_subtopics in tree_subtopics_per_topic
             ]
             minor_subtopics_per_topic = [
-                [a[1] for a in tree_subtopics if a[0] == layer_id - 2] for tree_subtopics in tree_subtopics_per_topic
+                [self.topic_name_layers_[layer_id - 2][a[1]] for a in tree_subtopics if a[0] == layer_id - 2] for tree_subtopics in tree_subtopics_per_topic
             ]
             other_subtopics_per_topic = [
                 [a for a in tree_subtopics if a[0] < layer_id - 2] for tree_subtopics in tree_subtopics_per_topic
             ]
+            other_subtopics_per_topic = [[self.topic_name_layers_[a[0]][a[1]] for a in topic] for topic in other_subtopics_per_topic]
 
             prompt = template.render(
                 larger_topic=larger_topic,
