@@ -232,8 +232,8 @@ try:
 
     class OpenAIWrapper:
 
-        def __init__(self, API_KEY, model="gpt-4o-mini", verbose=False):
-            self.llm = openai.OpenAI(api_key=API_KEY)
+        def __init__(self, API_KEY, model="gpt-4o-mini", base_url=None, verbose=False):
+            self.llm = openai.OpenAI(api_key=API_KEY, base_url=base_url)
             self.model = model
             self.verbose = verbose
 
