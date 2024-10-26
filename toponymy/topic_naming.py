@@ -596,7 +596,7 @@ def create_topic_discernment_prompt(
     return prompt_text
 
 
-def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
+def find_threshold_for_max_cluster_size(distances, max_cluster_size=4):
     n_samples = distances.shape[0]
     clustering = AgglomerativeClustering(
         n_clusters=2,
@@ -1109,6 +1109,68 @@ class Toponymy:
 
         self.base_layer_topics_ = new_topic_names
 
+    async def distinguish_base_layer_topics_async(self):
+        if getattr(self, "base_layer_topics_", None) is None:
+            self.fit_base_layer_topics()
+
+        import pandas as pd
+        new_topic_names = self.base_layer_topics_[:]
+        base_layer_topic_embedding = self.embedding_model.encode(
+            self.base_layer_topics_, show_progress_bar=True
+        )
+        base_layer_topic_distances = pairwise_distances(
+            base_layer_topic_embedding, metric="cosine"
+        )
+        distance_threshold = find_threshold_for_max_cluster_size(
+            base_layer_topic_distances
+        )
+        cls = AgglomerativeClustering(
+            n_clusters=None,
+            compute_full_tree=True,
+            distance_threshold=distance_threshold,
+            metric="precomputed",
+            linkage="complete",
+        )
+        cls.fit(base_layer_topic_distances)
+        cluster_sizes = np.bincount(cls.labels_)
+        clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
+        prompts = []
+        old_topic_names_by_cluster = []
+        for c in tqdm(
+            clusters_for_renaming,
+            desc="Generating distinguishing prompts",
+            disable=(not self.verbose),
+        ):
+            label_indices = np.where(cls.labels_ == c)[0]
+            for i in range(0, len(label_indices), 8):
+                old_topic_names = [self.base_layer_topics_[x] for x in label_indices[i:i+8]]
+                prompts.append(create_distinguish_base_layer_topics_prompt(
+                    label_indices[i:i+16],
+                    old_topic_names,
+                    {
+                        "topical": self.representation_["topical"][0],
+                        "contrastive": self.representation_["contrastive"][0],
+                    },
+                    self.document_type,
+                    self.corpus_description,
+                ))
+                old_topic_names_by_cluster.append(old_topic_names)
+        new_topic_names_per_cluster = await self.llm.generate_topic_cluster_names_batch(
+            prompts, old_topic_names_by_cluster
+        )
+        for c in tqdm(
+            clusters_for_renaming,
+            desc="Updating topic names",
+            disable=(not self.verbose),
+        ):
+            label_indices = np.where(cls.labels_ == c)[0]
+            for i in range(0, len(label_indices), 8):
+                cluster_topic_names = new_topic_names_per_cluster.pop(0)
+                for new_topic_name, topic_index in zip(cluster_topic_names, label_indices[i:i+8]):
+                    new_topic_names[topic_index] = new_topic_name
+
+        return new_topic_names
+
     def fit_base_layer_topics(self):
         """
         Uses the llm to fit a topic name for each base level cluster based on the base_layer_prompts_
@@ -1129,7 +1191,7 @@ class Toponymy:
         if getattr(self, "base_layer_prompts_", None) is None:
             self.fit_base_level_prompts()
         self.base_layer_topics_ = await self._get_topic_name_async(self.base_layer_prompts_, 0)
-        self.distinguish_base_layer_topics()
+        self.base_layer_topics_ = await self.distinguish_base_layer_topics_async()
         return None
 
     def _topical_subtopics_for_cluster(
