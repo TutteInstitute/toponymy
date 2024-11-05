@@ -53,13 +53,13 @@ are all on the same topic and need to be given topic name.
 {%- if cluster_subtopics["misc"] %}
  - Other miscellaneous specific subtopics of this group include:
 {%- for subtopic in cluster_subtopics["misc"] %}
-        * {{subtopic}}
+      * {{subtopic}}
 {%- endfor %}
 {%- endif %}
 {%- if cluster_sentences %}
  - Sample {{document_type}} from this group include:
 {%- for sentence in cluster_sentences %}
-      - "{{sentence}}"
+      * "{{sentence}}"
 {%- endfor %}
 {%- endif %}
 
@@ -98,7 +98,7 @@ The other groups of {{document_type}} that can be confused with this topic are:
 {%- if matching_topic_sentences[topic] %}
  - Sample {{document_type}}:
 {%- for sentence in matching_topic_sentences[topic] %}
-      - "{{sentence}}"
+      * "{{sentence}}"
 {%- endfor %}
 {%- endif %}
 {%- endfor %}
@@ -113,7 +113,7 @@ As an expert in {{larger_topic}}, you need to provide a more specific name for t
 {%- if cluster_sentences %}
  - Sample {{document_type}}:
 {%- for sentence in cluster_sentences %}
-      - "{{sentence}}"
+      * "{{sentence}}"
 {%- endfor %}
 {%- endif %}
 
@@ -155,13 +155,13 @@ Below are the auto-generated topic names, along with some keywords associated to
 {%- if cluster_subtopics["misc"][loop.index - 1] %}
  - Other miscellaneous specific subtopics of this group include:
 {%- for subtopic in cluster_subtopics["misc"][loop.index - 1] %}
-        * {{subtopic}}
+      * {{subtopic}}
 {%- endfor %}
 {%- endif %}
 {%- if cluster_sentences[loop.index - 1] %}
  - Sample {{document_type}} from this group include:
 {%- for sentence in cluster_sentences[loop.index - 1] %}
-      - "{{sentence}}"
+      * "{{sentence}}"
 {%- endfor %}
 {%- endif %}
 {% endfor %}
