@@ -184,7 +184,7 @@ try:
                     model=self.model,
                     temperature=temperature,
                     response_format={"type": "json_object"},
-                    max_tokens=2048,
+                    max_tokens=4096,
                 )
                 topic_name_info_text = topic_name_info_raw.text
                 topic_name_info = json.loads(topic_name_info_text)
@@ -196,6 +196,7 @@ try:
                 return result
             except Exception as e:
                 warn(f"Failed to generate topic cluster names with Cohere: {e}")
+                print(topic_name_info_text)
                 return old_names
 
         async def generate_topic_names_batch(self, prompts, temperature=0.5):
@@ -269,7 +270,7 @@ try:
                         model=self.model,
                         temperature=temperature,
                         response_format={"type": "json_object"},
-                        max_tokens=2048,
+                        max_tokens=4096,
                     )
                     topic_name_info_text = topic_name_info_raw.text
                     topic_name_info = json.loads(topic_name_info_text)

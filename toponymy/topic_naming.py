@@ -580,10 +580,15 @@ def create_topic_discernment_prompt(
         ][matching_topic_index][:max_sentences]
         for matching_topic_layer, matching_topic_index in matching_topics
     }
+    matching_topic_names = [
+        subtopic_layers[matching_topic_layer - 1][matching_topic_index] 
+        for matching_topic_layer, matching_topic_index in matching_topics
+        if matching_topic_layer > 0
+    ]
     prompt_text = template.render(
         larger_topic=larger_topic,
         attempted_topic_names=attempted_topic_names,
-        matching_topics=matching_topics,
+        matching_topics=matching_topic_names,
         matching_topic_keywords=matching_topic_keywords,
         matching_topic_subtopics=matching_topic_subtopics,
         matching_topic_sentences=matching_topic_sentences,
@@ -596,7 +601,7 @@ def create_topic_discernment_prompt(
     return prompt_text
 
 
-def find_threshold_for_max_cluster_size(distances, max_cluster_size=4):
+def find_threshold_for_max_cluster_size(distances, max_cluster_size=4, max_distance=0.2):
     n_samples = distances.shape[0]
     clustering = AgglomerativeClustering(
         n_clusters=2,
@@ -617,6 +622,9 @@ def find_threshold_for_max_cluster_size(distances, max_cluster_size=4):
             and merge_distances[i - 1] > COSINE_DISTANCE_EPSILON
         ):
             return merge_distances[i - 1] if i > 0 else merge_distances[0]
+
+        if merge_distances[i] > max_distance:
+            return merge_distances[i]
 
         cluster_sizes[n_samples + i] = new_size
         del cluster_sizes[cluster1]
@@ -1089,7 +1097,7 @@ class Toponymy:
             label_indices = np.where(cls.labels_ == c)[0]
             for i in range(0, len(label_indices), 8):
                 prompt = create_distinguish_base_layer_topics_prompt(
-                    label_indices[i:i+16],
+                    label_indices[i:i+8],
                     [self.base_layer_topics_[x] for x in label_indices[i:i+8]],
                     {
                         "topical": self.representation_["topical"][0],
@@ -1145,7 +1153,7 @@ class Toponymy:
             for i in range(0, len(label_indices), 8):
                 old_topic_names = [self.base_layer_topics_[x] for x in label_indices[i:i+8]]
                 prompts.append(create_distinguish_base_layer_topics_prompt(
-                    label_indices[i:i+16],
+                    label_indices[i:i+8],
                     old_topic_names,
                     {
                         "topical": self.representation_["topical"][0],
@@ -1520,9 +1528,6 @@ class Toponymy:
                 original_topic_names = [unique_name]
                 if (n, i) in singleton_dict:
                     # This is a singleton cluster, and doesn't need a name
-                    continue
-
-                if (n, i) in singleton_dict:
                     continue
 
                 matching_topics = []
