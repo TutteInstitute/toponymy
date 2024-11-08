@@ -41,12 +41,6 @@ try:
             except:
                 return old_names
         
-        def tokenize(self, text):
-            return self.llm.tokenize(text.encode('utf-8'))
-        
-        def detokenize(self, tokens):
-            return self.llm.detokenize(tokens)
-        
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return "\nThe short distinguising topic name is:\n"
@@ -56,9 +50,7 @@ try:
                 return "\nA better and more specific name that still captures the topic of these article titles is:\n"
             else:
                 raise ValueError(f"Invalid llm_imnstruction kind; should be one of \'base_layer\', \'intermediate_layer\', or \'remedy\' not \'{kind}\'")
-            
-        def n_ctx(self):
-            return self.llm.n_ctx()
+
 
 except ImportError:
      pass
@@ -69,12 +61,8 @@ try:
     import json
 
     class CohereWrapper:
-        def __init__(self, API_KEY, local_tokenizer=None):
+        def __init__(self, API_KEY):
             self.llm = cohere.Client(API_KEY)
-            if local_tokenizer is not None:
-                self.tokenizer = local_tokenizer
-            else:
-                self.tokenizer = self.llm
         
         def generate_topic_name(self, prompt, temperature=0.5):
             try:
@@ -109,13 +97,6 @@ try:
                     result.append(old_name)
                     
             return result
-
-                    
-        def tokenize(self, text):
-            return self.tokenizer.tokenize(text)
-        
-        def detokenize(self, tokens):
-            return self.tokenizer.detokenize(tokens)
         
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
@@ -139,8 +120,6 @@ The response should be in JSON formatted as {"topic_name":<NAME>, "less_specific
             else:
                 raise ValueError(f"Invalid llm_imnstruction kind; should be one of \'base_layer\', \'intermediate_layer\', or \'remedy\' not \'{kind}\'")
             
-        def n_ctx(self):
-            return 128_000
 except:
     pass
 
@@ -154,10 +133,6 @@ try:
         def __init__(self, API_KEY, model="claude-3-haiku-20240307", local_tokenizer=None):
             self.llm = anthropic.Anthropic(api_key=API_KEY)
             self.model = model
-            if local_tokenizer is not None:
-                self.tokenizer = local_tokenizer
-            else:
-                raise ValueError("Anthropic does not provide a tokenizer")
         
         def generate_topic_name(self, prompt, temperature=0.5):
             try:
@@ -195,12 +170,6 @@ try:
             except:
                 return old_names
         
-        def tokenize(self, text):
-            return self.tokenizer.tokenize(text)
-        
-        def detokenize(self, tokens):
-            return self.tokenizer.detokenize(tokens)
-        
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
@@ -222,26 +191,20 @@ The response should be only JSON with no preamble formatted as {"topic_name":<NA
 """
             else:
                 raise ValueError(f"Invalid llm_imnstruction kind; should be one of \'base_layer\', \'intermediate_layer\', or \'remedy\' not \'{kind}\'")
-            
-        def n_ctx(self):
-            return 128_000
+
 except:
     pass
 
 try:
     import openai
-    import tiktoken
     import json
 
     class OpenAIWrapper:
         def __init__(self, API_KEY, model="gpt-4o-mini", verbose=False):
             self.llm = openai.OpenAI(api_key=API_KEY)
             self.model = model
-            self.tokenizer = tiktoken.encoding_for_model(model)
             self.verbose=verbose
 
-
-        
         def generate_topic_name(self, prompt, temperature=0.5):
             try:
                 topic_name_info_raw = self.llm.chat.completions.create(
@@ -284,12 +247,6 @@ try:
             except:
                 return old_names
         
-        def tokenize(self, text):
-            return self.tokenizer.encode(text)
-        
-        def detokenize(self, tokens):
-            return self.tokenizer.decode(tokens)
-        
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
@@ -312,7 +269,5 @@ The response should be only JSON with no preamble formatted as {"topic_name":<NA
             else:
                 raise ValueError(f"Invalid llm_imnstruction kind; should be one of \'base_layer\', \'intermediate_layer\', or \'remedy\' not \'{kind}\'")
             
-        def n_ctx(self):
-            return 128_000
 except:
     pass

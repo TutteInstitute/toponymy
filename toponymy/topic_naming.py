@@ -402,12 +402,6 @@ class Toponymy:
         Each layer is a list
     representative_sentences: dict (optional, default None):
         A dictionary from one of a set of ways to represent a document cluster to a the cluster representation.
-    trim_percentile: int (between 0 and 100)
-        Trim any document with a token length longer than the 99th percentile. This prevents very long outlier documents from swamping our prompts.
-        The trim length will be the maximum of this value and trim_length.  Set to 100 if you don't want any trimming.
-    trim_length: int
-        Maximum number of tokens to keep from each document. This prevents very long outlier documents from swamping our prompts.
-        The trim length will be the maximum of this value and trim_length. Set to None if you don't want any trimming.
     """
 
     def __init__(
@@ -422,8 +416,6 @@ class Toponymy:
         document_type="titles",
         corpus_description="academic articles",
         verbose=True,
-        trim_percentile=99,
-        trim_length=100,
         keyphrase_min_occurrences=25,
         keyphrase_ngram_range=(1, 4),
         n_sentence_examples_per_cluster=16,
@@ -449,30 +441,12 @@ class Toponymy:
         self.corpus_description = corpus_description
         self.llm = llm
         self.verbose = verbose
-        self.trim_percentile = trim_percentile
-        self.trim_length = trim_length
         self.keyphrase_min_occurrences = keyphrase_min_occurrences
         self.keyphrase_ngram_range = keyphrase_ngram_range
         self.n_sentence_examples_per_cluster = n_sentence_examples_per_cluster
         self.n_keyphrases_per_cluster = n_keyphrases_per_cluster
         self.max_subtopics_per_cluster = max_subtopics_per_cluster
         self.max_neighbors_per_cluster = max_neighbors_per_cluster
-        # Determine trim length used
-        self.token_distribution = [len(llm.tokenize(text)) for text in documents]
-        self.token_trim_length = int(
-            np.percentile(self.token_distribution, trim_percentile)
-        )
-        if trim_length:
-            self.token_trim_length = np.max([self.token_trim_length, trim_length])
-        if trim_length > self.llm.n_ctx():
-            warnings.warn(
-                f"trim_length of {self.token_trim_length} > max context window {self.llm.n_ctx()} setting it to half of the maximum context window."
-            )
-            self.token_trim_length = self.llm.n_ctx() // 2
-
-    def _trim_text(self, text):
-        tokenized = self.llm.tokenize(text)
-        return self.llm.detokenize(tokenized[: self.token_trim_length])
 
     def fit_clusters(self, base_min_cluster_size=100, min_clusters=6):
         """
@@ -740,8 +714,6 @@ class Toponymy:
         """
         Take a cluster_id and layer_id and extracts the relevant information from the representation_ and cluster_layers_ properties to
         construct a representative prompt to present to a large langauge model.
-
-        Each represenative is trimmed to be at most self.token_trim_length tokens in size.
         """
         prompt_text = f"Below is a information about a group of {self.document_type} from {self.corpus_description}:\n\n"
 
@@ -762,7 +734,7 @@ class Toponymy:
             for text in self.representation_["topical"][layer_id][cluster_id][
                 :max_docs_per_cluster
             ]:
-                prompt_text += f' - "{self._trim_text(text)}"\n'
+                prompt_text += f' - "{text}"\n'
         if "distinctive" in self.representation_techniques:
             prompt_text += (
                 f"\nSample distinctive {self.document_type} from the group include:\n"
@@ -770,7 +742,7 @@ class Toponymy:
             for text in self.representation_["distinctive"][layer_id][cluster_id][
                 :max_docs_per_cluster
             ]:
-                prompt_text += f' - "{self._trim_text(text)}"\n'
+                prompt_text += f' - "{text}"\n'
         prompt_text += "\n\n" + llm_instruction
         return prompt_text
     
@@ -815,24 +787,7 @@ class Toponymy:
                 max_docs_per_cluster,
                 llm_instruction=self.llm.llm_instruction(kind="base_layer"),
             )
-            prompt_length = len(self.llm.tokenize(prompt))
-            reduced_docs_per_cluster = max_docs_per_cluster
-            while prompt_length > self.llm.n_ctx():
-                reduced_docs_per_cluster = reduced_docs_per_cluster // 2
-                prompt = self.build_base_prompt(
-                    cluster_id,
-                    layer_id,
-                    reduced_docs_per_cluster,
-                    llm_instruction=self.llm.llm_instruction(kind="base_layer"),
-                )
-                prompt_length = len(self.llm.tokenize(prompt))
-                if reduced_docs_per_cluster < 1:
-                    warnings.warn(
-                        f"A prompt was too long for the context window and was trimmed: {prompt_length}> {self.llm.n_ctx()}"
-                    )
-                    prompt = self._trim_text(prompt, self.llm, self.llm.n_ctx())
             prompts.append(prompt)
-        prompt_lengths = [len(self.llm.tokenize(prompt)) for prompt in prompts]
         self.base_layer_prompts_ = prompts
         return None
 
@@ -876,7 +831,7 @@ class Toponymy:
                 prompt += "    - keywords: " + ", ".join(self.representation_["contrastive"][0][x]) + "\n"
                 prompt += f"    - sample {self.document_type}:\n"
                 for text in self.representation_["topical"][0][x]:
-                    prompt += f'        + "{self._trim_text(text)}"\n'
+                    prompt += f'        + "{text}"\n'
             prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and {self.document_type} information to generate new better and more specific topic names."
             prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
             prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
@@ -1159,7 +1114,7 @@ class Toponymy:
                 if len(tree_subtopics) < max_subtopics:
                     prompt += f"    - sample {self.document_type}:\n"
                     for text in self.representation_["topical"][0][x][:max_subtopics - len(tree_subtopics)]:
-                        prompt += f'        + "{self._trim_text(text)}"\n'
+                        prompt += f'        + "{text}"\n'
 
             prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and sub-topic information to generate new topic names."
             prompt += "\nStrive to provide the simplest possible topic name (ideally a few words) that distinguishes a given topic from the other topics listed."
