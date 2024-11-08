@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 @dataclass
 class RateLimitConfig:
     requests_per_minute: int = 400  # Default Cohere rate limit
-    concurrent_requests: int = 50  # Default concurrent requests
+    concurrent_requests: int = 32  # Default concurrent requests
 
 
 import tokenizers
@@ -45,7 +45,9 @@ try:
                 topic_name_info = self.llm(
                     prompt, temperature=temperature, max_tokens=256
                 )["choices"][0]["text"]
-                topic_name_info = re.findall(_GET_TOPIC_NAME_REGEX, topic_name_info)[0]
+                topic_name_info = re.findall(
+                    _GET_TOPIC_NAME_REGEX, topic_name_info, re.DOTALL
+                )[0]
                 topic_name_info = json.loads(topic_name_info)
                 topic_name = topic_name_info["topic_name"]
                 return topic_name
@@ -97,7 +99,7 @@ try:
                     "content"
                 ]
                 topic_name_info = re.findall(
-                    _GET_TOPIC_NAME_REGEX, topic_name_info_text
+                    _GET_TOPIC_NAME_REGEX, topic_name_info_text, re.DOTALL
                 )[0]
                 topic_name_info = json.loads(topic_name_info)
                 topic_name = topic_name_info["topic_name"]
@@ -118,7 +120,7 @@ try:
                     "content"
                 ]
                 topic_name_info = re.findall(
-                    _GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text
+                    _GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
                 )[0]
                 topic_name_info = json.loads(topic_name_info)
                 mapping = topic_name_info["new_topic_name_mapping"]
@@ -142,9 +144,8 @@ try:
             self,
             API_KEY,
             model="command-r-08-2024",
-            local_tokenizer=None,
             requests_per_minute=300,
-            concurrent_requests=20,
+            concurrent_requests=8,
         ):
             # Sync client for regular operations
             self.llm = cohere.Client(api_key=API_KEY)
@@ -169,12 +170,20 @@ try:
                     message=prompt,
                     model=self.model,
                     temperature=temperature,
-                    response_format={"type": "json_object"},
-                ).text
-                topic_name_info = json.loads(topic_name_info_raw)
+                    # response_format={"type": "json_object"}, # tends to produce empty outputs
+                )
+                topic_name_info = re.findall(
+                    _GET_TOPIC_NAME_REGEX, topic_name_info_raw.text, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info)
                 topic_name = topic_name_info["topic_name"]
-            except:
+            except Exception as e:
+                if isinstance(e, KeyboardInterrupt):
+                    raise e
+
+                warn(f"Failed to generate topic name due to: {e}")
                 topic_name = ""
+
             return topic_name
 
         def generate_topic_cluster_names(self, prompt, old_names, temperature=0.8):
@@ -183,11 +192,14 @@ try:
                     message=prompt,
                     model=self.model,
                     temperature=temperature,
-                    response_format={"type": "json_object"},
+                    # response_format={"type": "json_object"}, # tends to produce empty outputs
                     max_tokens=4096,
                 )
                 topic_name_info_text = topic_name_info_raw.text
-                topic_name_info = json.loads(topic_name_info_text)
+                topic_name_info = re.findall(
+                    _GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info)
                 mapping = topic_name_info["new_topic_name_mapping"]
                 result = [
                     mapping.get(f"{n}. {name}", name)
@@ -195,26 +207,33 @@ try:
                 ]
                 return result
             except Exception as e:
-                warn(f"Failed to generate topic cluster names with Cohere: {e}")
-                print(topic_name_info_text)
+                if isinstance(e, KeyboardInterrupt):
+                    raise e
+
+                warn(f"Failed to generate topic cluster names with Cohere due to: {e}")
                 return old_names
 
         async def generate_topic_names_batch(self, prompts, temperature=0.5):
 
             async def _generate_single_topic_name_async(prompt):
                 try:
-                    response = await self.async_llm.chat(
+                    topic_name_info_raw = await self.async_llm.chat(
                         message=prompt,
                         model=self.model,
                         temperature=temperature,
-                        response_format={"type": "json_object"},
+                        # response_format={"type": "json_object"}, # tends to produce empty outputs
                     )
-                    topic_name_info = json.loads(response.text)
-                    return topic_name_info["topic_name"]
+                    topic_name_info = re.findall(
+                        _GET_TOPIC_NAME_REGEX, topic_name_info_raw.text, re.DOTALL
+                    )[0]
+                    topic_name_info = json.loads(topic_name_info)
+                    topic_name = topic_name_info["topic_name"]
+                    return topic_name
                 except Exception as e:
-                    warn(f"Failed to generate topic name: {e}")
+                    warn(f"Failed to generate topic name due to: {e}")
                     return ""
 
+            delay_time = 60 / (self.rate_limit.requests_per_minute / self.rate_limit.concurrent_requests)
             results = []
             for i in tqdm(
                 range(0, len(prompts), self.rate_limit.concurrent_requests),
@@ -227,10 +246,10 @@ try:
                 ]
 
                 try:
-                    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
                     self.request_timestamps.extend(
-                        [datetime.now()] * self.rate_limit.concurrent_requests
+                        [datetime.now() for n in range(self.rate_limit.concurrent_requests)]
                     )
+                    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
                     # Handle any exceptions in results
                     results.extend(
                         [
@@ -239,9 +258,12 @@ try:
                         ]
                     )
                 except Exception as e:
+                    if isinstance(e, KeyboardInterrupt):
+                        raise e
                     warn(f"Batch processing failed: {e}")
                     results.extend([""] * self.rate_limit.concurrent_requests)
 
+                await asyncio.sleep(delay_time)
                 if len(self.request_timestamps) >= self.rate_limit.requests_per_minute:
                     # Wait for the next minute to make more requests
                     next_request_time = self.request_timestamps[0] + timedelta(
@@ -269,11 +291,14 @@ try:
                         message=prompt,
                         model=self.model,
                         temperature=temperature,
-                        response_format={"type": "json_object"},
+                        # response_format={"type": "json_object"}, # tends to produce empty outputs
                         max_tokens=4096,
                     )
                     topic_name_info_text = topic_name_info_raw.text
-                    topic_name_info = json.loads(topic_name_info_text)
+                    topic_name_info = re.findall(
+                        _GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+                    )[0]
+                    topic_name_info = json.loads(topic_name_info)
                     mapping = topic_name_info["new_topic_name_mapping"]
                     result = [
                         mapping.get(f"{n}. {name}", name)
@@ -281,6 +306,8 @@ try:
                     ]
                     return result
                 except Exception as e:
+                    if isinstance(e, KeyboardInterrupt):
+                        raise e
                     warn(f"Failed to generate topic cluster names with Cohere: {e}")
                     return old_names
 
@@ -307,13 +334,15 @@ try:
                 ]
 
                 try:
-                    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
                     self.request_timestamps.extend(
-                        [datetime.now()] * self.rate_limit.concurrent_requests
+                        [datetime.now() for n in range(self.rate_limit.concurrent_requests)]
                     )
+                    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
                     # Handle any exceptions in results
                     results.extend(batch_results)
                 except Exception as e:
+                    if isinstance(e, KeyboardInterrupt):
+                        raise e
                     warn(f"Batch processing failed: {e}")
                     results.extend(
                         old_names_per_cluster[
@@ -394,7 +423,7 @@ try:
 
             async def _generate_single_topic_name_async(prompt):
                 try:
-                    topic_name_info_raw = self.llm.messages.create(
+                    topic_name_info_raw = await self.async_llm.messages.create(
                         model=self.model,
                         max_tokens=256,
                         messages=[{"role": "user", "content": prompt}],
@@ -460,7 +489,7 @@ try:
                 prompt, old_names, temperature=0.8
             ):
                 try:
-                    topic_name_info_raw = self.llm.messages.create(
+                    topic_name_info_raw = await self.async_llm.messages.create(
                         model=self.model,
                         max_tokens=1024,
                         messages=[{"role": "user", "content": prompt}],
