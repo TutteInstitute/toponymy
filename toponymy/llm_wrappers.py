@@ -130,7 +130,7 @@ try:
     import json
 
     class AnthropicWrapper:
-        def __init__(self, API_KEY, model="claude-3-haiku-20240307", local_tokenizer=None):
+        def __init__(self, API_KEY, model="claude-3-haiku-20240307"):
             self.llm = anthropic.Anthropic(api_key=API_KEY)
             self.model = model
         
