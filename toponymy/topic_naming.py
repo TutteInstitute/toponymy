@@ -25,7 +25,178 @@ from dataclasses import dataclass
 
 from tqdm.auto import tqdm
 import string
+import jinja2
 
+
+COSINE_DISTANCE_EPSILON = 1e-6
+
+_SUMMARY_KINDS = [
+    "domain expert level (8 to 15 word)",
+    "very specific and detailed (6 to 12 word)",
+    "specific and detailed (4 to 8 word)",
+    "clear and concise (3 to 6 word)",
+    "focussed and brief (2 to 5 word)",
+    "essential and core (1 to 4 word)",
+    "simple (1 or 2 word)",
+]
+
+_PROMPT_TEMPLATES = {
+    "layer": jinja2.Template(
+        """
+You are an expert of classifying {{document_type}} from {{corpus_description}} into topics.
+Below is a information about a group of {{document_type}} from {{corpus_description}} that 
+are all on the same topic and need to be given topic name.
+
+{% if cluster_keywords %}
+ - Keywords for this group include: {{", ".join(cluster_keywords)}}
+{% endif %}
+{%- if cluster_subtopics["major"] %}
+ - Major subtopics of this group are: 
+{%- for subtopic in cluster_subtopics["major"] %}
+      * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["minor"] %}
+ - Minor subtopics of this group are:
+{%- for subtopic in cluster_subtopics["minor"] %}
+      * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["misc"] %}
+ - Other miscellaneous specific subtopics of this group include:
+{%- for subtopic in cluster_subtopics["misc"] %}
+      * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_sentences %}
+ - Sample {{document_type}} from this group include:
+{%- for sentence in cluster_sentences %}
+      * "{{sentence}}"
+{%- endfor %}
+{%- endif %}
+
+You are to give a {{summary_kind}} name to this group of {{document_type}}.
+{% if cluster_subtopics["major"] -%}
+You should primarily make use of the major and minor subtopics of this group to generate a name, 
+and ensure the topic name covers *all* of the major subtopics.
+{%- endif %}
+{% if "very specific" in summary_kind -%}
+The topic name should be specific to the information given and sufficiently detailed to ensure 
+it can be distinguished from other similar detailed topics.
+{% elif "general" in summary_kind -%}
+The topic name should be broad and simple enough to capture of overall sense of the 
+large and diverse range of {{document_type}} contained in it at a glance.
+{%- endif %}
+The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} 
+where SCORE is a value in the range 0 to 1.
+"""
+    ),
+    "remedy": jinja2.Template(
+        """
+You are an expert in {{larger_topic}} and have been asked to provide a more specific name for a group of 
+{{document_type}} from {{corpus_description}}. The group of {{document_type}} has been described as having a topic of one of 
+{{attempted_topic_names}}. These topic names were not specific enough.
+
+The other groups of {{document_type}} that can be confused with this topic are:
+
+{% for topic in matching_topics  %}
+{{topic}}:
+{%- if matching_topic_keywords[topic] %}
+ - Keywords: {{", ".join(matching_topic_keywords[topic])}}
+{%- endif %}
+{%- if matching_topic_subtopics[topic] %}
+ - Subtopics: {{", ".join(matching_topic_subtopics[topic])}}
+{%- endif %}
+{%- if matching_topic_sentences[topic] %}
+ - Sample {{document_type}}:
+{%- for sentence in matching_topic_sentences[topic] %}
+      * "{{sentence}}"
+{%- endfor %}
+{%- endif %}
+{%- endfor %}
+
+As an expert in {{larger_topic}}, you need to provide a more specific name for this group of {{document_type}}:
+{%- if cluster_keywords %}
+ - Keywords: {{", ".join(cluster_keywords)}}
+{%- endif %}
+{%- if cluster_subtopics %}
+ - Subtopics: {{", ".join(cluster_subtopics)}}
+{%- endif %}
+{%- if cluster_sentences %}
+ - Sample {{document_type}}:
+{%- for sentence in cluster_sentences %}
+      * "{{sentence}}"
+{%- endfor %}
+{%- endif %}
+
+You should make use of the relative relationships between these topics as well as the keywords
+and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new 
+better and more *specific* topic name.
+
+The response should be only JSON with no preamble formatted as 
+  {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} 
+where SCORE is a value in the range 0 to 1.
+The response must contain only JSON with no preamble.
+"""
+    ),
+    "disambiguate_topics": jinja2.Template(
+        """
+You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
+{{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
+
+Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {{self.document_type}} from the topic area.
+
+{% for topic in topics %}
+
+"{{loop.index}}. {{topic}}":
+{% if cluster_keywords[loop.index - 1] %}
+ - Keywords for this group include: {{", ".join(cluster_keywords[loop.index - 1])}}
+{% endif %}
+{%- if cluster_subtopics["major"][loop.index - 1] %}
+ - Major subtopics of this group are: 
+{%- for subtopic in cluster_subtopics["major"][loop.index - 1] %}
+      * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["minor"][loop.index - 1] %}
+ - Minor subtopics of this group are:
+{%- for subtopic in cluster_subtopics["minor"][loop.index - 1] %}
+      * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["misc"][loop.index - 1] %}
+ - Other miscellaneous specific subtopics of this group include:
+{%- for subtopic in cluster_subtopics["misc"][loop.index - 1] %}
+      * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_sentences[loop.index - 1] %}
+ - Sample {{document_type}} from this group include:
+{%- for sentence in cluster_sentences[loop.index - 1] %}
+      * "{{sentence}}"
+{%- endfor %}
+{%- endif %}
+{% endfor %}
+
+You are to give a new {{summary_kind}} name to each topic.
+You should make use of the relative relationships between these topics as well as the keywords and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new better and more distinguishing topic names. 
+{% if cluster_subtopics["major"] -%}
+You should primarily make use of the major and minor subtopics of each topic to generate a name, and ensure the new topic name covers *all* of the major subtopics.
+{%- endif %}
+{% if "very specific" in summary_kind -%}
+Each new topic name should be specific to the information of that topic and sufficiently detailed to ensure  it can be distinguished from all the other similar topics listed.
+{% elif "general" in summary_kind -%}
+Each topic name should be broad and simple enough to capture of overall sense of the large and diverse range of {{document_type}} contained in it at a glance, while still separating it from the other topics listed.
+{%- endif %}
+The new names must be in the same order as presented above. There should be no duplicate topic names in the final list.
+
+The response should be formatted as JSON in the format 
+    {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
+where SCORE is a value in the range 0 to 1.
+The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
+"""
+    ),
+}
 
 @numba.njit(fastmath=True)
 def layer_from_clustering(
@@ -321,6 +492,56 @@ def longest_keyphrases(candidate_keyphrases):
     return result
 
 
+def create_distinguish_base_layer_topics_prompt(
+    topic_indices,
+    attempted_topic_names,
+    representations,
+    document_type,
+    corpus_description,
+    max_keywords=16,
+    max_sentences=16,
+    summary_kind_idx=0,
+):
+    template = _PROMPT_TEMPLATES["disambiguate_topics"]
+
+    unique_topic_names = list(set(attempted_topic_names))
+    if len(unique_topic_names) == 1:
+        larger_topic = unique_topic_names[0]
+    else:
+        unique_topic_names = unique_topic_names[:3]
+        larger_topic = (
+            ", ".join(unique_topic_names[:-1]) + " and " + unique_topic_names[-1]
+        )
+
+    if "contrastive" in representations:
+        keywords_per_topic = [
+            representations["contrastive"][i][:max_keywords] for i in topic_indices
+        ]
+    else:
+        keywords_per_topic = [False] * len(attempted_topic_names)
+    if "topical" in representations:
+        sentences_per_topic = [
+            representations["topical"][i][:max_sentences] for i in topic_indices
+        ]
+    else:
+        sentences_per_topic = [False] * len(attempted_topic_names)
+
+    prompt_text = template.render(
+        larger_topic=larger_topic,
+        topics=attempted_topic_names,
+        cluster_keywords=keywords_per_topic,
+        cluster_sentences=sentences_per_topic,
+        cluster_subtopics={
+            "major": [False] * len(attempted_topic_names), 
+            "minor": [False] * len(attempted_topic_names), 
+            "misc": [False] * len(attempted_topic_names), 
+        },
+        summary_kind=_SUMMARY_KINDS[summary_kind_idx],
+        document_type=document_type,
+        corpus_description=corpus_description,
+    )
+    return prompt_text
+
 def create_final_remedy_prompt(
     original_topic_names,
     docs,
@@ -351,29 +572,35 @@ def create_final_remedy_prompt(
     return prompt_text
 
 
-def find_threshold_for_max_cluster_size(distances, max_cluster_size=16):
+def find_threshold_for_max_cluster_size(distances, max_cluster_size=4, max_distance=0.2):
     n_samples = distances.shape[0]
     clustering = AgglomerativeClustering(
         n_clusters=2,
         distance_threshold=None,
         compute_full_tree=True,
         compute_distances=True,
-        metric='precomputed',
-        linkage='complete'
+        metric="precomputed",
+        linkage="complete",
     )
     clustering.fit(distances)
     cluster_sizes = defaultdict(lambda: 1)
     merge_distances = clustering.distances_
-    
+
     for i, (cluster1, cluster2) in enumerate(clustering.children_):
         new_size = cluster_sizes[cluster1] + cluster_sizes[cluster2]
-        if new_size > max_cluster_size and merge_distances[i - 1] > 0.0:
-            return merge_distances[i - 1] if i > 0 else 0
-        
+        if (
+            new_size > max_cluster_size
+            and merge_distances[i - 1] > COSINE_DISTANCE_EPSILON
+        ):
+            return merge_distances[i - 1] if i > 0 else merge_distances[0]
+
+        if merge_distances[i] > max_distance:
+            return merge_distances[i]
+
         cluster_sizes[n_samples + i] = new_size
         del cluster_sizes[cluster1]
         del cluster_sizes[cluster2]
-    
+
     return merge_distances[-1]
 
 @dataclass
@@ -418,6 +645,7 @@ class Toponymy:
         verbose=True,
         keyphrase_min_occurrences=25,
         keyphrase_ngram_range=(1, 4),
+        keyphrase_max_vocab_size=100_000,
         n_sentence_examples_per_cluster=16,
         n_keyphrases_per_cluster=16,
         max_subtopics_per_cluster=32,
@@ -443,6 +671,7 @@ class Toponymy:
         self.verbose = verbose
         self.keyphrase_min_occurrences = keyphrase_min_occurrences
         self.keyphrase_ngram_range = keyphrase_ngram_range
+        self.keyphrase_max_vocab_size = keyphrase_max_vocab_size
         self.n_sentence_examples_per_cluster = n_sentence_examples_per_cluster
         self.n_keyphrases_per_cluster = n_keyphrases_per_cluster
         self.max_subtopics_per_cluster = max_subtopics_per_cluster
@@ -634,6 +863,7 @@ class Toponymy:
             min_df=self.keyphrase_min_occurrences,
             token_pattern="(?u)\\b\\w[-'\\w]+\\b",
             ngram_range=self.keyphrase_ngram_range,
+            max_features=self.keyphrase_max_vocab_size,
         )
         full_count_matrix = cv.fit_transform(self.documents)
         acceptable_vocab = [
@@ -812,32 +1042,53 @@ class Toponymy:
     def distinguish_base_layer_topics(self):
         if getattr(self, "base_layer_topics_", None) is None:
             self.fit_base_layer_topics()
+
+        import pandas as pd
         new_topic_names = self.base_layer_topics_[:]
         base_layer_topic_embedding = self.embedding_model.encode(
             self.base_layer_topics_, show_progress_bar=True
         )
-        base_layer_topic_distances = pairwise_distances(base_layer_topic_embedding, metric="cosine")
-        distance_threshold = find_threshold_for_max_cluster_size(base_layer_topic_distances)
-        cls = AgglomerativeClustering(n_clusters=None, compute_full_tree=True, distance_threshold=distance_threshold, metric="precomputed", linkage="complete")
+        base_layer_topic_distances = pairwise_distances(
+            base_layer_topic_embedding, metric="cosine"
+        )
+        distance_threshold = find_threshold_for_max_cluster_size(
+            base_layer_topic_distances
+        )
+        cls = AgglomerativeClustering(
+            n_clusters=None,
+            compute_full_tree=True,
+            distance_threshold=distance_threshold,
+            metric="precomputed",
+            linkage="complete",
+        )
         cls.fit(base_layer_topic_distances)
         cluster_sizes = np.bincount(cls.labels_)
         clusters_for_renaming = np.where(cluster_sizes >= 2)[0]
-        for c in tqdm(clusters_for_renaming, desc="Distinguishing similar topics", disable=(not self.verbose)):
+        for c in tqdm(
+            clusters_for_renaming,
+            desc="Distinguishing similar topics",
+            disable=(not self.verbose),
+        ):
             label_indices = np.where(cls.labels_ == c)[0]
-            prompt = f"There are collections of {self.corpus_description} with somewhat similar auto-generated topic names, all in your field of expertise.\n"
-            prompt += f"Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {self.document_type} from the topic area."
-            for x in label_indices:
-                prompt += f"\n\n**{self.base_layer_topics_[x]}**\n"
-                prompt += "    - keywords: " + ", ".join(self.representation_["contrastive"][0][x]) + "\n"
-                prompt += f"    - sample {self.document_type}:\n"
-                for text in self.representation_["topical"][0][x]:
-                    prompt += f'        + "{text}"\n'
-            prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and {self.document_type} information to generate new better and more specific topic names."
-            prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
-            prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
-            cluster_topic_names = self.llm.generate_topic_cluster_names(prompt, [self.base_layer_topics_[x] for x in label_indices], temperature=0.8)
-            for new_topic_name, topic_index in zip(cluster_topic_names, label_indices):
-                new_topic_names[topic_index] = new_topic_name
+            for i in range(0, len(label_indices), 8):
+                prompt = create_distinguish_base_layer_topics_prompt(
+                    label_indices[i:i+8],
+                    [self.base_layer_topics_[x] for x in label_indices[i:i+8]],
+                    {
+                        "topical": self.representation_["topical"][0],
+                        "contrastive": self.representation_["contrastive"][0],
+                    },
+                    self.document_type,
+                    self.corpus_description,
+                )
+                cluster_topic_names = self.llm.generate_topic_cluster_names(
+                    prompt,
+                    [self.base_layer_topics_[x] for x in label_indices[i:i+8]],
+                    temperature=1.0,
+                )
+                for new_topic_name, topic_index in zip(cluster_topic_names, label_indices[i:i+8]):
+                    new_topic_names[topic_index] = new_topic_name
+
 
         self.base_layer_topics_ = new_topic_names
 
@@ -1174,14 +1425,15 @@ class Toponymy:
         if getattr(self, "topic_name_layers_", None) is None:
             self.fit_layers()
         if self.verbose:
-            print(f"cleaning up topic names\n")
+            print("Cleaning up topic names\n")
         self.layer_clusters = [
             np.full(self.document_map.shape[0], "Unlabelled", dtype=object)
             for i in range(len(self.topic_name_layers_))
         ]
-        unique_names = set(
-            [""]
-        )  # Start with empty string so we fix any topics that failed to get a name
+        unique_names = {
+            "": (-1, -1)
+        }  # Start with empty string so we fix any topics that failed to get a name
+
 
         # Find the singletons so we can skip them
         singleton_subclusters, singleton_dict = self._get_singleton_subclusters() 
@@ -1201,9 +1453,10 @@ class Toponymy:
                 unique_name = name
                 original_topic_names = [unique_name]
                 if (n, i) in singleton_dict:
+                    # This is a singleton cluster, and doesn't need a name
                     continue
 
-                while unique_name in unique_names and n_attempts < 8:
+                while unique_name in unique_names and n_attempts < 3:
                     prompt_text = create_final_remedy_prompt(
                         original_topic_names,
                         self.documents,
@@ -1220,4 +1473,11 @@ class Toponymy:
                 if n_attempts > 0 and self.verbose:
                     print(f"{name} --> {unique_name} after {n_attempts} attempts")
                 unique_names.add(unique_name)
-                self.layer_clusters[n][indices] = unique_name
+                if unique_name not in unique_names:
+                    unique_names[unique_name] = (n, i)
+
+                if unique_name != "":
+                    self.layer_clusters[n][indices] = unique_name
+                else:
+                    self.layer_clusters[n][indices] = name # If we failed to get a name, keep the old one
+
