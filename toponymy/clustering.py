@@ -10,6 +10,7 @@ from fast_hdbscan.boruvka import parallel_boruvka
 from fast_hdbscan.numba_kdtree import kdtree_to_numba
 from scipy.spatial import KDTree
 from typing import List, Tuple, Dict, Type, Any
+from toponymy.cluster_layer import ClusterLayer
 
 def build_raw_cluster_layers(
     data: np.ndarray,
@@ -19,6 +20,27 @@ def build_raw_cluster_layers(
     base_min_cluster_size: int = 10,
     next_cluster_size_quantile: float = 0.8,
 ) -> List[np.ndarray]:
+    """
+    Build hierarchical cluster layers from raw data using a KDTree and Boruvka's algorithm.
+
+    Parameters
+    ----------
+    data : np.ndarray
+        The input data array of shape (n_samples, n_features).
+    min_clusters : int, optional
+        The minimum number of clusters to form in each layer, by default 3.
+    min_samples : int, optional
+        The minimum number of samples in a cluster, by default 5.
+    base_min_cluster_size : int, optional
+        The initial minimum cluster size, by default 10.
+    next_cluster_size_quantile : float, optional
+        The quantile to determine the next minimum cluster size, by default 0.8.
+
+    Returns
+    -------
+    List[np.ndarray]
+        A list of numpy arrays, each representing cluster labels for a layer.
+    """
     n_samples = data.shape[0]
     cluster_layers = []
     min_cluster_size = base_min_cluster_size
@@ -55,6 +77,7 @@ def build_raw_cluster_layers(
 
 @numba.njit(cache=True)
 def _build_cluster_tree(labels: List[np.ndarray]) -> List[Tuple[int, int, int, int]]:
+
     mapping = [(-1, -1, -1, -1) for _ in range(0)]
     found = [set([-1]) for _ in range(len(labels))]
     for upper_layer in range(1, len(labels)):
@@ -81,6 +104,20 @@ def _build_cluster_tree(labels: List[np.ndarray]) -> List[Tuple[int, int, int, i
 
 
 def build_cluster_tree(labels: List[np.ndarray]) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
+    """
+    Builds a cluster tree from the given labels.
+
+    Parameters
+    ----------
+    labels : List[np.ndarray]
+        A list of numpy arrays where each array represents the labels of clusters at a specific layer.
+
+    Returns
+    -------
+    Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary where the keys are tuples representing the parent cluster (layer, cluster index) 
+        and the values are lists of tuples representing the child clusters (layer, cluster index).
+    """
     result = {}
     raw_mapping = _build_cluster_tree(labels)
     for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
@@ -107,6 +144,7 @@ def centroids_from_labels(cluster_labels: np.ndarray, vector_data: np.ndarray) -
 
 
 def create_cluster_layers(
+
     layer_class: Type[Any],
     clusterable_vectors: np.ndarray,
     embedding_vectors: np.ndarray,
@@ -114,7 +152,32 @@ def create_cluster_layers(
     min_samples: int = 5,
     base_min_cluster_size: int = 10,
     next_cluster_size_quantile: float = 0.8,
-) -> Tuple[List[Any], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+    """
+    Create cluster layers from given vectors and parameters.
+
+    Parameters
+    ----------
+    layer_class : Type[Any]
+        The class to be used for creating layers.
+    clusterable_vectors : np.ndarray
+        The vectors that can be clustered.
+    embedding_vectors : np.ndarray
+        The embedding vectors corresponding to the clusterable vectors.
+    min_clusters : int, optional
+        The minimum number of clusters to form in a layer (default is 6).
+    min_samples : int, optional
+        The minimum number of samples for hdbscan style clustering (default is 5).
+    base_min_cluster_size : int, optional
+        The base minimum size of clusters for the most fine-grained cluster layer (default is 10).
+    next_cluster_size_quantile : float, optional
+        The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
+
+    Returns
+    -------
+    Tuple[List[Any], Dict[Tuple[int, int], List[Tuple[int, int]]]]
+        A tuple containing a list of created layers and a dictionary representing the cluster tree.
+    """    
     cluster_labels = build_raw_cluster_layers(
         clusterable_vectors,
         min_clusters=min_clusters,
