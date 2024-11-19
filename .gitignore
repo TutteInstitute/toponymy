@@ -14,3 +14,6 @@ toponymy.egg-info/requires.txt
 toponymy.egg-info/SOURCES.txt
 toponymy.egg-info/top_level.txt
 toponymy/__pycache__/*.pyc
+toponymy/tests/__pycache__/*.pyc
+toponymy/__pycache__/*.nbc
+toponymy/__pycache__/*.nbi
