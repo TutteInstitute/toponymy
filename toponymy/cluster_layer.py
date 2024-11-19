@@ -18,9 +18,9 @@ class ClusterLayer (ABC):
     make_sample_texts: generates a list of sample texts for each clusters in the layer
     """
 
-    def __init__(self, centroid_vectors, label_vector):
-        self.centroid_vectors = centroid_vectors
+    def __init__(self, label_vector, centroid_vectors):
         self.label_vector = label_vector
+        self.centroid_vectors = centroid_vectors
 
     @abstractmethod
     def make_prompts(self):
