@@ -8,7 +8,7 @@ from fast_hdbscan.cluster_trees import (
 )
 from fast_hdbscan.boruvka import parallel_boruvka
 from fast_hdbscan.numba_kdtree import kdtree_to_numba
-from scipy.spatial import KDTree
+from sklearn.neighbors import KDTree
 from typing import List, Tuple, Dict, Type, Any
 from toponymy.cluster_layer import ClusterLayer
 
@@ -76,11 +76,11 @@ def build_raw_cluster_layers(
 
 
 @numba.njit(cache=True)
-def _build_cluster_tree(labels: List[np.ndarray]) -> List[Tuple[int, int, int, int]]:
+def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
 
     mapping = [(-1, -1, -1, -1) for _ in range(0)]
     found = [set([-1]) for _ in range(len(labels))]
-    for upper_layer in range(1, len(labels)):
+    for upper_layer in range(1, labels.shape[0]):
         upper_layer_unique_labels = np.unique(labels[upper_layer])
         for lower_layer in range(upper_layer - 1, -1, -1):
             upper_cluster_order = np.argsort(labels[upper_layer])
@@ -95,10 +95,10 @@ def _build_cluster_tree(labels: List[np.ndarray]) -> List[Tuple[int, int, int, i
                             mapping.append((upper_layer, label, lower_layer, child))
                             found[lower_layer].add(child)
 
-    for lower_layer in range(len(labels) - 1, -1, -1):
+    for lower_layer in range(labels.shape[0] - 1, -1, -1):
         for child in range(labels[lower_layer].max() + 1):
             if child >= 0 and child not in found[lower_layer]:
-                mapping.append((len(labels), 0, lower_layer, child))
+                mapping.append((labels.shape[0], 0, lower_layer, child))
 
     return mapping
 
@@ -119,7 +119,7 @@ def build_cluster_tree(labels: List[np.ndarray]) -> Dict[Tuple[int, int], List[T
         and the values are lists of tuples representing the child clusters (layer, cluster index).
     """
     result = {}
-    raw_mapping = _build_cluster_tree(labels)
+    raw_mapping = _build_cluster_tree(np.vstack(labels))
     for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
         parent_name = (parent_layer, parent_cluster)
         if parent_name in result:
@@ -134,8 +134,10 @@ def centroids_from_labels(cluster_labels: np.ndarray, vector_data: np.ndarray) -
     result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
     counts = np.zeros(cluster_labels.max() + 1)
     for i in range(cluster_labels.shape[0]):
-        result[cluster_labels[i]] += vector_data[cluster_labels[i]]
-        counts[cluster_labels[i]] += 1
+        cluster_num = cluster_labels[i]
+        if cluster_num >= 0:
+            result[cluster_num] += vector_data[i]
+            counts[cluster_num] += 1
 
     for i in range(result.shape[0]):
         result[i] /= counts[i]
