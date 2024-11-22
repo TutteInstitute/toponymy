@@ -8,8 +8,8 @@ class ClusterLayer (ABC):
     Abstract class for a cluster layer. A cluster layer is a layer of a cluster hierarchy.
     
     Attributes:
+    label_vector: vector of numeric cluster labels for the clusters in the layer
     centroid_vectors: list of centroid vectors of the clusters in the layer
-    pointsets: list of pointsets of the clusters in the layer
     
     Methods:
     make_prompts: returns a list of prompts for the clusters in the layer
