@@ -140,7 +140,8 @@ def centroids_from_labels(cluster_labels: np.ndarray, vector_data: np.ndarray) -
             counts[cluster_num] += 1
 
     for i in range(result.shape[0]):
-        result[i] /= counts[i]
+        if counts[i] > 0:
+            result[i] /= counts[i]
 
     return result
 
