@@ -35,5 +35,5 @@ class ClusterLayer (ABC):
         pass
 
     @abstractmethod
-    def make_sample_texts(self, object_list: List[str], object_vectors: np.ndarray, object_to_text_function: Callable[[Any], str]) -> None:
+    def make_sample_texts(self, object_list: List[str], object_vectors: np.ndarray, object_to_text_function: Callable[[Any], List[str]]) -> None:
         pass
