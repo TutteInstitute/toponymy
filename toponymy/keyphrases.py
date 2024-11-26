@@ -40,7 +40,6 @@ def _combine_tree_layer(
     dict_list: List[Dict[str, int]], n_jobs: int = -1
 ) -> List[Dict[str, int]]:
     result = []
-    # result = joblib.Parallel(n_jobs=n_jobs)(joblib.delayed(combine_dicts)(dict_list[i], dict_list[i+1]) for i in range(0, len(dict_list) - 1, 2))
     for i in range(0, len(dict_list) - 1, 2):
         result.append(combine_dicts(dict_list[i], dict_list[i + 1]))
     if len(dict_list) % 2 == 1:
@@ -55,7 +54,7 @@ def tree_combine_dicts(dict_list: List[Dict[str, int]]) -> Dict[str, int]:
 
 
 def build_count_matrix(
-    docs: List[str], vocab: Dict[str, int], ngrammer: Callable[str, List[str]]
+    docs: List[str], vocab: Dict[str, int], ngrammer: Callable[[str], List[str]]
 ) -> scipy.sparse.csr_matrix:
     col_indices = []
     indptr = [0]
