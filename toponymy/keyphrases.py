@@ -236,7 +236,7 @@ def build_object_x_keyphrase_matrix(
         n_jobs=n_jobs,
     )
 
-    return result
+    return result, keyphrases
 
 
 def longest_keyphrases(candidate_keyphrases):
@@ -255,6 +255,22 @@ def longest_keyphrases(candidate_keyphrases):
 
     return result
 
+def subset_matrix_and_class_labels(
+        cluster_label_vector: np.ndarray,
+        object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+) -> Tuple[scipy.sparse.spmatrix, np.ndarray, np.ndarray]:
+    # Mask out noise points, and then columns and rows that then have no entries
+    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
+    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+    count_matrix = count_matrix[:, column_mask]
+    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
+    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+    count_matrix = count_matrix[row_mask, :]
+
+    # Make a label vector contracted to the appropriate space
+    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
+
+    return count_matrix, class_labels, column_map
 
 def information_weighted_keyphrases(
     cluster_label_vector: np.ndarray,
@@ -299,17 +315,10 @@ def information_weighted_keyphrases(
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
     }
+    count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        cluster_label_vector, object_x_keyphrase_matrix
+    )
 
-    # Mask out noise points, and then columns and rows that then have no entries
-    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
-    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
-    count_matrix = count_matrix[:, column_mask]
-    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
-    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
-    count_matrix = count_matrix[row_mask, :]
-
-    # Make a label vector contracted to the appropriate space, perform information weighting
-    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
     iwt = InformationWeightTransformer(
         prior_strength=prior_strength, weight_power=weight_power
     ).fit(count_matrix, class_labels)
@@ -363,15 +372,9 @@ def central_keyphrases(
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
     }
 
-    # Mask out noise points, and then columns and rows that then have no entries
-    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
-    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
-    count_matrix = count_matrix[:, column_mask]
-    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
-    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
-    count_matrix = count_matrix[row_mask, :]
-
-    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
+    count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        cluster_label_vector, object_x_keyphrase_matrix
+    )
 
     result = []
     for cluster_num in range(cluster_label_vector.max() + 1):
@@ -458,17 +461,12 @@ def bm25_keyphrases(
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
     }
 
-    # Mask out noise points, and then columns and rows that then have no entries
-    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
-    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
-    count_matrix = count_matrix[:, column_mask]
-    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
-    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
-    count_matrix = count_matrix[row_mask, :]
+    count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        cluster_label_vector, object_x_keyphrase_matrix
+    )
 
     # Build a class based count matrix
-    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
-    groupby_matrix = scipy.sprase.csr_matrix(
+    groupby_matrix = scipy.sparse.csr_matrix(
         (
             np.ones(class_labels.shape[0]),
             (class_labels, np.arange(class_labels.shape[0])),
@@ -490,7 +488,7 @@ def bm25_keyphrases(
         tf_score = tf_array / (k1 * ((1 - b) + b * doc_lengths[i] / avg_doc_length) + tf_array)
         class_count_matrix.data[class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]] = tf_score
 
-    bm25_matrix = class_count_matrix.multiply(idf)
+    bm25_matrix = class_count_matrix.multiply(idf).tocsr()
 
     # Select the top scoring keyphrases for each cluster based on BM25 scores for the cluster
     result = []
