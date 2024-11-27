@@ -5,6 +5,9 @@ from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs, cpu_count
 from functools import reduce
 from collections import Counter
+from toponymy.utility_functions import diversify
+from vectorizers.transformers import InformationWeightTransformer
+from sklearn.metrics import pairwise_distances
 
 import scipy.sparse
 
@@ -232,5 +235,289 @@ def build_object_x_keyphrase_matrix(
         token_pattern=token_pattern,
         n_jobs=n_jobs,
     )
+
+    return result
+
+
+def longest_keyphrases(candidate_keyphrases):
+    """
+    Builds a list of keyphrases that are not substrings of other keyphrases.
+    """
+    result = []
+    for i, phrase in enumerate(candidate_keyphrases):
+        for other in candidate_keyphrases:
+            if f" {phrase}" in other or f"{phrase} " in other:
+                phrase = other
+
+        if phrase not in result:
+            candidate_keyphrases[i] = phrase
+            result.append(phrase)
+
+    return result
+
+
+def information_weighted_keyphrases(
+    cluster_label_vector: np.ndarray,
+    object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+    keyphrase_list: List[str],
+    keyphrase_vectors: np.ndarray,
+    centroid_vectors: np.ndarray,
+    n_keyphrases: int = 16,
+    prior_strength: float = 0.1,
+    weight_power: float = 2.0,
+    diversify_alpha: float = 0.66,
+) -> List[List[str]]:
+    """Generates a list of keyphrases for each cluster in a cluster layer.
+
+    Parameters
+    ----------
+    cluster_label_vector : np.ndarray
+        A vector of cluster labels for each object.
+    object_x_keyphrase_matrix : scipy.sparse.spmatrix
+        A sparse matrix of keyphrase counts for each object.
+    keyphrase_list : List[str]
+        A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+    keyphrase_vectors : np.ndarray
+        An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    centroid_vectors : np.ndarray
+        An ndarray of centroid vectors for each cluster.
+    n_keyphrases : int, optional
+        The number of keyphrases to generate for each cluster, by default 16.
+    prior_strength : float, optional
+        The strength of the prior for the information weighting, by default 0.1.
+    weight_power : float, optional
+        The power to raise the information weights to, by default 2.0.
+    diversify_alpha : float, optional
+        The alpha parameter for diversifying the keyphrase selection, by default 0.66.
+
+    Returns
+    -------
+    keyphrases List[List[str]]
+        A list of lists of keyphrases for each cluster.
+    """
+    keyphrase_vector_mapping = {
+        keyphrase: vector
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+    }
+
+    # Mask out noise points, and then columns and rows that then have no entries
+    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
+    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+    count_matrix = count_matrix[:, column_mask]
+    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
+    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+    count_matrix = count_matrix[row_mask, :]
+
+    # Make a label vector contracted to the appropriate space, perform information weighting
+    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
+    iwt = InformationWeightTransformer(
+        prior_strength=prior_strength, weight_power=weight_power
+    ).fit(count_matrix, class_labels)
+    count_matrix.data = np.log(count_matrix.data + 1)
+    count_matrix.eliminate_zeros()
+    weighted_matrix = iwt.transform(count_matrix)
+
+    result = []
+    for cluster_num in range(cluster_label_vector.max() + 1):
+        # Sum over the cluster; get the top scoring indices
+        contrastive_scores = np.squeeze(
+            np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
+        )
+        if sum(contrastive_scores) == 0:
+            result.append(["No notable keyphrases"])
+            continue
+
+        chosen_indices = np.argsort(contrastive_scores)[-4 * n_keyphrases :]
+
+        # Map the indices back to the original vocabulary
+        chosen_keyphrases = [
+            keyphrase_list[column_map[j]] for j in reversed(chosen_indices)
+        ]
+
+        # Extract the longest keyphrases, then diversify the selection
+        chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
+        chosen_vectors = np.asarray(
+            [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
+        )
+        chosen_indices = diversify(
+            centroid_vectors[cluster_num], chosen_vectors, alpha=diversify_alpha
+        )[:n_keyphrases]
+        chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
+
+        result.append(chosen_keyphrases)
+
+    return result
+
+
+def central_keyphrases(
+    cluster_label_vector: np.ndarray,
+    object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+    keyphrase_list: List[str],
+    keyphrase_vectors: np.ndarray,
+    centroid_vectors: np.ndarray,
+    n_keyphrases: int = 16,
+    diversify_alpha: float = 0.66,
+):
+    keyphrase_vector_mapping = {
+        keyphrase: vector
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+    }
+
+    # Mask out noise points, and then columns and rows that then have no entries
+    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
+    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+    count_matrix = count_matrix[:, column_mask]
+    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
+    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+    count_matrix = count_matrix[row_mask, :]
+
+    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
+
+    result = []
+    for cluster_num in range(cluster_label_vector.max() + 1):
+        # Sum over the cluster; get the non-zero indices
+        base_candidate_indices = np.where(
+            np.squeeze(
+                np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
+            )
+            > 0
+        )[0]
+
+        # Map the indices back to the original vocabulary
+        base_candidates = [
+            keyphrase_list[column_map[j]] for j in base_candidate_indices
+        ]
+        base_vectors = np.asarray(
+            [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
+        )
+
+        # Select the central keyphrases as the closest samples to the centroid
+        base_distances = pairwise_distances(
+            centroid_vectors[cluster_num].reshape(1, -1), base_vectors, metric="cosine"
+        )
+        base_order = np.argsort(base_distances.flatten())
+
+        chosen_keyphrases = [base_candidates[i] for i in base_order[: n_keyphrases * 4]]
+
+        # Extract the longest keyphrases, then diversify the selection
+        chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
+        chosen_vectors = np.asarray(
+            [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
+        )
+        chosen_indices = diversify(
+            centroid_vectors[cluster_num], chosen_vectors, alpha=diversify_alpha
+        )[:n_keyphrases]
+        chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
+
+        result.append(chosen_keyphrases)
+
+    return result
+
+
+def bm25_keyphrases(
+    cluster_label_vector: np.ndarray,
+    object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+    keyphrase_list: List[str],
+    keyphrase_vectors: np.ndarray,
+    centroid_vectors: np.ndarray,
+    n_keyphrases: int = 16,
+    k1: float = 1.5,
+    b: float = 0.75,
+    diversify_alpha: float = 0.66,
+) -> List[List[str]]:
+    """Generates a list of keyphrases for each cluster in a cluster layer using BM25 for scoring.
+
+    Parameters
+    ----------
+    cluster_label_vector : np.ndarray
+        A vector of cluster labels for each object.
+    object_x_keyphrase_matrix : scipy.sparse.spmatrix
+        A sparse matrix of keyphrase counts for each object.
+    keyphrase_list : List[str]
+        A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+    keyphrase_vectors : np.ndarray
+        An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    centroid_vectors : np.ndarray
+        An ndarray of centroid vectors for each cluster.
+    n_keyphrases : int, optional
+        The number of keyphrases to generate for each cluster, by default 16.
+    k1 : float, optional
+        The k1 parameter for BM25, by default 1.5.
+    b : float, optional
+        The b parameter for BM25, by default 0.75.
+    diversify_alpha : float, optional
+        The alpha parameter for diversifying the keyphrase selection, by default 0.66.
+
+    Returns
+    -------
+    keyphrases : List[List[str]]
+        A list of lists of keyphrases for each cluster.
+    """   
+    keyphrase_vector_mapping = {
+        keyphrase: vector
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+    }
+
+    # Mask out noise points, and then columns and rows that then have no entries
+    count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
+    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+    count_matrix = count_matrix[:, column_mask]
+    column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
+    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+    count_matrix = count_matrix[row_mask, :]
+
+    # Build a class based count matrix
+    class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
+    groupby_matrix = scipy.sprase.csr_matrix(
+        (
+            np.ones(class_labels.shape[0]),
+            (class_labels, np.arange(class_labels.shape[0])),
+        ),
+        shape=(class_labels.max() + 1, class_labels.shape[0]),
+    )
+    class_count_matrix = groupby_matrix @ count_matrix
+
+    # Compute BM25 scores for every entry in the matrix
+    N = class_count_matrix.shape[0]
+    df = (class_count_matrix > 0).sum(axis=0)
+    idf = np.log(1 + (N - df + 0.5) / (df + 0.5))
+
+    doc_lengths = count_matrix.sum(axis=1)
+    avg_doc_length = doc_lengths.mean()
+
+    for i in range(class_count_matrix.shape[0]):
+        tf_array = class_count_matrix.data[class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]]
+        tf_score = tf_array / (k1 * ((1 - b) + b * doc_lengths[i] / avg_doc_length) + tf_array)
+        class_count_matrix.data[class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]] = tf_score
+
+    bm25_matrix = class_count_matrix.multiply(idf)
+
+    # Select the top scoring keyphrases for each cluster based on BM25 scores for the cluster
+    result = []
+    for cluster_num in range(cluster_label_vector.max() + 1):
+        # Sum over the cluster; get the top scoring indices
+        contrastive_scores = bm25_matrix[cluster_num].toarray().flatten()
+        if sum(contrastive_scores) == 0:
+            result.append(["No notable keyphrases"])
+            continue
+
+        chosen_indices = np.argsort(contrastive_scores)[-4 * n_keyphrases :]
+
+        # Map the indices back to the original vocabulary
+        chosen_keyphrases = [
+            keyphrase_list[column_map[j]] for j in reversed(chosen_indices)
+        ]
+
+        # Extract the longest keyphrases, then diversify the selection
+        chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
+        chosen_vectors = np.asarray(
+            [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
+        )
+        chosen_indices = diversify(
+            centroid_vectors[cluster_num], chosen_vectors, alpha=diversify_alpha
+        )[:n_keyphrases]
+        chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
+
+        result.append(chosen_keyphrases)
 
     return result

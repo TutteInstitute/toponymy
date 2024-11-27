@@ -27,7 +27,7 @@ class ClusterLayer (ABC):
         pass
 
     @abstractmethod
-    def make_keyphrases(self, keyword_list: List[str], object_x_keyphrase_matrix: scipy.sparse.spmatrix, keyword_vectors: np.ndarray) -> None:
+    def make_keyphrases(self, keyphrase_list: List[str], object_x_keyphrase_matrix: scipy.sparse.spmatrix, keyphrase_vectors: np.ndarray) -> None:
         pass
 
     @abstractmethod
