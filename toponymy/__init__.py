@@ -1,1 +1,5 @@
-from .topic_naming import Toponymy
+from .toponymy import Toponymy
+
+__all__ = [
+    "Toponymy"
+]
