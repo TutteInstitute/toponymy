@@ -176,7 +176,8 @@ def build_keyphrase_count_matrix(
 
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = (len(objects) // n_chunks) + 1
+    chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
+    n_chunks = len(objects) // chunk_size + 1
     chunked_count_matrices = Parallel(n_jobs=n_chunks)(
         delayed(build_count_matrix)(objects[i : i + chunk_size], keyphrases, ngrammer)
         for i in range(0, len(objects), chunk_size)
