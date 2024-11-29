@@ -4,6 +4,9 @@ from warnings import warn
 import tokenizers
 import transformers
 
+from templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
+import re
+
 try:
 
     import llama_cpp
@@ -58,6 +61,61 @@ try:
 
 except ImportError:
     pass
+
+try:
+    import huggingface_hub
+    import transformers
+
+    class HuggingFaceWrapper:
+
+        def __init__(self, model, **kwargs):
+            self.model = model
+            self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
+
+        def generate_topic_name(self, prompt, temperature=0.8):
+            try:
+                topic_name_info_raw = self.llm(
+                    [{"role": "user", "content": prompt}],
+                    max_new_tokens=64,
+                    temperature=temperature,
+                    do_sample=True,
+                )
+                topic_name_info_text = topic_name_info_raw[0]["generated_text"][-1][
+                    "content"
+                ]
+                topic_name_info = re.findall(
+                    GET_TOPIC_NAME_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info)
+                topic_name = topic_name_info["topic_name"]
+            except Exception as e:
+                warn(f"Failed to generate topic name with HuggingFace: {e}")
+                topic_name = ""
+
+            return topic_name
+
+        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+            try:
+                topic_name_info_raw = self.llm(
+                    [{"role": "user", "content": prompt}],
+                    max_new_tokens=1024,
+                    temperature=temperature,
+                )
+                topic_name_info_text = topic_name_info_raw[0]["generated_text"][-1][
+                    "content"
+                ]
+                topic_name_info = re.findall(
+                    GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info)
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [
+                    mapping.get(f"{n}. {name}", name)
+                    for n, name in enumerate(old_names)
+                ]
+                return result
+            except:
+                return old_names
 
 try:
 
