@@ -22,27 +22,35 @@ try:
             self.llm = llama_cpp.Llama(model_path=model_path, **kwargs)
 
         def generate_topic_name(self, prompt, temperature=0.8):
-            topic_name = self.llm(prompt, temperature=temperature)["choices"][0]["text"]
-            if "\n" in topic_name:
-                topic_name = topic_name.lstrip("\n ")
-                topic_name = topic_name.split("\n")[0]
-            topic_name = string.capwords(
-                topic_name.strip(string.punctuation + string.whitespace)
-            )
-            return topic_name
+            try:
+                topic_name_info = self.llm(
+                    prompt, temperature=temperature, max_tokens=256
+                )["choices"][0]["text"]
+                topic_name_info = re.findall(
+                    GET_TOPIC_NAME_REGEX, topic_name_info, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info)
+                topic_name = topic_name_info["topic_name"]
+                return topic_name
+            except Exception as e:
+                warn(f"Failed to generate topic name with LlamaCpp: {e}")
+                return ""
 
         def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
             try:
-                topic_name_info_raw = self.llm(prompt, temperature=temperature)
+                topic_name_info_raw = self.llm(
+                    prompt, temperature=temperature, max_tokens=1024
+                )
                 topic_name_info_text = topic_name_info_raw["choices"][0]["text"]
-                topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
+                topic_name_info = re.findall(
+                    GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text
+                )[0]
+                topic_name_info = json.loads(topic_name_info)
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [
+                    mapping.get(f"{n}. {name}", name)
+                    for n, name in enumerate(old_names)
+                ]
                 return result
             except:
                 return old_names
