@@ -34,5 +34,5 @@ def test_diversify_max_alpha(max_alpha, n_results):
     query_vector = np.random.rand(512)
     query_distances = pairwise_distances(query_vector.reshape(1, -1), TEST_VECTORS, metric="cosine").squeeze()
     distance_to_query_order = np.argsort(query_distances)[:n_results + 2]
-    retained_indices = diversify_max_alpha(query_vector, TEST_VECTORS[distance_to_query_order], 10, max_alpha=max_alpha)
+    retained_indices = diversify_max_alpha(query_vector, TEST_VECTORS[distance_to_query_order], n_results, max_alpha=max_alpha)
     assert len(retained_indices) >= n_results

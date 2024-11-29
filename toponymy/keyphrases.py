@@ -2,7 +2,7 @@ import numpy as np
 
 from typing import List, Tuple, FrozenSet, Dict, Callable
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
-from joblib import Parallel, delayed, effective_n_jobs, cpu_count
+from joblib import Parallel, delayed, effective_n_jobs
 from functools import reduce
 from collections import Counter
 from toponymy.utility_functions import diversify_max_alpha as diversify
