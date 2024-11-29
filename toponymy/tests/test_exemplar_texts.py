@@ -12,7 +12,7 @@ TEST_OBJECTS = json.load(open(Path(__file__).parent / "test_objects.json", "r"))
 
 def test_json_load():
     print()
-    assert len(TEST_OBJECTS)==11
+    assert len(TEST_OBJECTS)==125
 
 @pytest.mark.parametrize("n_samples", [4, 15])
 def test_random_exemplar(n_samples):

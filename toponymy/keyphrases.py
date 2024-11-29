@@ -5,7 +5,7 @@ from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs, cpu_count
 from functools import reduce
 from collections import Counter
-from toponymy.utility_functions import diversify
+from toponymy.utility_functions import diversify_max_alpha as diversify
 from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
 
@@ -282,7 +282,7 @@ def information_weighted_keyphrases(
     n_keyphrases: int = 16,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
-    diversify_alpha: float = 0.66,
+    diversify_alpha: float = 1.0,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer.
 
@@ -305,7 +305,7 @@ def information_weighted_keyphrases(
     weight_power : float, optional
         The power to raise the information weights to, by default 2.0.
     diversify_alpha : float, optional
-        The alpha parameter for diversifying the keyphrase selection, by default 0.66.
+        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
 
     Returns
     -------
@@ -337,7 +337,7 @@ def information_weighted_keyphrases(
             result.append(["No notable keyphrases"])
             continue
 
-        chosen_indices = np.argsort(contrastive_scores)[-4 * n_keyphrases :]
+        chosen_indices = np.argsort(contrastive_scores)[-n_keyphrases ** 2 :]
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
@@ -350,7 +350,7 @@ def information_weighted_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num], chosen_vectors, alpha=diversify_alpha
+            centroid_vectors[cluster_num], chosen_vectors, n_keyphrases, max_alpha=diversify_alpha
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
@@ -366,7 +366,7 @@ def central_keyphrases(
     keyphrase_vectors: np.ndarray,
     centroid_vectors: np.ndarray,
     n_keyphrases: int = 16,
-    diversify_alpha: float = 0.66,
+    diversify_alpha: float = 1.0,
 ):
     keyphrase_vector_mapping = {
         keyphrase: vector
@@ -401,7 +401,7 @@ def central_keyphrases(
         )
         base_order = np.argsort(base_distances.flatten())
 
-        chosen_keyphrases = [base_candidates[i] for i in base_order[: n_keyphrases * 4]]
+        chosen_keyphrases = [base_candidates[i] for i in base_order[: n_keyphrases ** 2]]
 
         # Extract the longest keyphrases, then diversify the selection
         chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
@@ -409,7 +409,7 @@ def central_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num], chosen_vectors, alpha=diversify_alpha
+            centroid_vectors[cluster_num], chosen_vectors, n_keyphrases, max_alpha=diversify_alpha
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
@@ -427,7 +427,7 @@ def bm25_keyphrases(
     n_keyphrases: int = 16,
     k1: float = 1.5,
     b: float = 0.75,
-    diversify_alpha: float = 0.66,
+    diversify_alpha: float = 1.0,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer using BM25 for scoring.
 
@@ -450,7 +450,7 @@ def bm25_keyphrases(
     b : float, optional
         The b parameter for BM25, by default 0.75.
     diversify_alpha : float, optional
-        The alpha parameter for diversifying the keyphrase selection, by default 0.66.
+        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
 
     Returns
     -------
@@ -500,7 +500,7 @@ def bm25_keyphrases(
             result.append(["No notable keyphrases"])
             continue
 
-        chosen_indices = np.argsort(contrastive_scores)[-4 * n_keyphrases :]
+        chosen_indices = np.argsort(contrastive_scores)[-n_keyphrases ** 2 :]
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
@@ -513,7 +513,7 @@ def bm25_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num], chosen_vectors, alpha=diversify_alpha
+            centroid_vectors[cluster_num], chosen_vectors, n_keyphrases, max_alpha=diversify_alpha
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
