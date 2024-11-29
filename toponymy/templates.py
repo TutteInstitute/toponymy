@@ -11,6 +11,9 @@ SUMMARY_KINDS = [
     "simple (1 or 2 word)",
 ]
 
+_GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?, "topic_specificity":\s*\d+\.\d+\s*\}'
+_GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"new_topic_name_mapping":\s*.*?, "topic_specificities": .*?\}'
+
 PROMPT_TEMPLATES = {
     "layer": jinja2.Template(
         """
