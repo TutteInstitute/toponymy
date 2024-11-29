@@ -6,7 +6,7 @@ from sklearn.preprocessing import normalize
 
 from toponymy.utility_functions import distance_to_vector, diversify_fixed_alpha, diversify_max_alpha
 
-TEST_VECTORS = normalize(np.random.rand(1000, 512, dtype=np.float32))
+TEST_VECTORS = normalize(np.random.rand(1000, 512))
 
 def test_distance_to_vector():
     query_vector = np.random.rand(512, dtype=np.float32)
