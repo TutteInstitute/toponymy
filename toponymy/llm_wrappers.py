@@ -125,6 +125,9 @@ try:
             except:
                 return old_names
 
+except ImportError:
+    pass
+
 try:
 
     import json
