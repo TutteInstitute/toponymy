@@ -34,12 +34,10 @@ def test_random_exemplar(n_exemplars):
     for i in range(CLUSTER_LAYER.max()+1):
         assert len(exemplars[i])==min(n_exemplars, len(TOPIC_OBJECTS[i]['paragraphs']))
 
-
-
 @pytest.mark.parametrize("n_exemplars", [3, 5])
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
 def test_centroid_sample_exemplar_result_sizes(n_exemplars: Literal[3] | Literal[5], diversify_alpha: float):
-    centroid_exemplar_results = centroid_sample_exemplar(
+    exemplar_results = centroid_sample_exemplar(
         cluster_label_vector = CLUSTER_LAYER,
         objects = ALL_TOPIC_OBJECTS,
         object_vectors = TOPIC_VECTORS,
@@ -47,17 +45,17 @@ def test_centroid_sample_exemplar_result_sizes(n_exemplars: Literal[3] | Literal
         n_exemplars= n_exemplars,
         diversify_alpha = diversify_alpha,
     )
-    assert len(centroid_exemplar_results) == len(np.unique(CLUSTER_LAYER)) - 1
+    assert len(exemplar_results) == len(np.unique(CLUSTER_LAYER)) - 1
     if diversify_alpha == 1.0:
-        print(centroid_exemplar_results)
-    assert all([len(x) == n_exemplars for x in centroid_exemplar_results]) and centroid_exemplar_results
-    assert all([len(set(x)) == n_exemplars for x in centroid_exemplar_results])
+        print(exemplar_results)
+    assert all([len(x) == n_exemplars for x in exemplar_results]) and exemplar_results
+    assert all([len(set(x)) == n_exemplars for x in exemplar_results])
 
 
 @pytest.mark.parametrize("n_exemplars", [3, 5])
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
 def test_random_sample_exemplar_result_sizes(n_exemplars: Literal[3] | Literal[5], diversify_alpha: float):
-    random_exemplar_results = random_diverse_exemplar(
+    exemplar_results = random_diverse_exemplar(
         cluster_label_vector = CLUSTER_LAYER,
         objects = ALL_TOPIC_OBJECTS,
         object_vectors = TOPIC_VECTORS,
@@ -65,8 +63,39 @@ def test_random_sample_exemplar_result_sizes(n_exemplars: Literal[3] | Literal[5
         n_exemplars= n_exemplars,
         diversify_alpha = diversify_alpha,
     )
-    assert len(random_exemplar_results) == len(np.unique(CLUSTER_LAYER)) - 1
+    assert len(exemplar_results) == len(np.unique(CLUSTER_LAYER)) - 1
     if diversify_alpha == 1.0:
-        print(random_exemplar_results)
-    assert all([len(x) == n_exemplars for x in random_exemplar_results]) and random_exemplar_results
-    assert all([len(set(x)) == n_exemplars for x in random_exemplar_results])
+        print(exemplar_results)
+    assert all([len(x) == n_exemplars for x in exemplar_results]) and exemplar_results
+    assert all([len(set(x)) == n_exemplars for x in exemplar_results])
+
+def test_empty_cluster_random_diverse():
+    new_clustering = CLUSTER_LAYER
+    new_clustering[new_clustering==0] = 9
+    exemplar_results = random_diverse_exemplar(
+        cluster_label_vector = new_clustering,
+        objects = ALL_TOPIC_OBJECTS,
+        object_vectors = TOPIC_VECTORS,
+        centroid_vectors = CENTROID_VECTORS,
+    )
+    assert len(exemplar_results[0])==0
+
+def test_empty_cluster_centroid():
+    new_clustering = CLUSTER_LAYER
+    new_clustering[new_clustering==0] = 9
+    exemplar_results = centroid_sample_exemplar(
+        cluster_label_vector = new_clustering,
+        objects = ALL_TOPIC_OBJECTS,
+        object_vectors = TOPIC_VECTORS,
+        centroid_vectors = CENTROID_VECTORS,
+    )
+    assert len(exemplar_results[0])==0
+
+def test_empty_cluster_random():
+    new_clustering = CLUSTER_LAYER
+    new_clustering[new_clustering==0] = 9
+    exemplar_results = random_sample_exemplar(
+        cluster_label_vector = new_clustering,
+        objects = ALL_TOPIC_OBJECTS,
+    )
+    assert len(exemplar_results[0])==0

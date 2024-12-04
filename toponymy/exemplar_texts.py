@@ -17,7 +17,8 @@ def random_sample_exemplar(
     Parameters
     ----------
     cluster_label_vector : np.ndarray
-        A vector of cluster labels for each object.
+        A vector of cluster labels for each object.  Cluster labels below zero are ignored and cluster labels are
+        explected to be integers ranging from 0 to the number_of_clusters.
     objects : List[str]
         A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
     n_samples : int, optional
@@ -33,6 +34,10 @@ def random_sample_exemplar(
     for cluster_num in range(cluster_label_vector.max() + 1):
         #Grab the vectors associated with the objects in this cluster
         cluster_objects = np.array(objects)[cluster_label_vector==cluster_num]
+        #If there is an empty cluster emit the empty list of exemplars
+        if(len(cluster_objects)==0):
+            results.append([])
+            continue
         # Randomly permute the index to create a random selection
         exemplar_order = np.random.permutation(len(cluster_objects))[:n_exemplars]
         chosen_exemplars = [cluster_objects[i] for i in exemplar_order]
@@ -75,6 +80,10 @@ def centroid_sample_exemplar(
     for cluster_num in range(cluster_label_vector.max() + 1):
         #Grab the vectors associated with the objects in this cluster
         cluster_objects = np.array(objects)[cluster_label_vector==cluster_num]
+        #If there is an empty cluster emit the empty list of exemplars
+        if(len(cluster_objects)==0):
+            results.append([])
+            continue
         cluster_object_vectors = object_vectors[cluster_label_vector==cluster_num]
 
         # Select the central exemplars as the objects to each centroid
@@ -127,6 +136,10 @@ def random_diverse_exemplar(
     for cluster_num in range(cluster_label_vector.max() + 1):
         #Grab the vectors associated with the objects in this cluster
         cluster_objects = np.array(objects)[cluster_label_vector==cluster_num]
+        #If there is an empty cluster emit the empty list of exemplars
+        if(len(cluster_objects)==0):
+            results.append([])
+            continue
         cluster_object_vectors = object_vectors[cluster_label_vector==cluster_num]
 
         # Randomly permute the index to create a random selection
