@@ -2,32 +2,34 @@ from abc import ABC, abstractmethod
 from typing import List, Callable, Any
 import scipy.sparse
 import numpy as np
+from toponymy.keyphrases import central_keyphrases
+from toponymy.exemplar_texts import diverse_exemplars
 
 class ClusterLayer (ABC):
     """
     Abstract class for a cluster layer. A cluster layer is a layer of a cluster hierarchy.
     
     Attributes:
-    label_vector: vector of numeric cluster labels for the clusters in the layer
+    cluster_labels: vector of numeric cluster labels for the clusters in the layer
     centroid_vectors: list of centroid vectors of the clusters in the layer
     
     Methods:
     make_prompts: returns a list of prompts for the clusters in the layer
-    make_keyphrases: generates a list of _keyphrases for each clusters in the layer
+    make_keywords: generates a list of keywords for each clusters in the layer
     make_subtopics: generates a list of subtopics for each clusters in the layer
     make_sample_texts: generates a list of sample texts for each clusters in the layer
     """
 
-    def __init__(self, label_vector, centroid_vectors):
-        self.label_vector = label_vector
+    def __init__(self, cluster_labels, centroid_vectors):
+        self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
 
     @abstractmethod
-    def make_prompts(self):
+    def make_prompts(self, detail_level):
         pass
 
     @abstractmethod
-    def make_keyphrases(self, keyphrase_list: List[str], object_x_keyphrase_matrix: scipy.sparse.spmatrix, keyphrase_vectors: np.ndarray) -> None:
+    def make_keywords(self, keyphrase_list: List[str], object_x_keyphrase_matrix: scipy.sparse.spmatrix, keyphrase_vectors: np.ndarray) -> None:
         pass
 
     @abstractmethod
@@ -35,5 +37,48 @@ class ClusterLayer (ABC):
         pass
 
     @abstractmethod
-    def make_sample_texts(self, object_list: List[str], object_vectors: np.ndarray, object_to_text_function: Callable[[Any], List[str]]) -> None:
+    def make_exemplar_texts(self, object_list: List[Any], object_vectors: np.ndarray, object_to_text_function: Callable[[Any], List[str]]) -> None:
         pass
+
+class ClusterLayerText(ClusterLayer):   
+    """
+    A cluster layer class for dealing with text data. A cluster layer is a layer of a cluster hierarchy.
+    
+    Attributes:
+    cluster_labels: vector of numeric cluster labels for the clusters in the layer
+    centroid_vectors: list of centroid vectors of the clusters in the layer
+    
+    Methods:
+    make_prompts: creates and stores a list of prompts for the clusters in the layer
+    make_keywords: generates and stores a list of keywords for each clusters in the layer
+    make_subtopics: generates and stores a list of subtopics for each clusters in the layer
+    make_sample_texts: generates and stores a list of sample texts for each clusters in the layer
+    """
+    
+
+    def make_prompts(self, detail_level):
+        pass
+
+    def make_keywords(self, keyphrase_list: List[str], object_x_keyphrase_matrix: scipy.sparse.spmatrix, keyphrase_vectors: np.ndarray) -> None:
+        self.keyphrases = central_keyphrases(
+            self.cluster_labels,
+            object_x_keyphrase_matrix,
+            keyphrase_list,
+            keyphrase_vectors,
+            self.centroid_vectors,
+            # diversify_alpha=diversify_alpha,
+            # n_keyphrases=n_keyphrases,
+        )
+
+    def make_subtopics(self, topic_list: List[str], object_x_topic_matrix: scipy.sparse.spmatrix, topic_vectors: np.ndarray) -> None:
+        pass
+
+    def make_exemplar_texts(self, object_list: List[str], object_vectors: np.ndarray, object_to_text_function: Callable[[Any], List[str]]) -> None:
+        self.exemplars = diverse_exemplars(
+            cluster_label_vector = self.cluster_labels,
+            objects = object_list,
+            object_vectors = object_vectors,
+            centroid_vectors = self.centroid_vectors,
+            # n_exemplars= n_exemplars,
+            # diversify_alpha = diversify_alpha,
+        )
