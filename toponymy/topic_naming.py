@@ -95,25 +95,15 @@ where SCORE is a value in the range 0 to 1.
         """
 You are an expert in {{larger_topic}} and have been asked to provide a more specific name for a group of 
 {{document_type}} from {{corpus_description}}. The group of {{document_type}} has been described as having a topic of one of 
-{{attempted_topic_names}}. These topic names were not specific enough.
-
-The other groups of {{document_type}} that can be confused with this topic are:
+{{attempted_topic_names}}. These topic names were not specific orr detailed enough to distinguish it
+from other more general groups of {{document_type}} such as:
 
 {% for topic in matching_topics  %}
-{{topic}}:
-{%- if matching_topic_keywords[topic] %}
- - Keywords: {{", ".join(matching_topic_keywords[topic])}}
-{%- endif %}
-{%- if matching_topic_subtopics[topic] %}
- - Subtopics: {{", ".join(matching_topic_subtopics[topic])}}
-{%- endif %}
-{%- if matching_topic_sentences[topic] %}
- - Sample {{document_type}}:
-{%- for sentence in matching_topic_sentences[topic] %}
-      * "{{sentence}}"
-{%- endfor %}
-{%- endif %}
-{%- endfor %}
+
+"{{loop.index}}. {{topic}}":
+ - Keywords: {{", ".join(matching_topic_keywords[loop.index - 1])}}
+ - Subtopics: {{", ".join(matching_topic_subtopics[loop.index - 1])}}
+{% endfor %}
 
 As an expert in {{larger_topic}}, you need to provide a more specific name for this group of {{document_type}}:
 {%- if cluster_keywords %}
@@ -131,7 +121,7 @@ As an expert in {{larger_topic}}, you need to provide a more specific name for t
 
 You should make use of the relative relationships between these topics as well as the keywords
 and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new 
-better and more *specific* topic name.
+better and more *specific* {{summary_kind}} name to this topic.
 
 The response should be only JSON with no preamble formatted as 
   {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} 
@@ -569,6 +559,66 @@ def create_final_remedy_prompt(
 
     prompt_text += f"\n\nThe current name for this topic of these paragraphs is: {original_topic_names[-1]}\n"
     prompt_text += "\n" + llm_instruction
+    return prompt_text
+
+
+def create_topic_discernment_prompt(
+    layer,
+    topic_index,
+    attempted_topic_names,
+    matching_topics,
+    representations,
+    subtopic_layers,
+    topic_name_layers,
+    cluster_tree,
+    document_type,
+    corpus_description,
+    max_keywords=16,
+    max_subtopics=16,
+    max_sentences=16,
+):
+    template = _PROMPT_TEMPLATES["remedy"]
+    summary_kind_idx = int(round(len(_SUMMARY_KINDS) * layer / 7)) # TODO: pass in num _layers or summary kind
+    summary_kind=_SUMMARY_KINDS[summary_kind_idx]
+    larger_topic = attempted_topic_names[0]
+    cluster_keywords = representations["contrastive"][layer][topic_index][:max_keywords]
+    cluster_subtopics = (
+        subtopic_layers[layer - 1][topic_index][:max_subtopics] if layer > 0 else None
+    )
+    cluster_sentences = representations["topical"][layer][topic_index][:max_sentences]
+    matching_topic_keywords = [
+       representations["contrastive"][
+            matching_topic_layer
+        ][matching_topic_index]
+        for matching_topic_layer, matching_topic_index in matching_topics
+    ]
+    matching_topic_subtopics = [
+        subtopic_layers[
+            matching_topic_layer - 1
+        ][matching_topic_index][:max_subtopics]
+        for matching_topic_layer, matching_topic_index in matching_topics
+        if matching_topic_layer > 0
+    ]
+    matching_topic_names = [
+        topic_name_layers[matching_topic_layer][matching_topic_index] 
+        for matching_topic_layer, matching_topic_index in matching_topics
+        if matching_topic_layer > 0
+    ]
+
+    prompt_text = template.render(
+        larger_topic=larger_topic,
+        attempted_topic_names=attempted_topic_names,
+        matching_topics=matching_topic_names,
+        matching_topic_keywords=matching_topic_keywords,
+        matching_topic_subtopics=matching_topic_subtopics,
+        # matching_topic_sentences=matching_topic_sentences,
+        cluster_keywords=cluster_keywords,
+        cluster_subtopics=cluster_subtopics,
+        cluster_sentences=cluster_sentences,
+        document_type=document_type,
+        corpus_description=corpus_description,
+        summary_kind=summary_kind,
+    )
     return prompt_text
 
 
@@ -1277,53 +1327,6 @@ class Toponymy:
                 for new_topic_name, topic_index in zip(cluster_topic_names, topic_indices):
                     new_topic_names[topic_index] = new_topic_name
                     
-            # prompt = f"There are collections of {self.corpus_description} with somewhat similar auto-generated topic names, all in your field of expertise.\n"
-            # prompt += f"Below are the auto-generated topic names, along with some keywords associated to each topic, and sub-topics from the topic area."
-            # for x in label_indices:
-            #     prompt += f"\n\n**{self.topic_name_layers_[layer_id][x]}**\n"
-            #     prompt += "    - keywords: " + ", ".join(self.representation_["contrastive"][layer_id][x]) + "\n"
-            #     # Get tree based subtopics
-            #     tree_subtopics = self.cluster_tree_[(layer_id, x)]
-
-            #     # Subtopics one layer down are major subtopics; two layers down are minor
-            #     major_subtopics = [a[1] for a in tree_subtopics if a[0] == layer_id - 1]
-            #     minor_subtopics = [a[1] for a in tree_subtopics if a[0] == layer_id - 2]
-            #     other_subtopics = [a for a in tree_subtopics if a[0] < layer_id - 2]
-
-            #     if len(major_subtopics) > 0:
-            #         prompt += "\nMajor sub-topics for this group are:\n"
-            #         for subtopic_id in major_subtopics:
-            #             prompt += f'- "{self.topic_name_layers_[layer_id - 1][subtopic_id]}"\n'
-
-            #     if len(minor_subtopics) > 0:
-            #         prompt += "\nMinor sub-topics for this group are:\n"
-            #         for subtopic_id in minor_subtopics:
-            #             prompt += f'- "{self.topic_name_layers_[layer_id - 2][subtopic_id]}"\n'
-
-            #     if len(other_subtopics) > 0:
-            #         prompt += "\nOther sub-topics for this group not included in major or minor sub-topics are:\n"
-            #         for layer_num, subtopic_id in other_subtopics[:max_subtopics]:
-            #             prompt += f'- "{self.topic_name_layers_[layer_num][subtopic_id]}"\n'
-
-            #     if len(tree_subtopics) < max_subtopics:
-            #         # Use the previous layer information to inject knowledge into this cluster.
-            #         prompt += "\nA sampling of detailed sub-topics from the group include:\n"
-            #         for text in previous_layer_topics[x][:(max_subtopics - len(tree_subtopics))]:
-            #             prompt += f'- "{text}"\n'
-
-            #     # Add some topical documents if we don't have many subtopics
-            #     if len(tree_subtopics) < max_subtopics:
-            #         prompt += f"    - sample {self.document_type}:\n"
-            #         for text in self.representation_["topical"][0][x][:max_subtopics - len(tree_subtopics)]:
-            #             prompt += f'        + "{text}"\n'
-
-            # prompt += f"\n\nYou should make use of the relative relationships between these topics as well as the keywords and sub-topic information to generate new topic names."
-            # prompt += "\nStrive to provide the simplest possible topic name (ideally a few words) that distinguishes a given topic from the other topics listed."
-            # prompt += "\nPlease provide new names for the topics that differentiate among them. The result should be formatted as JSON in the format [{<OLD_TOPIC_NAME1>: <NEW_TOPIC_NAME>}, {<OLD_TOPIC_NAME2>: <NEW_TOPIC_NAME>}, ...].\n"
-            # prompt += "The result must contain only JSON with no preamble and must have one entry for each topic to be renamed\n"
-
-
-
         self.topic_name_layers_[layer_id] = new_topic_names
 
     def fit_layers(self):
@@ -1384,7 +1387,7 @@ class Toponymy:
 
         # Find the singletons so we can skip them
         singleton_subclusters, singleton_dict = self._get_singleton_subclusters() 
-        for n in range(len(self.topic_name_layers_) - 1, -1, -1):
+        for n in range(len(self.topic_name_layers_) - 1, 4, -1):
             for i, (name, indices) in tqdm(
                 enumerate(
                     zip(
@@ -1403,22 +1406,34 @@ class Toponymy:
                     # This is a singleton cluster, and doesn't need a name
                     continue
 
+                matching_topics = []
                 while unique_name in unique_names and n_attempts < 3:
-                    prompt_text = create_final_remedy_prompt(
-                        original_topic_names,
-                        self.documents,
-                        self.document_vectors,
-                        indices,
-                        self.cluster_layers_.vector_layers[n][i],
-                        self.document_type,
-                        self.corpus_description,
-                        self.llm.llm_instruction(kind="remedy"),
+                    matching_topics.append(unique_names[unique_name])
+                    prompt_text = create_topic_discernment_prompt(
+                        layer=n,
+                        topic_index=i,
+                        attempted_topic_names=original_topic_names,
+                        matching_topics=matching_topics,
+                        representations=self.representation_,
+                        subtopic_layers=self.subtopic_layers_["topical"],
+                        topic_name_layers=self.topic_name_layers_,
+                        cluster_tree=self.cluster_tree_,
+                        document_type=self.document_type,
+                        corpus_description=self.corpus_description,
                     )
                     unique_name = self.llm.generate_topic_name(prompt_text)
-                    original_topic_names.append(unique_name)
+                    if unique_name == "":
+                        n_attempts += 1
+                        continue
+                    if unique_name not in original_topic_names:
+                        original_topic_names.append(unique_name)
                     n_attempts += 1
+                    if n_attempts > 1:
+                        print(prompt_text)
+                        print(unique_name)
+                        print(original_topic_names)
                 if n_attempts > 0 and self.verbose:
-                    print(f"{name} --> {unique_name} after {n_attempts} attempts")
+                    print(f"Changing {name} --> {unique_name} after {n_attempts} attempts")
 
                 if unique_name not in unique_names:
                     unique_names[unique_name] = (n, i)
@@ -1427,4 +1442,3 @@ class Toponymy:
                     self.layer_clusters[n][indices] = unique_name
                 else:
                     self.layer_clusters[n][indices] = name # If we failed to get a name, keep the old one
-
