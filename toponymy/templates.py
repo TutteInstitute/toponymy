@@ -37,7 +37,7 @@ are all on the same topic and need to be given topic name.
 {%- endfor %}
 {%- endif %}
 {%- if cluster_subtopics["misc"] %}
- - Other miscellaneous detailed subtopics of this group include:
+ - Other miscellaneous detailed subtopics of this group in order of relevance (from most to least) include:
 {%- for subtopic in cluster_subtopics["misc"] %}
       * {{subtopic}}
 {%- endfor %}
@@ -69,25 +69,15 @@ where SCORE is a value in the range 0 to 1.
         """
 You are an expert in {{larger_topic}} and have been asked to provide a more specific name for a group of 
 {{document_type}} from {{corpus_description}}. The group of {{document_type}} has been described as having a topic of one of 
-{{attempted_topic_names}}. These topic names were not specific enough.
-
-The other groups of {{document_type}} that can be confused with this topic are:
+{{attempted_topic_names}}. These topic names were not specific orr detailed enough to distinguish it
+from other more general groups of {{document_type}} such as:
 
 {% for topic in matching_topics  %}
-{{topic}}:
-{%- if matching_topic_keywords[topic] %}
- - Keywords: {{", ".join(matching_topic_keywords[topic])}}
-{%- endif %}
-{%- if matching_topic_subtopics[topic] %}
- - Subtopics: {{", ".join(matching_topic_subtopics[topic])}}
-{%- endif %}
-{%- if matching_topic_sentences[topic] %}
- - Sample {{document_type}}:
-{%- for sentence in matching_topic_sentences[topic] %}
-      * "{{sentence}}"
-{%- endfor %}
-{%- endif %}
-{%- endfor %}
+
+"{{loop.index}}. {{topic}}":
+ - Keywords: {{", ".join(matching_topic_keywords[loop.index - 1])}}
+ - Subtopics: {{", ".join(matching_topic_subtopics[loop.index - 1])}}
+{% endfor %}
 
 As an expert in {{larger_topic}}, you need to provide a more specific name for this group of {{document_type}}:
 {%- if cluster_keywords %}
@@ -105,7 +95,7 @@ As an expert in {{larger_topic}}, you need to provide a more specific name for t
 
 You should make use of the relative relationships between these topics as well as the keywords
 and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new 
-better and more *specific* topic name.
+better and more *specific* {{summary_kind}} name to this topic.
 
 The response should be only JSON with no preamble formatted as 
   {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} 
@@ -139,7 +129,7 @@ Below are the auto-generated topic names, along with some keywords associated to
 {%- endfor %}
 {%- endif %}
 {%- if cluster_subtopics["misc"][loop.index - 1] %}
- - Other miscellaneous specific subtopics of this group include:
+ - Other miscellaneous specific subtopics of this group in order of relevance (from most to least) include:
 {%- for subtopic in cluster_subtopics["misc"][loop.index - 1] %}
       * {{subtopic}}
 {%- endfor %}
