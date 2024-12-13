@@ -174,20 +174,11 @@ try:
                 warn(f"Failed to generate topic cluster names with Cohere: {e}")
                 return old_names
 
-            result = []
-            for old_name, name_mapping in zip(old_names, topic_name_info):
-                try:
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values())[0])
-                    else:
-                        warn(
-                            f"Old name {old_name} does not match the new name {list(name_mapping.keys())[0]}"
-                        )
-                        # use old_name?
-                        result.append(list(name_mapping.values())[0])
-                except:
-                    result.append(old_name)
-
+            mapping = topic_name_info["new_topic_name_mapping"]
+            result = [
+                mapping.get(f"{n}. {name}", name)
+                for n, name in enumerate(old_names)
+            ]
             return result
 
         def llm_instruction(self, kind="base_layer"):
@@ -256,13 +247,11 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
                 topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [
+                    mapping.get(f"{n}. {name}", name)
+                    for n, name in enumerate(old_names)
+                ]
                 return result
             except:
                 return old_names
@@ -337,13 +326,11 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
                 topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
+                mapping = topic_name_info["new_topic_name_mapping"]
+                result = [
+                    mapping.get(f"{n}. {name}", name)
+                    for n, name in enumerate(old_names)
+                ]
                 return result
             except:
                 return old_names
