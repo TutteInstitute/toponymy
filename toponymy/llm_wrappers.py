@@ -85,18 +85,12 @@ try:
                 warn("Failed to generate topic cluster names with Cohere: " + str(e))
                 return old_names
             
-            result = []
-            for old_name, name_mapping in zip(old_names, topic_name_info):
-                try:
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values())[0])
-                    else:
-                        warn(f"Old name {old_name} does not match the new name {list(name_mapping.keys())[0]}")
-                        result.append(list(name_mapping.values())[0]) # use old_name?
-                except:
-                    result.append(old_name)
-                    
-            return result
+            topic_name_mapping = topic_name_info["new_topic_name_mapping"]
+            if len(topic_name_mapping) == len(old_names):
+                return list(topic_name_mapping.values())
+            else:
+                warn(f"Failed to generate enough names when fixing {old_names}; got {topic_name_mapping}")
+                return old_names
         
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
@@ -159,15 +153,15 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
                 topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
-                return result
-            except:
+            except Exception as e:
+                warn("Failed to generate topic cluster names with Cohere: " + str(e))
+                return old_names
+            
+            topic_name_mapping = topic_name_info["new_topic_name_mapping"]
+            if len(topic_name_mapping) == len(old_names):
+                return list(topic_name_mapping.values())
+            else:
+                warn(f"Failed to generate enough names when fixing {old_names}; got {topic_name_mapping}")
                 return old_names
         
         def llm_instruction(self, kind="base_layer"):
@@ -236,15 +230,15 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
                 topic_name_info = json.loads(topic_name_info_text)
-                result = []
-                for old_name, name_mapping in zip(old_names, topic_name_info):
-                    if old_name.lower() == list(name_mapping.keys())[0].lower():
-                        result.append(list(name_mapping.values()[0]))
-                    else:
-                        result.append(old_name)
-
-                return result
-            except:
+            except Exception as e:
+                warn("Failed to generate topic cluster names with Cohere: " + str(e))
+                return old_names
+            
+            topic_name_mapping = topic_name_info["new_topic_name_mapping"]
+            if len(topic_name_mapping) == len(old_names):
+                return list(topic_name_mapping.values())
+            else:
+                warn(f"Failed to generate enough names when fixing {old_names}; got {topic_name_mapping}")
                 return old_names
         
         def llm_instruction(self, kind="base_layer"):
