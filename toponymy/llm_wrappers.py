@@ -47,11 +47,20 @@ try:
                 )[0]
                 topic_name_info = json.loads(topic_name_info)
                 mapping = topic_name_info["new_topic_name_mapping"]
-                result = [
-                    mapping.get(f"{n}. {name}", name)
-                    for n, name in enumerate(old_names)
-                ]
-                return result
+                if len(mapping) == len(old_names):
+                    result = [
+                        mapping.get(f"{n}. {name}", name)
+                        for n, name in enumerate(old_names)
+                    ]
+                    return result
+                else:
+                    mapping = re.findall(r'"new_topic_name_mapping":\s*\{(.*?)\}', topic_name_info_text, re.DOTALL)[0]
+                    new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+                    if len(new_names) == len(old_names):
+                        return new_names
+                    else:
+                        # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+                        return old_names
             except:
                 return old_names
 
@@ -117,11 +126,20 @@ try:
                 )[0]
                 topic_name_info = json.loads(topic_name_info)
                 mapping = topic_name_info["new_topic_name_mapping"]
-                result = [
-                    mapping.get(f"{n}. {name}", name)
-                    for n, name in enumerate(old_names)
-                ]
-                return result
+                if len(mapping) == len(old_names):
+                    result = [
+                        mapping.get(f"{n}. {name}", name)
+                        for n, name in enumerate(old_names)
+                    ]
+                    return result
+                else:
+                    mapping = re.findall(r'"new_topic_name_mapping":\s*\{(.*?)\}', topic_name_info_text, re.DOTALL)[0]
+                    new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+                    if len(new_names) == len(old_names):
+                        return new_names
+                    else:
+                        # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+                        return old_names
             except:
                 return old_names
 
@@ -175,12 +193,21 @@ try:
                 return old_names
 
             mapping = topic_name_info["new_topic_name_mapping"]
-            result = [
-                mapping.get(f"{n}. {name}", name)
-                for n, name in enumerate(old_names)
-            ]
-            return result
-
+            if len(mapping) == len(old_names):
+                result = [
+                    mapping.get(f"{n}. {name}", name)
+                    for n, name in enumerate(old_names)
+                ]
+                return result
+            else:
+                mapping = re.findall(r'"new_topic_name_mapping":\s*\{(.*?)\}', topic_name_info_text, re.DOTALL)[0]
+                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+                if len(new_names) == len(old_names):
+                    return new_names
+                else:
+                    # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+                    return old_names
+                
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
                 return """
@@ -247,14 +274,25 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
                 topic_name_info = json.loads(topic_name_info_text)
-                mapping = topic_name_info["new_topic_name_mapping"]
+            except Exception as e:
+                warn(f"Failed to generate topic cluster names with Anthropic: {e}")
+                return old_names
+
+            mapping = topic_name_info["new_topic_name_mapping"]
+            if len(mapping) == len(old_names):
                 result = [
                     mapping.get(f"{n}. {name}", name)
                     for n, name in enumerate(old_names)
                 ]
                 return result
-            except:
-                return old_names
+            else:
+                mapping = re.findall(r'"new_topic_name_mapping":\s*\{(.*?)\}', topic_name_info_text, re.DOTALL)[0]
+                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+                if len(new_names) == len(old_names):
+                    return new_names
+                else:
+                    # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+                    return old_names
 
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
@@ -326,14 +364,25 @@ try:
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
                 topic_name_info = json.loads(topic_name_info_text)
-                mapping = topic_name_info["new_topic_name_mapping"]
+            except Exception as e:
+                warn(f"Failed to generate topic cluster names with OpenAI: {e}")
+                return old_names
+
+            mapping = topic_name_info["new_topic_name_mapping"]
+            if len(mapping) == len(old_names):
                 result = [
                     mapping.get(f"{n}. {name}", name)
                     for n, name in enumerate(old_names)
                 ]
                 return result
-            except:
-                return old_names
+            else:
+                mapping = re.findall(r'"new_topic_name_mapping":\s*\{(.*?)\}', topic_name_info_text, re.DOTALL)[0]
+                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+                if len(new_names) == len(old_names):
+                    return new_names
+                else:
+                    # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+                    return old_names
 
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
