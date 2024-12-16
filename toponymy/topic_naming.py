@@ -1226,12 +1226,12 @@ class Toponymy:
                 continue
 
             # Subtopics one layer down are major subtopics; two layers down are minor
-            major_subtopics = [x[1] for x in tree_subtopics if x[0] == layer_id - 1]
-            minor_subtopics = [x[1] for x in tree_subtopics if x[0] == layer_id - 2]
+            major_subtopics = [self.topic_name_layers_[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 1]
+            minor_subtopics = [self.topic_name_layers_[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 2]
 
             if len(major_subtopics) <= 1:
                 major_subtopics = major_subtopics + minor_subtopics
-                minor_subtopics = [x[1] for x in tree_subtopics if x[0] < layer_id - 2]
+                minor_subtopics = [self.topic_name_layers_[x[0]][x[1]] for x in tree_subtopics if x[0] < layer_id - 2]
 
             # other_subtopics = [x for x in tree_subtopics if x[0] < layer_id - 2]
             other_subtopics = self.subtopic_layers_["topical"][layer_id - 1][cluster_id]
@@ -1387,7 +1387,7 @@ class Toponymy:
 
         # Find the singletons so we can skip them
         singleton_subclusters, singleton_dict = self._get_singleton_subclusters() 
-        for n in range(len(self.topic_name_layers_) - 1, 4, -1):
+        for n in range(len(self.topic_name_layers_) - 1, -1, -1):
             for i, (name, indices) in tqdm(
                 enumerate(
                     zip(

@@ -4,6 +4,8 @@ import string
 
 from warnings import warn
 
+import re
+
 try:
 
     import llama_cpp
@@ -89,8 +91,13 @@ try:
             if len(topic_name_mapping) == len(old_names):
                 return list(topic_name_mapping.values())
             else:
-                warn(f"Failed to generate enough names when fixing {old_names}; got {topic_name_mapping}")
-                return old_names
+                topic_name_mapping = re.findall(r'"new_topic_name_mapping":\s*\{(.*?)\}', topic_name_info_text, re.DOTALL)[0]
+                new_names = re.findall(r'".*?":\s*"(.*?)",?', topic_name_mapping, re.DOTALL)
+                if len(new_names) == len(old_names):
+                    return new_names
+                else:
+                    warn(f"Failed to generate enough names when fixing {old_names}; got {topic_name_mapping}")
+                    return old_names
         
         def llm_instruction(self, kind="base_layer"):
             if kind == "base_layer":
