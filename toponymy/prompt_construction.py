@@ -15,6 +15,20 @@ COSINE_DISTANCE_EPSILON = 1e-6
 def find_threshold_for_max_cluster_size(
     distances: np.ndarray, max_cluster_size: int = 4, max_distance: float = 0.2
 ) -> float:
+    """Find the smallest distance that would result in a cluster exceeding the maximum size, ignoring
+    clusters of duplicates, or very near duplicates (COSINE_DISTANCE_EPSILON). This caps out at 
+    a maximum distance threshold specified by max_distance, unless no non-duplicate clusters are formed
+    at max_distance at which point we'll produce the minimum to get clusters again.
+
+    Parameters
+    ----------
+    distances : np.ndarray
+        Pairwise distances between elements.
+    max_cluster_size : int, optional
+        Maximum size of a cluster, by default 4.
+    max_distance : float, optional
+        Maximum distance to consider, by default 0.2.
+    """
     n_samples = distances.shape[0]
     clustering = AgglomerativeClustering(
         n_clusters=2,
@@ -186,7 +200,7 @@ def distinguish_topic_names_prompt(
         minor_subtopics_per_topic = [False] * len(topic_indices)
         other_subtopics_per_topic = [False] * len(topic_indices)
 
-    prompt = PROMPT_TEMPLATES["distinguish"].render(
+    prompt = PROMPT_TEMPLATES["disambiguate_topics"].render(
         larger_topic=larger_topic,
         document_type=object_description,
         corpus_description=corpus_description,
@@ -204,7 +218,7 @@ def distinguish_topic_names_prompt(
     return prompt
 
 def topic_name_prompt(
-    topic_index: np.ndarray,
+    topic_index: int,
     layer_id: int,
     all_topic_names: List[List[str]],
     exemplar_texts: List[List[str]],
@@ -265,7 +279,14 @@ def topic_name_prompt(
             major_subtopics = major_subtopics + minor_subtopics
             minor_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] < layer_id - 2]
 
-        other_subtopics = subtopics[layer_id][topic_index][:max_num_subtopics]
+        if layer_id > 1:
+            other_subtopics = subtopics[layer_id][topic_index][:max_num_subtopics]
+        else:
+            other_subtopics = []
+    else:
+        major_subtopics = []
+        minor_subtopics = []
+        other_subtopics = []
 
     prompt = PROMPT_TEMPLATES["layer"].render(
         document_type=object_description,
