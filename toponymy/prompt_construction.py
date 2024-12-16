@@ -51,6 +51,24 @@ def cluster_topic_names_for_renaming(
     topic_name_embeddings: Optional[np.ndarray] = None,
     embedding_model: Optional[SentenceTransformer] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Cluster topic names for renaming based on cosine similarity of their embeddings.
+    If topic_name_embeddings is not provided, it will be computed using the embedding_model.
+    
+    Parameters
+    ----------
+    topic_names : List[str]
+        List of topic names to cluster.
+    topic_name_embeddings : Optional[np.ndarray], optional
+        Precomputed embeddings for the topic names, by default None.
+    embedding_model : Optional[SentenceTransformer], optional
+        SentenceTransformer model to compute embeddings for the topic names, by default None.
+    
+    Returns
+    -------
+    Tuple[np.ndarray, np.ndarray]
+        Tuple of clusters for renaming and cluster labels for each topic name.
+    """
     if topic_name_embeddings is None:
         if embedding_model is None:
             raise ValueError(
@@ -91,6 +109,43 @@ def distinguish_topic_names_prompt(
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
 ) -> str:
+    """
+    Construct a prompt for distinguishing between multiple topics.
+    
+    Parameters
+    ----------
+    topic_indices : np.ndarray
+        Indices of the topics to distinguish.
+    layer_id : int
+        Layer ID of the topics.
+    all_topic_names : List[List[str]]
+        List of topic names for each layer.
+    exemplar_texts : List[List[str]]
+        List of exemplar texts for each topic.
+    keyphrases : List[List[str]]
+        List of keyphrases for each topic.
+    subtopics : Optional[List[List[List[str]]]], optional
+        List of subtopics for each layer, by default None.
+    cluster_tree : Optional[dict], optional
+        Dictionary of the cluster tree, by default None.
+    object_description : str
+        Description of the object being clustered.
+    corpus_description : str
+        Description of the corpus being clustered.
+    summary_kind : str
+        Kind of summary to generate.
+    max_num_keyphrases : int, optional
+        Maximum number of keyphrases to include, by default 32.
+    max_num_subtopics : int, optional
+        Maximum number of subtopics to include, by default 16.
+    max_num_exemplars : int, optional
+        Maximum number of exemplar texts to include, by default 128.
+    
+    Returns
+    -------
+    prompt: str
+        LLM Prompt for distinguishing between the topics.
+"""
     attempted_topic_names = [all_topic_names[layer_id][x] for x in topic_indices]
     unique_topic_names = list(set(attempted_topic_names))
     if len(unique_topic_names) == 1:
@@ -163,6 +218,43 @@ def topic_name_prompt(
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
 ):
+    """
+    Construct a prompt for naming a topic.
+
+    Parameters
+    ----------
+    topic_index : np.ndarray
+        Index of the topic to name.
+    layer_id : int
+        Layer ID of the topic.
+    all_topic_names : List[List[str]]
+        List of topic names for each layer.
+    exemplar_texts : List[List[str]]
+        List of exemplar texts for each topic.
+    keyphrases : List[List[str]]
+        List of keyphrases for each topic.
+    subtopics : Optional[List[List[List[str]]]], optional
+        List of subtopics for each layer, by default None.
+    cluster_tree : Optional[dict], optional
+        Dictionary of the cluster tree, by default None.
+    object_description : str
+        Description of the object being clustered.
+    corpus_description : str
+        Description of the corpus being clustered.
+    summary_kind : str 
+        Kind of summary to generate.
+    max_num_keyphrases : int, optional
+        Maximum number of keyphrases to include, by default 32.
+    max_num_subtopics : int, optional
+        Maximum number of subtopics to include, by default 16.
+    max_num_exemplars : int, optional
+        Maximum number of exemplar texts to include, by default 128.
+
+    Returns
+    -------
+    prompt: str
+        LLM Prompt for naming the topic.
+    """
     if subtopics is not None and cluster_tree is not None:
         tree_subtopics = cluster_tree[(layer_id, topic_index)]
         # Subtopics one layer down are major subtopics; two layers down are minor
