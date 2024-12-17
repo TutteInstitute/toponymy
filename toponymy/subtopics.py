@@ -31,7 +31,7 @@ def central_subtopics(
             raise ValueError(
                 "Either subtopic_embeddings or embedding_model must be provided"
             )
-        subtopic_vectors = subtopic_vectors(subtopics, embedding_model)
+        subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     result = []
     for cluster_num in range(cluster_label_vector.max() + 1):
@@ -68,6 +68,8 @@ def information_weighted_subtopics(
     diversify_alpha: float = 1.0,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
+    n_dictionary_vectors: int = 512,
+    coding_transform_alpha: float = 0.1,
     n_jobs=-1,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
@@ -75,22 +77,22 @@ def information_weighted_subtopics(
             raise ValueError(
                 "Either subtopic_embeddings or embedding_model must be provided"
             )
-        subtopic_vectors = subtopic_vectors(subtopics, embedding_model)
+        subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     sparse_coder = DictionaryLearning(
-        n_components=512,
+        n_components=n_dictionary_vectors,
         positive_code=True,
         fit_algorithm="cd",
         transform_algorithm="lasso_cd",
         n_jobs=n_jobs,
         max_iter=100_000,
-        transform_alpha=0.1,
+        transform_alpha=coding_transform_alpha,
         transform_max_iter=100_000,
-    )
-    sparse_coding = scipy.sparse.csr_array(sparse_coder.fit_transform(subtopic_vectors))
+    ).fit(subtopic_vectors)
+    sparse_coding = scipy.sparse.csr_array(sparse_coder.transform(subtopic_vectors))
     weighted_sparse_coding = InformationWeightTransformer(
         prior_strength=prior_strength, weight_power=weight_power
-    ).fit_transform(sparse_coding, y=meta_cluster_label_vector)
+    ).fit_transform(sparse_coding, y=meta_cluster_label_vector).toarray()
     scores = weighted_sparse_coding.sum(axis=1)
 
     result = []

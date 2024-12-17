@@ -161,7 +161,7 @@ def distinguish_topic_names_prompt(
         LLM Prompt for distinguishing between the topics.
 """
     attempted_topic_names = [all_topic_names[layer_id][x] for x in topic_indices]
-    unique_topic_names = list(set(attempted_topic_names))
+    unique_topic_names = sorted(list(set(attempted_topic_names)))
     if len(unique_topic_names) == 1:
         larger_topic = unique_topic_names[0]
     else:
