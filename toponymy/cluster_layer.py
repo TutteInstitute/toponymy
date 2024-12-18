@@ -5,8 +5,13 @@ import numpy as np
 from toponymy.keyphrases import central_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
 from toponymy.templates import SUMMARY_KINDS
-from toponymy.prompt_construction import topic_name_prompt, cluster_topic_names_for_renaming, distinguish_topic_names_prompt
+from toponymy.prompt_construction import (
+    topic_name_prompt,
+    cluster_topic_names_for_renaming,
+    distinguish_topic_names_prompt,
+)
 from sentence_transformers import SentenceTransformer
+
 
 class ClusterLayer(ABC):
     """
@@ -23,20 +28,26 @@ class ClusterLayer(ABC):
     make_sample_texts: generates a list of sample texts for each clusters in the layer
     """
 
-    def __init__(self, cluster_labels: np.ndarray, centroid_vectors: np.ndarray, layer_id: int, text_embedding_model: Optional[SentenceTransformer] = None):
+    def __init__(
+        self,
+        cluster_labels: np.ndarray,
+        centroid_vectors: np.ndarray,
+        layer_id: int,
+        text_embedding_model: Optional[SentenceTransformer] = None,
+    ):
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
         self.layer_id = layer_id
         self.text_embedding_model = text_embedding_model
 
     @abstractmethod
-    def make_prompts(           
-            self, 
-            detail_level: float, 
-            all_topic_names: List[List[str]], 
-            object_description: str,
-            corpus_description: str,
-            cluster_tree: Optional[dict] = None,
+    def make_prompts(
+        self,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
     ) -> None:
         pass
 
@@ -96,23 +107,25 @@ class ClusterLayerText(ClusterLayer):
         n_subtopics: int = 32,
         subtopic_diversify_alpha: float = 1.0,
     ):
-        super().__init__(cluster_labels, centroid_vectors, layer_id, text_embedding_model)
+        super().__init__(
+            cluster_labels, centroid_vectors, layer_id, text_embedding_model
+        )
         self.n_keyphrases = n_keyphrases
         self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
         self.n_exemplars = n_exemplars
         self.exemplars_diversify_alpha = exemplars_diversify_alpha
         self.n_subtopics = n_subtopics
         self.subtopic_diversify_alpha = subtopic_diversify_alpha
-        self.subtopics = None # Empty subtopics; to be populated if reuqired for layer
+        self.subtopics = None  # Empty subtopics; to be populated if reuqired for layer
 
     def make_prompts(
-            self, 
-            detail_level: float, 
-            all_topic_names: List[List[str]], 
-            object_description: str,
-            corpus_description: str,
-            cluster_tree: Optional[dict] = None,
-        ) -> None:
+        self,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+    ) -> None:
         summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
@@ -136,30 +149,27 @@ class ClusterLayerText(ClusterLayer):
         ]
 
     def name_topics(
-            self,
-            llm,
+        self,
+        llm,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
     ):
-        self.topic_names = [
-            llm.get_topic_name(prompt)
-            for prompt in self.prompts
-        ]
-        self._embed_topic_names()
-        self._make_disambiguation_prompts()
-        self._disambiguate_topic_names()
-
-    def _make_disambiguation_prompts(
-            self,
-            topic_name_embeddings: Optional[np.ndarray] = None,
-            embedding_model: Optional[SentenceTransformer] = None,
-    ) -> None:
-        clusters_for_renaming, topic_name_cluster_labels = cluster_topic_names_for_renaming(
-            topic_names=self.topic_names,
-            topic_name_embeddings=self.topic_name_embeddings,
+        self.topic_names = [llm.get_topic_name(prompt) for prompt in self.prompts]
+        self.disambiguate_topics(
+            llm=llm,
+            detail_level=detail_level,
+            all_topic_names=all_topic_names,
+            object_description=object_description,
+            corpus_description=corpus_description,
+            cluster_tree=cluster_tree,
         )
 
     def _embed_topic_names(
-            self,
-            embedding_model: Optional[SentenceTransformer] = None,
+        self,
+        embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
         if embedding_model is None and self.embedding_model is None:
             raise ValueError("An embedding model must be provided")
@@ -167,6 +177,80 @@ class ClusterLayerText(ClusterLayer):
             embedding_model = self.embedding_model
 
         self.topic_name_embeddings = embedding_model.encode(self.topic_names)
+
+    def _make_disambiguation_prompts(
+        self,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        topic_name_embeddings: Optional[np.ndarray] = None,
+        embedding_model: Optional[SentenceTransformer] = None,
+    ) -> None:
+        summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
+        summary_kind = SUMMARY_KINDS[summary_level]
+
+        clusters_for_renaming, topic_name_cluster_labels = (
+            cluster_topic_names_for_renaming(
+                topic_names=self.topic_names,
+                topic_name_embeddings=self.topic_name_embeddings,
+            )
+        )
+
+        self.dismbiguation_topic_indices = [
+            np.where(topic_name_cluster_labels == cluster_num)[0]
+            for cluster_num in clusters_for_renaming
+        ]
+        self.disambiguation_prompts = [
+            distinguish_topic_names_prompt(
+                topic_indices,
+                self.layer_id,
+                all_topic_names,
+                exemplar_texts=self.exemplars,
+                keyphrases=self.keyphrases,
+                subtopics=self.subtopics,
+                cluster_tree=cluster_tree,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                summary_kind=summary_kind,
+                max_num_exemplars=self.n_exemplars,
+                max_num_keyphrases=self.n_keyphrases,
+                max_num_subtopics=self.n_subtopics,
+            )
+            for topic_indices in self.dismbiguation_topic_indices
+        ]
+
+    def _disambiguate_topic_names(self, llm) -> None:
+        for topic_indices, disambiguation_prompt in zip(
+            self.dismbiguation_topic_indices, self.disambiguation_prompts
+        ):
+            new_names = self.llm.generate_topic_cluster_names(
+                disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
+            )
+            for i, topic_index in enumerate(topic_indices):
+                self.topic_names[topic_index] = new_names[i]
+
+    def disambiguate_topics(
+            self,
+            llm,
+            detail_level: float,
+            all_topic_names: List[List[str]],
+            object_description: str,
+            corpus_description: str,
+            cluster_tree: Optional[dict] = None,            
+    ):
+        self._embed_topic_names()
+        self._make_disambiguation_prompts(
+            detail_level=detail_level,
+            all_topic_names=all_topic_names,
+            object_description=object_description,
+            corpus_description=corpus_description,
+            cluster_tree=cluster_tree,
+            topic_name_embeddings=self.topic_name_embeddings,
+        )
+        self._disambiguate_topic_names(llm)
+
 
     def make_keywords(
         self,
