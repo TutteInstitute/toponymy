@@ -5,8 +5,8 @@ import numpy as np
 from toponymy.keyphrases import central_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
 from toponymy.templates import SUMMARY_KINDS
-from toponymy.prompt_construction import topic_name_prompt
-
+from toponymy.prompt_construction import topic_name_prompt, cluster_topic_names_for_renaming, distinguish_topic_names_prompt
+from sentence_transformers import SentenceTransformer
 
 class ClusterLayer(ABC):
     """
@@ -23,13 +23,21 @@ class ClusterLayer(ABC):
     make_sample_texts: generates a list of sample texts for each clusters in the layer
     """
 
-    def __init__(self, cluster_labels: np.ndarray, centroid_vectors: np.ndarray, layer_id: int):
+    def __init__(self, cluster_labels: np.ndarray, centroid_vectors: np.ndarray, layer_id: int, text_embedding_model: Optional[SentenceTransformer] = None):
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
         self.layer_id = layer_id
+        self.text_embedding_model = text_embedding_model
 
     @abstractmethod
-    def make_prompts(self, detail_level: float) -> None:
+    def make_prompts(           
+            self, 
+            detail_level: float, 
+            all_topic_names: List[List[str]], 
+            object_description: str,
+            corpus_description: str,
+            cluster_tree: Optional[dict] = None,
+    ) -> None:
         pass
 
     @abstractmethod
@@ -80,6 +88,7 @@ class ClusterLayerText(ClusterLayer):
         cluster_labels: np.ndarray,
         centroid_vectors: np.ndarray,
         layer_id: int,
+        text_embedding_model: Optional[SentenceTransformer] = None,
         n_keyphrases: int = 32,
         keyphrase_diversify_alpha: float = 1.0,
         n_exemplars: int = 8,
@@ -87,7 +96,7 @@ class ClusterLayerText(ClusterLayer):
         n_subtopics: int = 32,
         subtopic_diversify_alpha: float = 1.0,
     ):
-        super().__init__(cluster_labels, centroid_vectors, layer_id)
+        super().__init__(cluster_labels, centroid_vectors, layer_id, text_embedding_model)
         self.n_keyphrases = n_keyphrases
         self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
         self.n_exemplars = n_exemplars
@@ -126,10 +135,38 @@ class ClusterLayerText(ClusterLayer):
             for topic_index in range(self.centroid_vectors.shape[0])
         ]
 
-    def make_disambigation_prompts(
+    def name_topics(
             self,
+            llm,
+    ):
+        self.topic_names = [
+            llm.get_topic_name(prompt)
+            for prompt in self.prompts
+        ]
+        self._embed_topic_names()
+        self._make_disambiguation_prompts()
+        self._disambiguate_topic_names()
+
+    def _make_disambiguation_prompts(
+            self,
+            topic_name_embeddings: Optional[np.ndarray] = None,
+            embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
-        pass
+        clusters_for_renaming, topic_name_cluster_labels = cluster_topic_names_for_renaming(
+            topic_names=self.topic_names,
+            topic_name_embeddings=self.topic_name_embeddings,
+        )
+
+    def _embed_topic_names(
+            self,
+            embedding_model: Optional[SentenceTransformer] = None,
+    ) -> None:
+        if embedding_model is None and self.embedding_model is None:
+            raise ValueError("An embedding model must be provided")
+        elif embedding_model is None:
+            embedding_model = self.embedding_model
+
+        self.topic_name_embeddings = embedding_model.encode(self.topic_names)
 
     def make_keywords(
         self,
