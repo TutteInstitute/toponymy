@@ -1,9 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import List, Callable, Any
+from typing import List, Callable, Any, Optional
 import scipy.sparse
 import numpy as np
 from toponymy.keyphrases import central_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
+from toponymy.templates import SUMMARY_KINDS
+from toponymy.prompt_construction import topic_name_prompt
 
 
 class ClusterLayer(ABC):
@@ -21,12 +23,13 @@ class ClusterLayer(ABC):
     make_sample_texts: generates a list of sample texts for each clusters in the layer
     """
 
-    def __init__(self, cluster_labels, centroid_vectors):
+    def __init__(self, cluster_labels: np.ndarray, centroid_vectors: np.ndarray, layer_id: int):
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
+        self.layer_id = layer_id
 
     @abstractmethod
-    def make_prompts(self, detail_level):
+    def make_prompts(self, detail_level: float) -> None:
         pass
 
     @abstractmethod
@@ -74,24 +77,58 @@ class ClusterLayerText(ClusterLayer):
 
     def __init__(
         self,
-        cluster_labels,
-        centroid_vectors,
-        n_keyphrases=32,
-        keyphrase_diversify_alpha=1.0,
-        n_exemplars=8,
-        exemplars_diversify_alpha=1.0,
-        n_subtopics=32,
-        subtopic_diversify_alpha=1.0,
+        cluster_labels: np.ndarray,
+        centroid_vectors: np.ndarray,
+        layer_id: int,
+        n_keyphrases: int = 32,
+        keyphrase_diversify_alpha: float = 1.0,
+        n_exemplars: int = 8,
+        exemplars_diversify_alpha: float = 1.0,
+        n_subtopics: int = 32,
+        subtopic_diversify_alpha: float = 1.0,
     ):
-        super().__init__(cluster_labels, centroid_vectors)
+        super().__init__(cluster_labels, centroid_vectors, layer_id)
         self.n_keyphrases = n_keyphrases
         self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
         self.n_exemplars = n_exemplars
         self.exemplars_diversify_alpha = exemplars_diversify_alpha
         self.n_subtopics = n_subtopics
         self.subtopic_diversify_alpha = subtopic_diversify_alpha
+        self.subtopics = None # Empty subtopics; to be populated if reuqired for layer
 
-    def make_prompts(self, detail_level):
+    def make_prompts(
+            self, 
+            detail_level: float, 
+            all_topic_names: List[List[str]], 
+            object_description: str,
+            corpus_description: str,
+            cluster_tree: Optional[dict] = None,
+        ) -> None:
+        summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
+        summary_kind = SUMMARY_KINDS[summary_level]
+
+        self.prompts = [
+            topic_name_prompt(
+                topic_index,
+                self.layer_id,
+                all_topic_names,
+                exemplar_texts=self.exemplars,
+                keyphrases=self.keyphrases,
+                subtopics=self.subtopics,
+                cluster_tree=cluster_tree,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                summary_kind=summary_kind,
+                max_num_exemplars=self.n_exemplars,
+                max_num_keyphrases=self.n_keyphrases,
+                max_num_subtopics=self.n_subtopics,
+            )
+            for topic_index in range(self.centroid_vectors.shape[0])
+        ]
+
+    def make_disambigation_prompts(
+            self,
+    ) -> None:
         pass
 
     def make_keywords(
