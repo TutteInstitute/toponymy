@@ -18,11 +18,11 @@ def subtopic_embeddings(
 
 
 def central_subtopics(
-    cluster_label_vector: np.ndarray,
+    meta_cluster_label_vector: np.ndarray,
     subtopics: List[str],
-    centroid_vectors: np.ndarray,
+    centroid_vectors: np.ndarray, # Check
     subtopic_vectors: Optional[np.ndarray] = None,
-    embedding_model: Optional[SentenceTransformer] = None,
+    embedding_model: Optional[SentenceTransformer] = None, # Check
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
 ) -> List[List[str]]:
@@ -34,8 +34,8 @@ def central_subtopics(
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     result = []
-    for cluster_num in range(cluster_label_vector.max() + 1):
-        # Select the central keyphrases as the closest samples to the centroid
+    for cluster_num in range(meta_cluster_label_vector.max() + 1):
+        # Select the central subtopics as the closest samples to the centroid
         base_distances = pairwise_distances(
             centroid_vectors[cluster_num].reshape(1, -1),
             subtopic_vectors,
