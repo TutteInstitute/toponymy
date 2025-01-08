@@ -316,7 +316,7 @@ class KeyphraseBuilder:
         return self
     
     def fit_transform(self, objects: List[Any]):
-        self.fit(objects, object_to_text)
+        self.fit(objects)
         return self.object_x_keyphrase_matrix_, self.keyphrase_list_
 
 
