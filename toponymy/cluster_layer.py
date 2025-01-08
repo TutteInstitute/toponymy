@@ -4,6 +4,7 @@ import scipy.sparse
 import numpy as np
 from toponymy.keyphrases import central_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
+from toponymy.subtopics import central_subtopics
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.prompt_construction import (
     topic_name_prompt,
@@ -41,113 +42,6 @@ class ClusterLayer(ABC):
         self.text_embedding_model = text_embedding_model
 
     @abstractmethod
-    def make_prompts(
-        self,
-        detail_level: float,
-        all_topic_names: List[List[str]],
-        object_description: str,
-        corpus_description: str,
-        cluster_tree: Optional[dict] = None,
-    ) -> None:
-        pass
-
-    @abstractmethod
-    def make_keywords(
-        self,
-        keyphrase_list: List[str],
-        object_x_keyphrase_matrix: scipy.sparse.spmatrix,
-        keyphrase_vectors: np.ndarray,
-    ) -> None:
-        pass
-
-    @abstractmethod
-    def make_subtopics(
-        self,
-        topic_list: List[str],
-        object_x_topic_matrix: scipy.sparse.spmatrix,
-        topic_vectors: np.ndarray,
-    ) -> None:
-        pass
-
-    @abstractmethod
-    def make_exemplar_texts(
-        self,
-        object_list: List[Any],
-        object_vectors: np.ndarray,
-        object_to_text_function: Callable[[Any], List[str]],
-    ) -> None:
-        pass
-
-
-class ClusterLayerText(ClusterLayer):
-    """
-    A cluster layer class for dealing with text data. A cluster layer is a layer of a cluster hierarchy.
-
-    Attributes:
-    cluster_labels: vector of numeric cluster labels for the clusters in the layer
-    centroid_vectors: list of centroid vectors of the clusters in the layer
-
-    Methods:
-    make_prompts: creates and stores a list of prompts for the clusters in the layer
-    make_keywords: generates and stores a list of keywords for each clusters in the layer
-    make_subtopics: generates and stores a list of subtopics for each clusters in the layer
-    make_sample_texts: generates and stores a list of sample texts for each clusters in the layer
-    """
-
-    def __init__(
-        self,
-        cluster_labels: np.ndarray,
-        centroid_vectors: np.ndarray,
-        layer_id: int,
-        text_embedding_model: Optional[SentenceTransformer] = None,
-        n_keyphrases: int = 32,
-        keyphrase_diversify_alpha: float = 1.0,
-        n_exemplars: int = 8,
-        exemplars_diversify_alpha: float = 1.0,
-        n_subtopics: int = 32,
-        subtopic_diversify_alpha: float = 1.0,
-    ):
-        super().__init__(
-            cluster_labels, centroid_vectors, layer_id, text_embedding_model
-        )
-        self.n_keyphrases = n_keyphrases
-        self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
-        self.n_exemplars = n_exemplars
-        self.exemplars_diversify_alpha = exemplars_diversify_alpha
-        self.n_subtopics = n_subtopics
-        self.subtopic_diversify_alpha = subtopic_diversify_alpha
-        self.subtopics = None  # Empty subtopics; to be populated if reuqired for layer
-
-    def make_prompts(
-        self,
-        detail_level: float,
-        all_topic_names: List[List[str]],
-        object_description: str,
-        corpus_description: str,
-        cluster_tree: Optional[dict] = None,
-    ) -> None:
-        summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
-        summary_kind = SUMMARY_KINDS[summary_level]
-
-        self.prompts = [
-            topic_name_prompt(
-                topic_index,
-                self.layer_id,
-                all_topic_names,
-                exemplar_texts=self.exemplars,
-                keyphrases=self.keyphrases,
-                subtopics=self.subtopics,
-                cluster_tree=cluster_tree,
-                object_description=object_description,
-                corpus_description=corpus_description,
-                summary_kind=summary_kind,
-                max_num_exemplars=self.n_exemplars,
-                max_num_keyphrases=self.n_keyphrases,
-                max_num_subtopics=self.n_subtopics,
-            )
-            for topic_index in range(self.centroid_vectors.shape[0])
-        ]
-
     def name_topics(
         self,
         llm,
@@ -156,16 +50,48 @@ class ClusterLayerText(ClusterLayer):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-    ):
-        self.topic_names = [llm.get_topic_name(prompt) for prompt in self.prompts]
-        self.disambiguate_topics(
-            llm=llm,
-            detail_level=detail_level,
-            all_topic_names=all_topic_names,
-            object_description=object_description,
-            corpus_description=corpus_description,
-            cluster_tree=cluster_tree,
-        )
+        embedding_model: Optional[SentenceTransformer] = None,
+    ) -> List[str]:
+        pass
+
+    @abstractmethod
+    def make_prompts(
+        self,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+    ) -> List[str]:
+        pass
+
+    @abstractmethod
+    def make_keywords(
+        self,
+        keyphrase_list: List[str],
+        object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+        keyphrase_vectors: np.ndarray,
+    ) -> List[List[str]]:
+        pass
+
+    @abstractmethod
+    def make_subtopics(
+        self,
+        topic_list: List[str],
+        topic_labels: np.ndarray,
+        topic_vectors: Optional[np.ndarray] = None,
+        embedding_model: Optional[SentenceTransformer] = None,
+    ) -> List[List[str]]:
+        pass
+
+    @abstractmethod
+    def make_exemplar_texts(
+        self,
+        object_list: List[Any],
+        object_vectors: np.ndarray,
+        object_to_text_function: Callable[[Any], List[str]],
+    ) -> List[List[str]]:
+        pass
 
     def _embed_topic_names(
         self,
@@ -185,8 +111,6 @@ class ClusterLayerText(ClusterLayer):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        topic_name_embeddings: Optional[np.ndarray] = None,
-        embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
         summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
         summary_kind = SUMMARY_KINDS[summary_level]
@@ -238,26 +162,121 @@ class ClusterLayerText(ClusterLayer):
             all_topic_names: List[List[str]],
             object_description: str,
             corpus_description: str,
-            cluster_tree: Optional[dict] = None,            
+            cluster_tree: Optional[dict] = None,
+            embedding_model: Optional[SentenceTransformer] = None,         
     ):
-        self._embed_topic_names()
+        self._embed_topic_names(embedding_model)
         self._make_disambiguation_prompts(
             detail_level=detail_level,
             all_topic_names=all_topic_names,
             object_description=object_description,
             corpus_description=corpus_description,
             cluster_tree=cluster_tree,
-            topic_name_embeddings=self.topic_name_embeddings,
         )
         self._disambiguate_topic_names(llm)
 
+
+class ClusterLayerText(ClusterLayer):
+    """
+    A cluster layer class for dealing with text data. A cluster layer is a layer of a cluster hierarchy.
+
+    Attributes:
+    cluster_labels: vector of numeric cluster labels for the clusters in the layer
+    centroid_vectors: list of centroid vectors of the clusters in the layer
+
+    Methods:
+    make_prompts: creates and stores a list of prompts for the clusters in the layer
+    make_keywords: generates and stores a list of keywords for each clusters in the layer
+    make_subtopics: generates and stores a list of subtopics for each clusters in the layer
+    make_sample_texts: generates and stores a list of sample texts for each clusters in the layer
+    """
+
+    def __init__(
+        self,
+        cluster_labels: np.ndarray,
+        centroid_vectors: np.ndarray,
+        layer_id: int,
+        text_embedding_model: Optional[SentenceTransformer] = None,
+        n_keyphrases: int = 32,
+        keyphrase_diversify_alpha: float = 1.0,
+        n_exemplars: int = 8,
+        exemplars_diversify_alpha: float = 1.0,
+        n_subtopics: int = 32,
+        subtopic_diversify_alpha: float = 1.0,
+    ):
+        super().__init__(
+            cluster_labels, centroid_vectors, layer_id, text_embedding_model
+        )
+        self.n_keyphrases = n_keyphrases
+        self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
+        self.n_exemplars = n_exemplars
+        self.exemplars_diversify_alpha = exemplars_diversify_alpha
+        self.n_subtopics = n_subtopics
+        self.subtopic_diversify_alpha = subtopic_diversify_alpha
+        if text_embedding_model is not None:
+            self.embedding_model = text_embedding_model
+
+    def make_prompts(
+        self,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+    ) -> List[str]:
+        summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
+        summary_kind = SUMMARY_KINDS[summary_level]
+
+        self.prompts = [
+            topic_name_prompt(
+                topic_index,
+                self.layer_id,
+                all_topic_names,
+                exemplar_texts=self.exemplars,
+                keyphrases=self.keyphrases,
+                subtopics=self.subtopics,
+                cluster_tree=cluster_tree,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                summary_kind=summary_kind,
+                max_num_exemplars=self.n_exemplars,
+                max_num_keyphrases=self.n_keyphrases,
+                max_num_subtopics=self.n_subtopics,
+            )
+            for topic_index in range(self.centroid_vectors.shape[0])
+        ]
+
+        return self.prompts
+
+    def name_topics(
+        self,
+        llm,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        embedding_model: Optional[SentenceTransformer] = None,
+    ) -> List[str]:
+        self.topic_names = [llm.get_topic_name(prompt) for prompt in self.prompts]
+        self.disambiguate_topics(
+            llm=llm,
+            detail_level=detail_level,
+            all_topic_names=all_topic_names,
+            object_description=object_description,
+            corpus_description=corpus_description,
+            cluster_tree=cluster_tree,
+            embedding_model=embedding_model,
+        )
+
+        return self.topic_names
 
     def make_keywords(
         self,
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
-    ) -> None:
+    ) -> List[List[str]]:
         self.keyphrases = central_keyphrases(
             self.cluster_labels,
             object_x_keyphrase_matrix,
@@ -268,20 +287,34 @@ class ClusterLayerText(ClusterLayer):
             n_keyphrases=self.n_keyphrases,
         )
 
+        return self.keyphrases
+
     def make_subtopics(
         self,
         topic_list: List[str],
-        object_x_topic_matrix: scipy.sparse.spmatrix,
-        topic_vectors: np.ndarray,
-    ) -> None:
-        pass
+        topic_labels: np.ndarray,
+        topic_vectors: Optional[np.ndarray] = None,
+        embedding_model: Optional[SentenceTransformer] = None,
+    ) -> List[List[str]]:
+        self.subtopics = central_subtopics(
+            cluster_label_vector=self.cluster_labels,
+            subtopics=topic_list,
+            subtopic_label_vector=topic_labels,
+            centroid_vectors=self.centroid_vectors,
+            subtopic_vectors=topic_vectors,
+            diversify_alpha=self.subtopic_diversify_alpha,
+            n_subtopics=self.n_subtopics,
+            embedding_model=embedding_model,
+        )
+
+        return self.subtopics
 
     def make_exemplar_texts(
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-        object_to_text_function: Callable[[Any], List[str]],
-    ) -> None:
+        object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
+    ) -> List[List[str]]:
         self.exemplars = diverse_exemplars(
             cluster_label_vector=self.cluster_labels,
             objects=object_list,
@@ -290,3 +323,5 @@ class ClusterLayerText(ClusterLayer):
             n_exemplars=self.n_exemplars,
             diversify_alpha=self.exemplars_diversify_alpha,
         )
+
+        return self.exemplars
