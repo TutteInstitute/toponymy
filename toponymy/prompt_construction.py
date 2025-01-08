@@ -271,6 +271,10 @@ def topic_name_prompt(
     """
     if subtopics is not None and cluster_tree is not None:
         tree_subtopics = cluster_tree[(layer_id, topic_index)]
+
+        if len(tree_subtopics) == 1:
+            return f"[!SKIP!]: {all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]]}"
+
         # Subtopics one layer down are major subtopics; two layers down are minor
         major_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 1]
         minor_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 2]

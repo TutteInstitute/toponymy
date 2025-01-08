@@ -169,14 +169,14 @@ class ClusterLayer(ABC):
                 self.topic_names[topic_index] = new_names[i]
 
     def disambiguate_topics(
-            self,
-            llm,
-            detail_level: float,
-            all_topic_names: List[List[str]],
-            object_description: str,
-            corpus_description: str,
-            cluster_tree: Optional[dict] = None,
-            embedding_model: Optional[SentenceTransformer] = None,         
+        self,
+        llm,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        embedding_model: Optional[SentenceTransformer] = None,
     ):
         self._embed_topic_names(embedding_model)
         self._make_disambiguation_prompts(
@@ -271,7 +271,14 @@ class ClusterLayerText(ClusterLayer):
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[SentenceTransformer] = None,
     ) -> List[str]:
-        self.topic_names = [llm.get_topic_name(prompt) for prompt in self.prompts]
+        self.topic_names = [
+            (
+                llm.get_topic_name(prompt)
+                if not prompt.startswith("[!SKIP!]")
+                else prompt.removeprefix("[!SKIP!] ")
+            )
+            for prompt in self.prompts
+        ]
         self.disambiguate_topics(
             llm=llm,
             detail_level=detail_level,
