@@ -194,3 +194,36 @@ def create_cluster_layers(
         for labels in cluster_labels
     ]
     return layers, cluster_tree
+
+
+class Clusterer:
+
+    def __init__(
+        self,
+        layer_class: Type[ClusterLayer],
+        min_clusters: int = 6,
+        min_samples: int = 5,
+        base_min_cluster_size: int = 10,
+        next_cluster_size_quantile: float = 0.85,
+    ):
+        self.layer_class = layer_class
+        self.min_clusters = min_clusters
+        self.min_samples = min_samples
+        self.base_min_cluster_size = base_min_cluster_size
+        self.next_cluster_size_quantile = next_cluster_size_quantile
+
+    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+        self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
+            self.layer_class,
+            clusterable_vectors=clusterable_vectors,
+            embedding_vectors=embedding_vectors,
+            min_clusters=self.min_clusters,
+            min_samples=self.min_samples,
+            base_min_cluster_size=self.base_min_cluster_size,
+            next_cluster_size_quantile=self.next_cluster_size_quantile,
+        )
+        return self
+    
+    def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+        self.fit(clusterable_vectors, embedding_vectors)
+        return self.cluster_layers_, self.cluster_tree_

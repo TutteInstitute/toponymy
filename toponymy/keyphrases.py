@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import List, Tuple, FrozenSet, Dict, Callable
+from typing import List, Tuple, FrozenSet, Dict, Callable, Any, Optional
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs
 from functools import reduce
@@ -238,6 +238,86 @@ def build_object_x_keyphrase_matrix(
     )
 
     return result, keyphrases
+
+
+class KeyphraseBuilder:
+    """
+    A class for building keyphrase count matrices from a list of objects. This can be useful
+    as keyphrases can be a more specific way of helping prompt an LLM for a topic name. To
+    make use of keyphrases you need to be able to convert objects to text. For basic
+    short-text topic modeling, you can use the default settings, which simply assumes 
+    objects are already short texts. For other kinds of topic modeling you may
+    need to provide a function that converts objects to text.
+    
+    Parameters
+    ----------
+    object_to_text : Optional[Callable[[Any], str]], optional
+        A function that converts objects to text, by default None. If None, it is assumed that the objects are strings.
+        An example of another case would be if objects were images and this function was a
+        zero-short image captioning model.
+
+    ngram_range : Tuple[int, int], optional
+        The range of n-grams to consider, by default (1, 4).
+        
+    token_pattern : str, optional
+        The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
+        
+    max_features : int, optional
+        The maximum number of features to consider, by default 50_000.
+        
+    stop_words : FrozenSet[str], optional
+        The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
+        
+    n_jobs : int, optional
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+        
+    Attributes
+    ----------
+    
+    object_x_keyphrase_matrix_ : scipy.sparse.spmatrix
+        A sparse count matrix of keyphrases in the objects.
+        
+    keyphrase_list_ : List[str]
+        A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+        
+    """
+
+    def __init__(
+        self,
+        object_to_text: Optional[Callable[[Any], str]] = None,
+        ngram_range: Tuple[int, int] = (1, 4),
+        token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
+        max_features: int = 50_000,
+        stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
+        n_jobs: int = -1,
+    ):
+        self.object_to_text = object_to_text
+        self.ngram_range = ngram_range
+        self.token_pattern = token_pattern
+        self.max_features = max_features
+        self.stop_words = stop_words
+        self.n_jobs = n_jobs
+
+    def fit(self, objects: List[Any]):
+        if self.object_to_text is None:
+            object_texts = objects
+        else:
+            object_texts = [self.object_to_text(obj) for obj in objects]
+
+        self.object_x_keyphrase_matrix_, self.keyphrase_list_ = build_object_x_keyphrase_matrix(
+            object_texts,
+            ngram_range=self.ngram_range,
+            token_pattern=self.token_pattern,
+            max_features=self.max_features,
+            stop_words=self.stop_words,
+            n_jobs=self.n_jobs,
+        )
+
+        return self
+    
+    def fit_transform(self, objects: List[Any]):
+        self.fit(objects, object_to_text)
+        return self.object_x_keyphrase_matrix_, self.keyphrase_list_
 
 
 def longest_keyphrases(candidate_keyphrases):

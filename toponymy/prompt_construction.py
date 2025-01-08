@@ -114,7 +114,7 @@ def distinguish_topic_names_prompt(
     all_topic_names: List[List[str]],
     exemplar_texts: List[List[str]],
     keyphrases: List[List[str]],
-    subtopics: Optional[List[List[List[str]]]],
+    subtopics: Optional[List[List[str]]],
     cluster_tree: Optional[dict],
     object_description: str,
     corpus_description: str,
@@ -138,8 +138,8 @@ def distinguish_topic_names_prompt(
         List of exemplar texts for each topic.
     keyphrases : List[List[str]]
         List of keyphrases for each topic.
-    subtopics : Optional[List[List[List[str]]]], optional
-        List of subtopics for each layer, by default None.
+    subtopics : Optional[List[List[str]]], optional
+        List of fine grained/misc subtopics for this layer, by default None.
     cluster_tree : Optional[dict], optional
         Dictionary of the cluster tree, by default None.
     object_description : str
@@ -193,7 +193,7 @@ def distinguish_topic_names_prompt(
             for tree_subtopics in tree_subtopics_per_topic
         ]
         other_subtopics_per_topic = [
-            subtopics[layer_id][cluster_id][:max_num_subtopics] for cluster_id in topic_indices
+            subtopics[cluster_id][:max_num_subtopics] for cluster_id in topic_indices
         ]
     else:
         major_subtopics_per_topic = [False] * len(topic_indices)

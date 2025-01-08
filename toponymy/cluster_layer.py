@@ -35,11 +35,25 @@ class ClusterLayer(ABC):
         centroid_vectors: np.ndarray,
         layer_id: int,
         text_embedding_model: Optional[SentenceTransformer] = None,
+        object_to_text_function: Optional[Callable[[Any], List[str]]] = None,
+        n_exemplars: int = 16,
+        n_keyphrases: int = 32,
+        n_subtopics: int = 32,
     ):
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
         self.layer_id = layer_id
         self.text_embedding_model = text_embedding_model
+        self.object_to_text_function = object_to_text_function
+        self.n_exemplars = n_exemplars
+        self.n_keyphrases = n_keyphrases
+        self.n_subtopics = n_subtopics
+
+        # Initialize empty lists for the cluster layer's attributes
+        self.topic_names = []
+        self.exemplars = []
+        self.keyphrases = []
+        self.subtopics = []
 
     @abstractmethod
     def name_topics(
@@ -66,7 +80,7 @@ class ClusterLayer(ABC):
         pass
 
     @abstractmethod
-    def make_keywords(
+    def make_keyphrases(
         self,
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
@@ -89,7 +103,6 @@ class ClusterLayer(ABC):
         self,
         object_list: List[Any],
         object_vectors: np.ndarray,
-        object_to_text_function: Callable[[Any], List[str]],
     ) -> List[List[str]]:
         pass
 
@@ -97,10 +110,10 @@ class ClusterLayer(ABC):
         self,
         embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
-        if embedding_model is None and self.embedding_model is None:
+        if embedding_model is None and self.text_embedding_model is None:
             raise ValueError("An embedding model must be provided")
         elif embedding_model is None:
-            embedding_model = self.embedding_model
+            embedding_model = self.text_embedding_model
 
         self.topic_name_embeddings = embedding_model.encode(self.topic_names)
 
@@ -133,7 +146,7 @@ class ClusterLayer(ABC):
                 all_topic_names,
                 exemplar_texts=self.exemplars,
                 keyphrases=self.keyphrases,
-                subtopics=self.subtopics,
+                subtopics=self.subtopics if len(self.subtopics) > 0 else None,
                 cluster_tree=cluster_tree,
                 object_description=object_description,
                 corpus_description=corpus_description,
@@ -149,7 +162,7 @@ class ClusterLayer(ABC):
         for topic_indices, disambiguation_prompt in zip(
             self.dismbiguation_topic_indices, self.disambiguation_prompts
         ):
-            new_names = self.llm.generate_topic_cluster_names(
+            new_names = llm.generate_topic_cluster_names(
                 disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
             )
             for i, topic_index in enumerate(topic_indices):
@@ -313,7 +326,6 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-        object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
     ) -> List[List[str]]:
         self.exemplars = diverse_exemplars(
             cluster_label_vector=self.cluster_labels,
