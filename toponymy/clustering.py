@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 import numpy as np
 import numba
 from fast_hdbscan.cluster_trees import (
@@ -200,7 +201,20 @@ def create_cluster_layers(
     return layers, cluster_tree
 
 
-class Clusterer:
+class Clusterer(ABC):
+
+    def __init__(self, layer_class: Type[ClusterLayer]):
+        self.layer_class = layer_class
+
+    @abstractmethod
+    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+        pass
+
+    @abstractmethod
+    def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+        pass
+
+class ToponymyClusterer(Clusterer):
 
     def __init__(
         self,
@@ -210,7 +224,7 @@ class Clusterer:
         base_min_cluster_size: int = 10,
         next_cluster_size_quantile: float = 0.85,
     ):
-        self.layer_class = layer_class
+        super().__init__(layer_class)
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
@@ -238,7 +252,7 @@ class Clusterer:
 try:
     import evoc
 
-    class EVoCClusterer:
+    class EVoCClusterer(Clusterer):
 
         def __init__(
             self,
@@ -255,7 +269,7 @@ try:
             node_embedding_dim: Optional[int] = None,
             neighbor_scale: float = 1.0,
         ):
-            self.layer_class = layer_class
+            super().__init__(layer_class)
             self.evoc = evoc.EVoC(
                 noise_level=noise_level,
                 base_min_cluster_size=base_min_cluster_size,
@@ -270,7 +284,7 @@ try:
                 neighbor_scale=neighbor_scale,
             )
 
-        def fit(self, embedding_vectors: np.ndarray):
+        def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
             self.evoc.fit(embedding_vectors)
             cluster_labels = self.evoc.labels_
             self.cluster_tree_ = build_cluster_tree(cluster_labels)
@@ -282,7 +296,7 @@ try:
             ]
             return self
 
-        def fit_predict(self, embedding_vectors: np.ndarray):
+        def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
             self.fit(embedding_vectors)
             return self.cluster_layers_, self.cluster_tree_
 

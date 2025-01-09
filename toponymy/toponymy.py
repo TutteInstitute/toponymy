@@ -1,4 +1,4 @@
-from toponymy.clustering import Clusterer
+from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
 from sentence_transformers import SentenceTransformer
 import numpy as np
@@ -23,7 +23,7 @@ class Toponymy:
             self, 
             llm_wrapper, 
             text_embedding_model: SentenceTransformer, 
-            clusterer: Clusterer = Clusterer(),
+            clusterer: Clusterer = ToponymyClusterer(),
             keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
             object_description: str = "objects",
             corpus_description: str = "collection of objects",
