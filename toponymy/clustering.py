@@ -9,8 +9,9 @@ from fast_hdbscan.cluster_trees import (
 from fast_hdbscan.boruvka import parallel_boruvka
 from fast_hdbscan.numba_kdtree import kdtree_to_numba
 from sklearn.neighbors import KDTree
-from typing import List, Tuple, Dict, Type, Any
+from typing import List, Tuple, Dict, Type, Any, Optional
 from toponymy.cluster_layer import ClusterLayer
+
 
 def build_raw_cluster_layers(
     data: np.ndarray,
@@ -103,7 +104,9 @@ def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
     return mapping
 
 
-def build_cluster_tree(labels: List[np.ndarray]) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
+def build_cluster_tree(
+    labels: List[np.ndarray],
+) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
     """
     Builds a cluster tree from the given labels.
 
@@ -115,7 +118,7 @@ def build_cluster_tree(labels: List[np.ndarray]) -> Dict[Tuple[int, int], List[T
     Returns
     -------
     Dict[Tuple[int, int], List[Tuple[int, int]]]
-        A dictionary where the keys are tuples representing the parent cluster (layer, cluster index) 
+        A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
         and the values are lists of tuples representing the child clusters (layer, cluster index).
     """
     result = {}
@@ -130,7 +133,9 @@ def build_cluster_tree(labels: List[np.ndarray]) -> Dict[Tuple[int, int], List[T
 
 
 @numba.njit()
-def centroids_from_labels(cluster_labels: np.ndarray, vector_data: np.ndarray) -> np.ndarray:
+def centroids_from_labels(
+    cluster_labels: np.ndarray, vector_data: np.ndarray
+) -> np.ndarray:
     result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
     counts = np.zeros(cluster_labels.max() + 1)
     for i in range(cluster_labels.shape[0]):
@@ -147,7 +152,6 @@ def centroids_from_labels(cluster_labels: np.ndarray, vector_data: np.ndarray) -
 
 
 def create_cluster_layers(
-
     layer_class: Type[Any],
     clusterable_vectors: np.ndarray,
     embedding_vectors: np.ndarray,
@@ -180,7 +184,7 @@ def create_cluster_layers(
     -------
     Tuple[List[Any], Dict[Tuple[int, int], List[Tuple[int, int]]]]
         A tuple containing a list of created layers and a dictionary representing the cluster tree.
-    """    
+    """
     cluster_labels = build_raw_cluster_layers(
         clusterable_vectors,
         min_clusters=min_clusters,
@@ -223,7 +227,64 @@ class Clusterer:
             next_cluster_size_quantile=self.next_cluster_size_quantile,
         )
         return self
-    
-    def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+
+    def fit_predict(
+        self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray
+    ):
         self.fit(clusterable_vectors, embedding_vectors)
         return self.cluster_layers_, self.cluster_tree_
+
+
+try:
+    import evoc
+
+    class EVoCClusterer:
+
+        def __init__(
+            self,
+            layer_class: Type[ClusterLayer],
+            noise_level: float = 0.5,
+            base_min_cluster_size: int = 5,
+            min_num_clusters: int = 4,
+            n_neighbors: int = 15,
+            min_samples: int = 5,
+            next_cluster_size_quantile: float = 0.85,
+            n_epochs: int = 50,
+            node_embedding_init: str = "label_prop",
+            symmetrize_graph: bool = True,
+            node_embedding_dim: Optional[int] = None,
+            neighbor_scale: float = 1.0,
+        ):
+            self.layer_class = layer_class
+            self.evoc = evoc.EVoC(
+                noise_level=noise_level,
+                base_min_cluster_size=base_min_cluster_size,
+                min_num_clusters=min_num_clusters,
+                n_neighbors=n_neighbors,
+                min_samples=min_samples,
+                next_cluster_size_quantile=next_cluster_size_quantile,
+                n_epochs=n_epochs,
+                node_embedding_init=node_embedding_init,
+                symmetrize_graph=symmetrize_graph,
+                node_embedding_dim=node_embedding_dim,
+                neighbor_scale=neighbor_scale,
+            )
+
+        def fit(self, embedding_vectors: np.ndarray):
+            self.evoc.fit(embedding_vectors)
+            cluster_labels = self.evoc.labels_
+            self.cluster_tree_ = build_cluster_tree(cluster_labels)
+            self.cluster_layers_ = [
+                self.layer_class(
+                    labels, centroids_from_labels(labels, embedding_vectors)
+                )
+                for labels in cluster_labels
+            ]
+            return self
+
+        def fit_predict(self, embedding_vectors: np.ndarray):
+            self.fit(embedding_vectors)
+            return self.cluster_layers_, self.cluster_tree_
+
+except ImportError:
+    pass
