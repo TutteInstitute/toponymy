@@ -1,9 +1,10 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
+from toponymy.cluster_layer import ClusterLayer
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-from typing import List, Any
+from typing import List, Any, Type
 
 class Toponymy:
     """
@@ -22,7 +23,8 @@ class Toponymy:
     def __init__(
             self, 
             llm_wrapper, 
-            text_embedding_model: SentenceTransformer, 
+            text_embedding_model: SentenceTransformer,
+            layer_class: Type[ClusterLayer], 
             clusterer: Clusterer = ToponymyClusterer(),
             keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
             object_description: str = "objects",
@@ -32,6 +34,7 @@ class Toponymy:
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
+        self.layer_class = layer_class
         self.clusterer = clusterer
         self.keyphrase_builder = keyphrase_builder
         self.object_description = object_description
@@ -56,7 +59,7 @@ class Toponymy:
         self.embedding_vectors_ = embedding_vectors
 
         # Build our layers and cluster tree
-        self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(clusterable_vectors, embedding_vectors)
+        self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(clusterable_vectors, embedding_vectors, self.layer_class)
 
         # Build keyphrase information
         self.object_x_keyphrase_matrix_, self.keyphrase_list_ = self.keyphrase_builder.fit_transform(objects)

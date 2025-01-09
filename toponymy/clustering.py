@@ -203,36 +203,35 @@ def create_cluster_layers(
 
 class Clusterer(ABC):
 
-    def __init__(self, layer_class: Type[ClusterLayer]):
-        self.layer_class = layer_class
-
-    @abstractmethod
-    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+    def __init__(self):
         pass
 
     @abstractmethod
-    def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+        pass
+
+    @abstractmethod
+    def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
         pass
 
 class ToponymyClusterer(Clusterer):
 
     def __init__(
         self,
-        layer_class: Type[ClusterLayer],
         min_clusters: int = 6,
         min_samples: int = 5,
         base_min_cluster_size: int = 10,
         next_cluster_size_quantile: float = 0.85,
     ):
-        super().__init__(layer_class)
+        super().__init__()
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
         self.next_cluster_size_quantile = next_cluster_size_quantile
 
-    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
-            self.layer_class,
+            layer_class,
             clusterable_vectors=clusterable_vectors,
             embedding_vectors=embedding_vectors,
             min_clusters=self.min_clusters,
@@ -243,9 +242,9 @@ class ToponymyClusterer(Clusterer):
         return self
 
     def fit_predict(
-        self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray
+        self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]
     ):
-        self.fit(clusterable_vectors, embedding_vectors)
+        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
         return self.cluster_layers_, self.cluster_tree_
 
 
@@ -256,7 +255,6 @@ try:
 
         def __init__(
             self,
-            layer_class: Type[ClusterLayer],
             noise_level: float = 0.5,
             base_min_cluster_size: int = 5,
             min_num_clusters: int = 4,
@@ -269,7 +267,7 @@ try:
             node_embedding_dim: Optional[int] = None,
             neighbor_scale: float = 1.0,
         ):
-            super().__init__(layer_class)
+            super().__init__()
             self.evoc = evoc.EVoC(
                 noise_level=noise_level,
                 base_min_cluster_size=base_min_cluster_size,
@@ -284,20 +282,20 @@ try:
                 neighbor_scale=neighbor_scale,
             )
 
-        def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
+        def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
             self.evoc.fit(embedding_vectors)
             cluster_labels = self.evoc.labels_
             self.cluster_tree_ = build_cluster_tree(cluster_labels)
             self.cluster_layers_ = [
-                self.layer_class(
+                layer_class(
                     labels, centroids_from_labels(labels, embedding_vectors)
                 )
                 for labels in cluster_labels
             ]
             return self
 
-        def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray):
-            self.fit(embedding_vectors)
+        def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+            self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
             return self.cluster_layers_, self.cluster_tree_
 
 except ImportError:
