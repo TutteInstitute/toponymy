@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Callable, Any, Optional
 import scipy.sparse
 import numpy as np
-from toponymy.keyphrases import central_keyphrases
+from toponymy.keyphrases import central_keyphrases, information_weighted_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
 from toponymy.subtopics import central_subtopics
 from toponymy.templates import SUMMARY_KINDS
@@ -297,7 +297,7 @@ class ClusterLayerText(ClusterLayer):
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
     ) -> List[List[str]]:
-        self.keyphrases = central_keyphrases(
+        self.keyphrases = information_weighted_keyphrases(
             self.cluster_labels,
             object_x_keyphrase_matrix,
             keyphrase_list,
