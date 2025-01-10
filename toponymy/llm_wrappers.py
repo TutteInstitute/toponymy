@@ -5,15 +5,29 @@ import tokenizers
 import transformers
 
 from templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
+from abc import ABC, abstractmethod
+from typing import List
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 import re
+
+class LLMWrapper(ABC):
+
+    @abstractmethod
+    def generate_topic_name(self, prompt: str, temperature: float) -> str:
+        pass
+
+    @abstractmethod
+    def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float) -> List[str]:
+        pass
 
 try:
 
     import llama_cpp
 
-    class LlamaCppWrapper:
+    class LlamaCpp(LLMWrapper):
 
-        def __init__(self, model_path, **kwargs):
+        def __init__(self, model_path: str, **kwargs):
             self.model_path = model_path
             for arg, val in kwargs.items():
                 if arg == "n_ctx":
@@ -21,7 +35,8 @@ try:
                 setattr(self, arg, val)
             self.llm = llama_cpp.Llama(model_path=model_path, **kwargs)
 
-        def generate_topic_name(self, prompt, temperature=0.8):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.8) -> str:
             try:
                 topic_name_info = self.llm(
                     prompt, temperature=temperature, max_tokens=256
@@ -36,7 +51,8 @@ try:
                 warn(f"Failed to generate topic name with LlamaCpp: {e}")
                 return ""
 
-        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
             try:
                 topic_name_info_raw = self.llm(
                     prompt, temperature=temperature, max_tokens=1024
@@ -64,18 +80,6 @@ try:
             except:
                 return old_names
 
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return "\nThe short distinguising topic name is:\n"
-            elif kind == "intermediate_layer":
-                return "\nThe short topic name that encompasses the sub-topics is:\n"
-            elif kind == "remedy":
-                return "\nA better and more specific name that still captures the topic of these article titles is:\n"
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
-
 except ImportError:
     pass
 
@@ -83,13 +87,14 @@ try:
     import huggingface_hub
     import transformers
 
-    class HuggingFaceWrapper:
+    class HuggingFace(LLMWrapper):
 
-        def __init__(self, model, **kwargs):
+        def __init__(self, model: str, **kwargs):
             self.model = model
             self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
 
-        def generate_topic_name(self, prompt, temperature=0.8):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.8) -> str:
             try:
                 topic_name_info_raw = self.llm(
                     [{"role": "user", "content": prompt}],
@@ -111,7 +116,8 @@ try:
 
             return topic_name
 
-        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
             try:
                 topic_name_info_raw = self.llm(
                     [{"role": "user", "content": prompt}],
@@ -152,9 +158,9 @@ try:
 
     import cohere
 
-    class CohereWrapper:
+    class Cohere(LLMWrapper):
 
-        def __init__(self, API_KEY, model="command-r-08-2024", local_tokenizer=None):
+        def __init__(self, API_KEY: str, model: str = "command-r-08-2024"):
             self.llm = cohere.Client(api_key=API_KEY)
 
             try:
@@ -165,7 +171,8 @@ try:
                 raise ValueError(msg)
             self.model = model
 
-        def generate_topic_name(self, prompt, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
             try:
                 topic_name_info_raw = self.llm.chat(
                     message=prompt,
@@ -179,7 +186,8 @@ try:
                 topic_name = ""
             return topic_name
 
-        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
             try:
                 topic_name_info_raw = self.llm.chat(
                     message=prompt,
@@ -207,30 +215,6 @@ try:
                 else:
                     # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
                     return old_names
-                
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (three to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be in JSON formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
 
 except:
     pass
@@ -241,15 +225,16 @@ try:
 
     import anthropic
 
-    class AnthropicWrapper:
+    class Anthropic(LLMWrapper):
 
         def __init__(
-            self, API_KEY, model="claude-3-haiku-20240307", local_tokenizer=None
+            self, API_KEY: str, model: str = "claude-3-haiku-20240307"
         ):
             self.llm = anthropic.Anthropic(api_key=API_KEY)
             self.model = model
 
-        def generate_topic_name(self, prompt, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
             try:
                 topic_name_info_raw = self.llm.messages.create(
                     model=self.model,
@@ -264,7 +249,8 @@ try:
                 topic_name = ""
             return topic_name
 
-        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
             try:
                 topic_name_info_raw = self.llm.messages.create(
                     model=self.model,
@@ -294,30 +280,6 @@ try:
                     # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
                     return old_names
 
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (five to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
-
 except:
     pass
 
@@ -326,14 +288,15 @@ try:
 
     import openai
 
-    class OpenAIWrapper:
+    class OpenAI(LLMWrapper):
 
-        def __init__(self, API_KEY, model="gpt-4o-mini", base_url=None, verbose=False):
+        def __init__(self, API_KEY: str, model: str = "gpt-4o-mini", base_url: str = None, verbose: bool = False):
             self.llm = openai.OpenAI(api_key=API_KEY, base_url=base_url)
             self.model = model
             self.verbose = verbose
 
-        def generate_topic_name(self, prompt, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
             try:
                 topic_name_info_raw = self.llm.chat.completions.create(
                     model=self.model,
@@ -353,7 +316,8 @@ try:
                 warn(f"{e}\n{prompt}\n{topic_name_info_text}")
             return topic_name
 
-        def generate_topic_cluster_names(self, prompt, old_names, temperature=0.5):
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
             try:
                 topic_name_info_raw = self.llm.chat.completions.create(
                     model=self.model,
@@ -384,29 +348,173 @@ try:
                     # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
                     return old_names
 
-        def llm_instruction(self, kind="base_layer"):
-            if kind == "base_layer":
-                return """
-You are to give a brief (five to ten word) name describing this group.
-The topic name should be as specific as you can reasonably make it, while still describing the all example texts.
-The response must be **ONLY** JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "intermediate_layer":
-                return """
-You are to give a brief (three to five word) name describing this group of papers.
-The topic should be the most specific topic that encompasses the breadth of sub-topics, with a focus on the major sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-                """
-            elif kind == "remedy":
-                return """
-You are to give a brief (five to ten word) name describing this group of papers that better captures the specific details of this group.
-The topic should be the most specific topic that encompasses the full breadth of sub-topics.
-The response should be only JSON with no preamble formatted as {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} where SCORE is a value in the range 0 to 1.
-"""
-            else:
-                raise ValueError(
-                    f"Invalid llm_imnstruction kind; should be one of 'base_layer', 'intermediate_layer', or 'remedy' not '{kind}'"
-                )
-
 except:
+    pass
+
+
+############################ UNTESTED WRAPPERS ############################
+
+# MistralAI wrapper
+try:
+    import mistralai
+    from mistralai.client import MistralClient
+    from mistralai.models.chat_completion import ChatMessage
+    
+    class Mistral(LLMWrapper):
+        """Wrapper for MistralAI's API"""
+        
+        def __init__(self, API_KEY: str, model: str = "mistral-tiny"):
+            """
+            Initialize MistralAI wrapper
+            
+            Args:
+                API_KEY: MistralAI API key
+                model: Model name (tiny, small, medium, large)
+            """
+            self.llm = MistralClient(api_key=API_KEY)
+            self.model = model
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+            try:
+                messages = [ChatMessage(role="user", content=prompt)]
+                response = self.llm.chat(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature
+                )
+                topic_name_info = json.loads(response.messages[-1].content)
+                topic_name = topic_name_info["topic_name"]
+            except Exception as e:
+                warn(f"Failed to generate topic name with Mistral: {e}")
+                topic_name = ""
+            return topic_name
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
+            try:
+                messages = [ChatMessage(role="user", content=prompt)]
+                response = self.llm.chat(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature
+                )
+                topic_name_info = json.loads(response.messages[-1].content)
+                mapping = topic_name_info["new_topic_name_mapping"]
+                if len(mapping) == len(old_names):
+                    return [mapping.get(f"{n}. {name}", name) 
+                           for n, name in enumerate(old_names)]
+            except Exception as e:
+                warn(f"Failed to generate topic cluster names with Mistral: {e}")
+            return old_names
+except ImportError:
+    pass
+
+# Together AI wrapper
+try:
+    import together
+    
+    class Together(LLMWrapper):
+        """Wrapper for Together.ai's API"""
+        
+        def __init__(self, API_KEY: str, model: str = "togethercomputer/llama-2-7b"):
+            """
+            Initialize Together.ai wrapper
+            
+            Args:
+                API_KEY: Together.ai API key
+                model: Model name
+            """
+            together.api_key = API_KEY
+            self.model = model
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+            try:
+                response = together.Complete.create(
+                    prompt=prompt,
+                    model=self.model,
+                    temperature=temperature,
+                    max_tokens=256
+                )
+                topic_name_info = json.loads(response['output']['choices'][0]['text'])
+                topic_name = topic_name_info["topic_name"]
+            except Exception as e:
+                warn(f"Failed to generate topic name with Together: {e}")
+                topic_name = ""
+            return topic_name
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
+            try:
+                response = together.Complete.create(
+                    prompt=prompt,
+                    model=self.model,
+                    temperature=temperature,
+                    max_tokens=1024
+                )
+                topic_name_info = json.loads(response['output']['choices'][0]['text'])
+                mapping = topic_name_info["new_topic_name_mapping"]
+                if len(mapping) == len(old_names):
+                    return [mapping.get(f"{n}. {name}", name) 
+                           for n, name in enumerate(old_names)]
+            except Exception as e:
+                warn(f"Failed to generate topic cluster names with Together: {e}")
+            return old_names
+except ImportError:
+    pass
+
+# Google Vertex AI wrapper
+try:
+    from google.cloud import aiplatform
+    from vertexai.language_models import TextGenerationModel
+    
+    class VertexAI(LLMWrapper):
+        """Wrapper for Google Cloud's Vertex AI"""
+        
+        def __init__(self, project_id: str, location: str = "us-central1", 
+                     model: str = "text-bison@002"):
+            """
+            Initialize Vertex AI wrapper
+            
+            Args:
+                project_id: Google Cloud project ID
+                location: Google Cloud region
+                model: Model name
+            """
+            aiplatform.init(project=project_id, location=location)
+            self.model = TextGenerationModel.from_pretrained(model)
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+            try:
+                response = self.model.predict(
+                    prompt,
+                    temperature=temperature,
+                    max_output_tokens=256
+                )
+                topic_name_info = json.loads(response.text)
+                topic_name = topic_name_info["topic_name"]
+            except Exception as e:
+                warn(f"Failed to generate topic name with Vertex AI: {e}")
+                topic_name = ""
+            return topic_name
+
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
+            try:
+                response = self.model.predict(
+                    prompt,
+                    temperature=temperature,
+                    max_output_tokens=1024
+                )
+                topic_name_info = json.loads(response.text)
+                mapping = topic_name_info["new_topic_name_mapping"]
+                if len(mapping) == len(old_names):
+                    return [mapping.get(f"{n}. {name}", name) 
+                           for n, name in enumerate(old_names)]
+            except Exception as e:
+                warn(f"Failed to generate topic cluster names with Vertex AI: {e}")
+            return old_names
+except ImportError:
     pass
