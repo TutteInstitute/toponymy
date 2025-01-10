@@ -195,8 +195,8 @@ def create_cluster_layers(
     )
     cluster_tree = build_cluster_tree(cluster_labels)
     layers = [
-        layer_class(labels, centroids_from_labels(labels, embedding_vectors))
-        for labels in cluster_labels
+        layer_class(labels, centroids_from_labels(labels, embedding_vectors), layer_id=i)
+        for i, labels in enumerate(cluster_labels)
     ]
     return layers, cluster_tree
 

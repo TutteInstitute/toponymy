@@ -125,7 +125,7 @@ class ClusterLayer(ABC):
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
     ) -> None:
-        summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
+        summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
         clusters_for_renaming, topic_name_cluster_labels = (
@@ -158,7 +158,7 @@ class ClusterLayer(ABC):
             for topic_indices in self.dismbiguation_topic_indices
         ]
 
-    def _disambiguate_topic_names(self, llm) -> None:
+    def _disambiguate_topic_names(self, llm) -> None: # pragma: no cover
         for topic_indices, disambiguation_prompt in zip(
             self.dismbiguation_topic_indices, self.disambiguation_prompts
         ):
@@ -168,6 +168,7 @@ class ClusterLayer(ABC):
             for i, topic_index in enumerate(topic_indices):
                 self.topic_names[topic_index] = new_names[i]
 
+    # pragma: no cover
     def disambiguate_topics(
         self,
         llm,
@@ -237,7 +238,7 @@ class ClusterLayerText(ClusterLayer):
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
     ) -> List[str]:
-        summary_level = int(round(detail_level * len(SUMMARY_KINDS)))
+        summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
         self.prompts = [
@@ -261,6 +262,7 @@ class ClusterLayerText(ClusterLayer):
 
         return self.prompts
 
+    # pragma: no cover
     def name_topics(
         self,
         llm,
@@ -291,7 +293,7 @@ class ClusterLayerText(ClusterLayer):
 
         return self.topic_names
 
-    def make_keywords(
+    def make_keyphrases(
         self,
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,

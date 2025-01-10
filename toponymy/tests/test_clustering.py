@@ -3,7 +3,11 @@ from toponymy.clustering import (
     build_cluster_tree,
     centroids_from_labels,
     create_cluster_layers,
+    ToponymyClusterer,
+    EVoCClusterer,
 )
+from toponymy.cluster_layer import ClusterLayerText
+from sklearn.metrics import adjusted_mutual_info_score
 import numpy as np
 
 from sklearn.datasets import make_blobs
@@ -65,3 +69,46 @@ def test_build_cluster_tree():
                 assert (i, j) in clusters_in_tree
             else:
                 assert (i, j) in clusters_in_tree and (i, j) in cluster_tree
+
+
+def test_clusterer_class():
+    clusterer = ToponymyClusterer(min_clusters=5, min_samples=5)
+
+    clusterable_data = np.vstack(
+        [
+            make_blobs(
+                n_samples=1000,
+                n_features=2,
+                centers=5,
+                center_box=(0.0, 1.0),
+                cluster_std=0.05,
+            )[0],
+            np.random.random_sample((100, 2)),
+        ]
+    )
+    embedding_vectors = np.random.random_sample((1100, 256))
+    cluster_label_vectors = build_raw_cluster_layers(
+        clusterable_data, min_clusters=5, min_samples=5
+    )
+    cluster_tree = build_cluster_tree(cluster_label_vectors)
+    cluster_layers = create_cluster_layers(ClusterLayerText, clusterable_data, embedding_vectors)
+
+    class_cluster_layers, class_tree = clusterer.fit_predict(
+        clusterable_vectors=clusterable_data, 
+        embedding_vectors=embedding_vectors,
+        layer_class=ClusterLayerText
+    )
+
+    assert len(class_cluster_layers) == len(cluster_layers)
+    for key in class_tree:
+        subclusters = sorted(class_tree[key])
+        found = False
+        for other_subclusters in cluster_tree.values():
+            if subclusters == sorted(other_subclusters):
+                found = True
+                break
+        assert found
+    assert all(
+        adjusted_mutual_info_score(class_cluster_layers[i].cluster_labels, cluster_label_vectors[i]) == 1.0
+        for i in range(len(cluster_layers))
+    )
