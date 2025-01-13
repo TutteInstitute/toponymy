@@ -269,7 +269,7 @@ def topic_name_prompt(
     prompt: str
         LLM Prompt for naming the topic.
     """
-    if subtopics is not None and cluster_tree is not None:
+    if subtopics and cluster_tree is not None:
         tree_subtopics = cluster_tree[(layer_id, topic_index)]
 
         if len(tree_subtopics) == 1:

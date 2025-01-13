@@ -275,12 +275,13 @@ class ClusterLayerText(ClusterLayer):
     ) -> List[str]:
         self.topic_names = [
             (
-                llm.get_topic_name(prompt)
+                llm.generate_topic_name(prompt)
                 if not prompt.startswith("[!SKIP!]")
                 else prompt.removeprefix("[!SKIP!] ")
             )
             for prompt in self.prompts
         ]
+        all_topic_names[self.layer_id] = self.topic_names
         self.disambiguate_topics(
             llm=llm,
             detail_level=detail_level,

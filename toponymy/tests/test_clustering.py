@@ -11,6 +11,8 @@ from sklearn.metrics import adjusted_mutual_info_score
 import numpy as np
 
 from sklearn.datasets import make_blobs
+from sklearn.metrics import pairwise_distances
+from scipy.optimize import linear_sum_assignment
 
 
 def test_centroids_from_labels():
@@ -22,7 +24,11 @@ def test_centroids_from_labels():
         result = centroids_from_labels(cluster_labels, vector_data)
         expected = np.vstack(
             [
-                vector_data[cluster_labels == i].mean(axis=0) if np.sum(cluster_labels == i) > 0 else np.zeros(256)
+                (
+                    vector_data[cluster_labels == i].mean(axis=0)
+                    if np.sum(cluster_labels == i) > 0
+                    else np.zeros(256)
+                )
                 for i in range(cluster_labels.max() + 1)
             ]
         )
@@ -72,7 +78,12 @@ def test_build_cluster_tree():
 
 
 def test_clusterer_class():
-    clusterer = ToponymyClusterer(min_clusters=5, min_samples=5)
+    clusterer = ToponymyClusterer(
+        min_clusters=5,
+        min_samples=5,
+        base_min_cluster_size=10,
+        next_cluster_size_quantile=0.8,
+    )
 
     clusterable_data = np.vstack(
         [
@@ -82,6 +93,7 @@ def test_clusterer_class():
                 centers=5,
                 center_box=(0.0, 1.0),
                 cluster_std=0.05,
+                random_state=0,
             )[0],
             np.random.random_sample((100, 2)),
         ]
@@ -90,25 +102,33 @@ def test_clusterer_class():
     cluster_label_vectors = build_raw_cluster_layers(
         clusterable_data, min_clusters=5, min_samples=5
     )
-    cluster_tree = build_cluster_tree(cluster_label_vectors)
-    cluster_layers = create_cluster_layers(ClusterLayerText, clusterable_data, embedding_vectors)
+    cluster_layers, cluster_tree = create_cluster_layers(
+        ClusterLayerText, clusterable_data, embedding_vectors
+    )
 
     class_cluster_layers, class_tree = clusterer.fit_predict(
-        clusterable_vectors=clusterable_data, 
+        clusterable_vectors=clusterable_data,
         embedding_vectors=embedding_vectors,
-        layer_class=ClusterLayerText
+        layer_class=ClusterLayerText,
     )
 
     assert len(class_cluster_layers) == len(cluster_layers)
+    assert all(
+        adjusted_mutual_info_score(
+            class_cluster_layers[i].cluster_labels, cluster_label_vectors[i]
+        )
+        == 1.0
+        for i in range(len(cluster_layers))
+    )
+    cluster_distances = pairwise_distances(
+        class_cluster_layers[0].centroid_vectors, cluster_layers[0].centroid_vectors
+    )
+    mapping = dict(zip(linear_sum_assignment(cluster_distances)))
     for key in class_tree:
         subclusters = sorted(class_tree[key])
         found = False
         for other_subclusters in cluster_tree.values():
-            if subclusters == sorted(other_subclusters):
+            if subclusters == sorted([mapping[x] for x in other_subclusters]):
                 found = True
                 break
         assert found
-    assert all(
-        adjusted_mutual_info_score(class_cluster_layers[i].cluster_labels, cluster_label_vectors[i]) == 1.0
-        for i in range(len(cluster_layers))
-    )
