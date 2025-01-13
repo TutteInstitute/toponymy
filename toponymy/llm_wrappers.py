@@ -38,7 +38,7 @@ try:
                 setattr(self, arg, val)
             self.llm = llama_cpp.Llama(model_path=model_path, **kwargs)
 
-        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry_error_callback=lambda x: "")
         def generate_topic_name(self, prompt: str, temperature: float = 0.8) -> str:
             try:
                 topic_name_info = self.llm(
@@ -49,10 +49,10 @@ try:
                 )[0]
                 topic_name_info = json.loads(topic_name_info)
                 topic_name = topic_name_info["topic_name"]
-                return topic_name
             except Exception as e:
-                warn(f"Failed to generate topic name with LlamaCpp: {e}")
-                return ""
+                raise ValueError(f"Failed to generate topic name with LlamaCpp: {e}")
+
+            return topic_name
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
@@ -114,7 +114,7 @@ try:
                 topic_name = topic_name_info["topic_name"]
             except Exception as e:
                 raise ValueError(f"Failed to generate topic name with HuggingFace: {e}")
-
+            
             return topic_name
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -172,7 +172,7 @@ try:
                 raise ValueError(msg)
             self.model = model
 
-        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry_error_callback=lambda x: "")
         def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
             try:
                 topic_name_info_raw = self.llm.chat(
@@ -184,7 +184,7 @@ try:
                 topic_name_info = json.loads(topic_name_info_raw)
                 topic_name = topic_name_info["topic_name"]
             except:
-                topic_name = ""
+                raise ValueError(f"Failed to generate topic name with Cohere")
             return topic_name
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -234,7 +234,7 @@ try:
             self.llm = anthropic.Anthropic(api_key=API_KEY)
             self.model = model
 
-        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry_error_callback=lambda x: "")
         def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
             try:
                 topic_name_info_raw = self.llm.messages.create(
@@ -247,7 +247,8 @@ try:
                 topic_name_info = json.loads(topic_name_info_text)
                 topic_name = topic_name_info["topic_name"]
             except:
-                topic_name = ""
+                raise ValueError(f"Failed to generate topic name with Anthropic")
+                
             return topic_name
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
@@ -296,7 +297,7 @@ try:
             self.model = model
             self.verbose = verbose
 
-        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10), retry_error_callback=lambda x: "")
         def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
             try:
                 topic_name_info_raw = self.llm.chat.completions.create(
@@ -313,8 +314,8 @@ try:
                 if self.verbose:
                     print(topic_name_info)
             except Exception as e:
-                topic_name = ""
-                warn(f"{e}\n{prompt}\n{topic_name_info_text}")
+                raise ValueError(f"{e}\n{prompt}\n{topic_name_info_text}")
+            
             return topic_name
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))

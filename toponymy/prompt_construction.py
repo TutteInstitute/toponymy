@@ -247,8 +247,8 @@ def topic_name_prompt(
         List of exemplar texts for each topic.
     keyphrases : List[List[str]]
         List of keyphrases for each topic.
-    subtopics : Optional[List[List[List[str]]]], optional
-        List of subtopics for each layer, by default None.
+    subtopics : Optional[List[List[str]]], optional
+        List of subtopics for each cliuster in this layer.
     cluster_tree : Optional[dict], optional
         Dictionary of the cluster tree, by default None.
     object_description : str
@@ -284,7 +284,7 @@ def topic_name_prompt(
             minor_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] < layer_id - 2]
 
         if layer_id > 1:
-            other_subtopics = subtopics[layer_id][topic_index][:max_num_subtopics]
+            other_subtopics = subtopics[topic_index][:max_num_subtopics]
         else:
             other_subtopics = []
     else:

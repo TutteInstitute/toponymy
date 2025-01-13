@@ -60,7 +60,7 @@ def test_topic_name_prompt_with_subtopics():
     ]
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = [[["Subtopic A1", "Subtopic A2"]], [["Subtopic B1", "Subtopic B2"]]]
+    subtopics = [["Subtopic A1", "Subtopic A2"], ["Subtopic B1", "Subtopic B2"]]
     cluster_tree = {(1, 0): [(0, 0), (0, 1)]}
     object_description = "document"
     corpus_description = "corpus"
@@ -106,9 +106,9 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
     subtopics = [
-        [["Subtopic A1", "Subtopic A1b"]],
-        [["Subtopic A2", "Subtopic A2b"]],
-        [["Subtopic B1", "Subtopic B2"]],
+        ["Subtopic A1", "Subtopic A1b"],
+        ["Subtopic A2", "Subtopic A2b"],
+        ["Subtopic B1", "Subtopic B2"],
     ]
     cluster_tree = {(2, 0): [(1, 0), (0, 0)]}
     object_description = "document"
@@ -122,7 +122,7 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
         cluster_subtopics={
             "major": ["Subtopic A2", "Subtopic A1"],
             "minor": [],
-            "misc": ["Subtopic B1", "Subtopic B2"],
+            "misc": ["Subtopic A1", "Subtopic A1b"],
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
@@ -153,7 +153,7 @@ def test_topic_name_prompt_with_empty_subtopics():
     ]
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = [[[]], [[]]]
+    subtopics = [[]]
     cluster_tree = {(1, 0): [(0, 0), (0, 1)]}
     object_description = "document"
     corpus_description = "corpus"
@@ -377,7 +377,7 @@ def test_distinguish_topic_names_prompt_with_subtopics():
     ]
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = [[["Subtopic A1", "Subtopic A2"], ["Subtopic D1", "Subtopic D2"]], [["Subtopic B1", "Subtopic B2"], ["Subtopic C1", "Subtopic C2"]]]
+    subtopics = [["Subtopic A1", "Subtopic A2"], ["Subtopic D1", "Subtopic D2"]], [["Subtopic B1", "Subtopic B2"], ["Subtopic C1", "Subtopic C2"]]
     cluster_tree = {(1, 0): [(0, 0), (0, 1)], (1, 1): [(0, 2), (0, 3)]}
     object_description = "document"
     corpus_description = "corpus"
@@ -466,7 +466,7 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
     ]
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = [[[]], [[], []]]
+    subtopics = [[], []]
     cluster_tree = {(1, 0): [(0, 0), (0, 1)], (1, 1): [(0, 2)]}
     object_description = "document"
     corpus_description = "corpus"
