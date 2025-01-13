@@ -4,7 +4,7 @@ from warnings import warn
 import tokenizers
 import transformers
 
-from templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
+from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
 from abc import ABC, abstractmethod
 from typing import List
 from tenacity import retry, stop_after_attempt, wait_exponential
