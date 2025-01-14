@@ -10,7 +10,7 @@ from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 def subtopic_embeddings(
@@ -38,7 +38,14 @@ def central_subtopics(
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     result = []
-    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Selecting central subtopics", disable=not show_progress_bar):
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Selecting central subtopics",
+        disable=not show_progress_bar,
+        leave=False,
+        unit="cluster",
+        position=1,
+    ):
         subtopic_label_vector_for_cluster = subtopic_label_vector[
             cluster_label_vector == cluster_num
         ]
@@ -105,7 +112,11 @@ def central_subtopics_from_all_subtopics(
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     result = []
-    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Selecting subtopics by topic name", disable=not show_progress_bar):
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Selecting subtopics by topic name",
+        disable=not show_progress_bar,
+    ):
         # Select the central subtopics as the closest samples to the centroid
         base_distances = pairwise_distances(
             centroid_vectors[cluster_num].reshape(1, -1),
@@ -154,7 +165,9 @@ def information_weighted_subtopics(
 
     meta_cluster_label_vector = np.full(subtopic_vectors.shape[0], -1, dtype=np.int32)
     for cluster_num in range(cluster_label_vector.max() + 1):
-        subtopics_of_cluster = np.unique(subtopic_label_vector[cluster_label_vector == cluster_num])
+        subtopics_of_cluster = np.unique(
+            subtopic_label_vector[cluster_label_vector == cluster_num]
+        )
         subtopics_of_cluster = subtopics_of_cluster[subtopics_of_cluster != -1]
         meta_cluster_label_vector[subtopics_of_cluster] = cluster_num
 
@@ -179,7 +192,11 @@ def information_weighted_subtopics(
     scores = weighted_sparse_coding.sum(axis=1)
 
     result = []
-    for cluster_num in tqdm(range(meta_cluster_label_vector.max() + 1), desc="Selecting informative subtopics", disable=not show_progress_bar):
+    for cluster_num in tqdm(
+        range(meta_cluster_label_vector.max() + 1),
+        desc="Selecting informative subtopics",
+        disable=not show_progress_bar,
+    ):
         candidate_subtopics = [
             subtopics[x] for x in np.where(meta_cluster_label_vector == cluster_num)[0]
         ]

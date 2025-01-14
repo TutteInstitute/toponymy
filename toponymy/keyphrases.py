@@ -11,7 +11,7 @@ from sklearn.metrics import pairwise_distances
 
 import scipy.sparse
 
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 
 def count_docs_ngrams(
@@ -114,6 +114,8 @@ def build_keyphrase_vocabulary(
         The maximum number of features to consider, by default 50_000.
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
+    n_jobs : int, optional
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used..
 
     Returns
     -------
@@ -161,6 +163,12 @@ def build_keyphrase_count_matrix(
         A list of objects; for use in building a count matrix this should be string representations of the objects.
     keyphrases : Dict[str, int]
         A dictionary where keys are keyphrases to count in the objects and values are their respective indices.
+    ngram_range : Tuple[int, int], optional
+        The range of n-grams to consider, by default (1, 4).
+    token_pattern : str, optional
+        The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
+    n_jobs : int, optional
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
 
 
     Returns
@@ -247,10 +255,10 @@ class KeyphraseBuilder:
     A class for building keyphrase count matrices from a list of objects. This can be useful
     as keyphrases can be a more specific way of helping prompt an LLM for a topic name. To
     make use of keyphrases you need to be able to convert objects to text. For basic
-    short-text topic modeling, you can use the default settings, which simply assumes 
+    short-text topic modeling, you can use the default settings, which simply assumes
     objects are already short texts. For other kinds of topic modeling you may
     need to provide a function that converts objects to text.
-    
+
     Parameters
     ----------
     object_to_text : Optional[Callable[[Any], str]], optional
@@ -260,28 +268,28 @@ class KeyphraseBuilder:
 
     ngram_range : Tuple[int, int], optional
         The range of n-grams to consider, by default (1, 4).
-        
+
     token_pattern : str, optional
         The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
-        
+
     max_features : int, optional
         The maximum number of features to consider, by default 50_000.
-        
+
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
-        
+
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
-        
+
     Attributes
     ----------
-    
+
     object_x_keyphrase_matrix_ : scipy.sparse.spmatrix
         A sparse count matrix of keyphrases in the objects.
-        
+
     keyphrase_list_ : List[str]
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
-        
+
     """
 
     def __init__(
@@ -301,22 +309,26 @@ class KeyphraseBuilder:
         self.n_jobs = n_jobs
 
     def fit(self, objects: List[Any]):
+        print("Constructing keyphrase matrix")
         if self.object_to_text is None:
             object_texts = objects
         else:
             object_texts = [self.object_to_text(obj) for obj in objects]
 
-        self.object_x_keyphrase_matrix_, self.keyphrase_list_ = build_object_x_keyphrase_matrix(
-            object_texts,
-            ngram_range=self.ngram_range,
-            token_pattern=self.token_pattern,
-            max_features=self.max_features,
-            stop_words=self.stop_words,
-            n_jobs=self.n_jobs,
+        self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
+            build_object_x_keyphrase_matrix(
+                object_texts,
+                ngram_range=self.ngram_range,
+                token_pattern=self.token_pattern,
+                max_features=self.max_features,
+                stop_words=self.stop_words,
+                n_jobs=self.n_jobs,
+            )
         )
+        print("Keyphrase matrix constructed")
 
         return self
-    
+
     def fit_transform(self, objects: List[Any]):
         self.fit(objects)
         return self.object_x_keyphrase_matrix_, self.keyphrase_list_
@@ -338,9 +350,10 @@ def longest_keyphrases(candidate_keyphrases):
 
     return result
 
+
 def subset_matrix_and_class_labels(
-        cluster_label_vector: np.ndarray,
-        object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+    cluster_label_vector: np.ndarray,
+    object_x_keyphrase_matrix: scipy.sparse.spmatrix,
 ) -> Tuple[scipy.sparse.spmatrix, np.ndarray, np.ndarray]:
     # Mask out noise points, and then columns and rows that then have no entries
     count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
@@ -354,6 +367,7 @@ def subset_matrix_and_class_labels(
     class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
 
     return count_matrix, class_labels, column_map
+
 
 def information_weighted_keyphrases(
     cluster_label_vector: np.ndarray,
@@ -413,7 +427,14 @@ def information_weighted_keyphrases(
     weighted_matrix = iwt.transform(count_matrix)
 
     result = []
-    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Generating informative keyphrases", disable=not show_progress_bar):
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Generating informative keyphrases",
+        disable=not show_progress_bar,
+        leave=False,
+        unit="cluster",
+        position=1,
+    ):
         # Sum over the cluster; get the top scoring indices
         contrastive_scores = np.squeeze(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
@@ -422,7 +443,7 @@ def information_weighted_keyphrases(
             result.append(["No notable keyphrases"])
             continue
 
-        chosen_indices = np.argsort(contrastive_scores)[-n_keyphrases ** 2 :]
+        chosen_indices = np.argsort(contrastive_scores)[-(n_keyphrases**2) :]
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
@@ -435,7 +456,10 @@ def information_weighted_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num], chosen_vectors, n_keyphrases, max_alpha=diversify_alpha
+            centroid_vectors[cluster_num],
+            chosen_vectors,
+            n_keyphrases,
+            max_alpha=diversify_alpha,
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
@@ -456,7 +480,7 @@ def central_keyphrases(
 ):
     """
     Generates a list of keyphrases for each cluster in a cluster layer using the central keyphrase method.
-    
+
     Parameters
     ----------
     cluster_label_vector : np.ndarray
@@ -475,7 +499,7 @@ def central_keyphrases(
         The alpha parameter for diversifying the keyphrase selection, by default 1.0.
     show_progress_bar : bool, optional
         Whether to show a progress bar for the computation, by default False.
-        
+
     Returns
     -------
     keyphrases : List[List[str]]
@@ -491,7 +515,14 @@ def central_keyphrases(
     )
 
     result = []
-    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Generating central keyphrases", disable=not show_progress_bar):
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Generating central keyphrases",
+        disable=not show_progress_bar,
+        leave=False,
+        unit="cluster",
+        position=1,
+    ):
         # Sum over the cluster; get the non-zero indices
         base_candidate_indices = np.where(
             np.squeeze(
@@ -514,7 +545,7 @@ def central_keyphrases(
         )
         base_order = np.argsort(base_distances.flatten())
 
-        chosen_keyphrases = [base_candidates[i] for i in base_order[: n_keyphrases ** 2]]
+        chosen_keyphrases = [base_candidates[i] for i in base_order[: n_keyphrases**2]]
 
         # Extract the longest keyphrases, then diversify the selection
         chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
@@ -522,7 +553,10 @@ def central_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num], chosen_vectors, n_keyphrases, max_alpha=diversify_alpha
+            centroid_vectors[cluster_num],
+            chosen_vectors,
+            n_keyphrases,
+            max_alpha=diversify_alpha,
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
@@ -570,7 +604,7 @@ def bm25_keyphrases(
     -------
     keyphrases : List[List[str]]
         A list of lists of keyphrases for each cluster.
-    """   
+    """
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -599,22 +633,35 @@ def bm25_keyphrases(
     avg_doc_length = doc_lengths.mean()
 
     for i in range(class_count_matrix.shape[0]):
-        tf_array = class_count_matrix.data[class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]]
-        tf_score = tf_array / (k1 * ((1 - b) + b * doc_lengths[i] / avg_doc_length) + tf_array)
-        class_count_matrix.data[class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]] = tf_score
+        tf_array = class_count_matrix.data[
+            class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]
+        ]
+        tf_score = tf_array / (
+            k1 * ((1 - b) + b * doc_lengths[i] / avg_doc_length) + tf_array
+        )
+        class_count_matrix.data[
+            class_count_matrix.indptr[i] : class_count_matrix.indptr[i + 1]
+        ] = tf_score
 
     bm25_matrix = class_count_matrix.multiply(idf).tocsr()
 
     # Select the top scoring keyphrases for each cluster based on BM25 scores for the cluster
     result = []
-    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Generating bm25 keyphrases", disable=not show_progress_bar):
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Generating bm25 keyphrases",
+        disable=not show_progress_bar,
+        leave=False,
+        unit="meta-cluster",
+        position=1,
+    ):
         # Sum over the cluster; get the top scoring indices
         contrastive_scores = bm25_matrix[cluster_num].toarray().flatten()
         if sum(contrastive_scores) == 0:
             result.append(["No notable keyphrases"])
             continue
 
-        chosen_indices = np.argsort(contrastive_scores)[-n_keyphrases ** 2 :]
+        chosen_indices = np.argsort(contrastive_scores)[-(n_keyphrases**2) :]
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
@@ -627,7 +674,10 @@ def bm25_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num], chosen_vectors, n_keyphrases, max_alpha=diversify_alpha
+            centroid_vectors[cluster_num],
+            chosen_vectors,
+            n_keyphrases,
+            max_alpha=diversify_alpha,
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 

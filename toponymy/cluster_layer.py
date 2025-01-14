@@ -12,7 +12,8 @@ from toponymy.prompt_construction import (
     distinguish_topic_names_prompt,
 )
 from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
+from tqdm.auto import tqdm
+
 
 class ClusterLayer(ABC):
     """
@@ -157,13 +158,31 @@ class ClusterLayer(ABC):
                 max_num_keyphrases=self.n_keyphrases,
                 max_num_subtopics=self.n_subtopics,
             )
-            for topic_indices in tqdm(self.dismbiguation_topic_indices, desc=f"Generating disambiguation prompts for layer {self.layer_id}", disable=not self.show_progress_bar)
+            for topic_indices in tqdm(
+                self.dismbiguation_topic_indices,
+                desc=f"Generating disambiguation prompts for layer {self.layer_id}",
+                disable=(
+                    not self.show_progress_bar
+                    or len(self.dismbiguation_topic_indices) == 0
+                ),
+                total=len(self.dismbiguation_topic_indices),
+                unit="topic-cluster",
+                leave=False,
+                position=1,
+            )
         ]
 
-    def _disambiguate_topic_names(self, llm) -> None: # pragma: no cover
-        for topic_indices, disambiguation_prompt in tqdm(zip(
-            self.dismbiguation_topic_indices, self.disambiguation_prompts
-        ), desc=f"Generating new disambiguated topics namesfor layer {self.layer_id}", disable=not self.show_progress_bar):
+    def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
+        for topic_indices, disambiguation_prompt in tqdm(
+            zip(self.dismbiguation_topic_indices, self.disambiguation_prompts),
+            desc=f"Generating new disambiguated topics namesfor layer {self.layer_id}",
+            disable=not self.show_progress_bar
+            or len(self.dismbiguation_topic_indices) == 0,
+            total=len(self.dismbiguation_topic_indices),
+            unit="topic-cluster",
+            leave=False,
+            position=1,
+        ):
             new_names = llm.generate_topic_cluster_names(
                 disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
             )
@@ -222,7 +241,11 @@ class ClusterLayerText(ClusterLayer):
         show_progress_bar: bool = False,
     ):
         super().__init__(
-            cluster_labels, centroid_vectors, layer_id, text_embedding_model, show_progress_bar=show_progress_bar
+            cluster_labels,
+            centroid_vectors,
+            layer_id,
+            text_embedding_model,
+            show_progress_bar=show_progress_bar,
         )
         self.n_keyphrases = n_keyphrases
         self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
@@ -260,7 +283,14 @@ class ClusterLayerText(ClusterLayer):
                 max_num_keyphrases=self.n_keyphrases,
                 max_num_subtopics=self.n_subtopics,
             )
-            for topic_index in tqdm(range(self.centroid_vectors.shape[0]), desc=f"Generating prompts for layer {self.layer_id}", disable=not self.show_progress_bar)
+            for topic_index in tqdm(
+                range(self.centroid_vectors.shape[0]),
+                desc=f"Generating prompts for layer {self.layer_id}",
+                disable=not self.show_progress_bar,
+                unit="topic",
+                leave=False,
+                position=1,
+            )
         ]
 
         return self.prompts
@@ -282,7 +312,14 @@ class ClusterLayerText(ClusterLayer):
                 if not prompt.startswith("[!SKIP!]: ")
                 else prompt.removeprefix("[!SKIP!]: ")
             )
-            for prompt in tqdm(self.prompts, desc=f"Generating topic names for layer {self.layer_id}", disable=not self.show_progress_bar)
+            for prompt in tqdm(
+                self.prompts,
+                desc=f"Generating topic names for layer {self.layer_id}",
+                disable=not self.show_progress_bar,
+                unit="topic",
+                leave=False,
+                position=1,
+            )
         ]
         all_topic_names[self.layer_id] = self.topic_names
         self.disambiguate_topics(
@@ -311,6 +348,7 @@ class ClusterLayerText(ClusterLayer):
             self.centroid_vectors,
             diversify_alpha=self.keyphrase_diversify_alpha,
             n_keyphrases=self.n_keyphrases,
+            show_progress_bar=self.show_progress_bar,
         )
 
         return self.keyphrases
@@ -331,6 +369,7 @@ class ClusterLayerText(ClusterLayer):
             diversify_alpha=self.subtopic_diversify_alpha,
             n_subtopics=self.n_subtopics,
             embedding_model=embedding_model,
+            show_progress_bar=self.show_progress_bar,
         )
 
         return self.subtopics
@@ -347,6 +386,8 @@ class ClusterLayerText(ClusterLayer):
             centroid_vectors=self.centroid_vectors,
             n_exemplars=self.n_exemplars,
             diversify_alpha=self.exemplars_diversify_alpha,
+            object_to_text_function=self.object_to_text_function,
+            show_progress_bar=self.show_progress_bar,
         )
 
         return self.exemplars

@@ -60,6 +60,7 @@ def build_raw_cluster_layers(
     n_clusters_in_layer = clusters.max() + 1
 
     while n_clusters_in_layer >= min_clusters:
+        print(f"Found {n_clusters_in_layer} clusters in layer {len(cluster_layers)}")
         cluster_layers.append(clusters)
         cluster_sizes = np.bincount(clusters[clusters >= 0])
         next_min_cluster_size = int(
@@ -201,7 +202,12 @@ def create_cluster_layers(
     )
     cluster_tree = build_cluster_tree(cluster_labels)
     layers = [
-        layer_class(labels, centroids_from_labels(labels, embedding_vectors), layer_id=i, show_progress_bar=show_progress_bar)
+        layer_class(
+            labels,
+            centroids_from_labels(labels, embedding_vectors),
+            layer_id=i,
+            show_progress_bar=show_progress_bar,
+        )
         for i, labels in enumerate(cluster_labels)
     ]
     return layers, cluster_tree
@@ -209,16 +215,27 @@ def create_cluster_layers(
 
 class Clusterer(ABC):
 
-    def __init__(self, show_progress_bar: bool = False):
-        self.show_progress_bar = show_progress_bar
-
-    @abstractmethod
-    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+    def __init__(self):
         pass
 
     @abstractmethod
-    def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+    def fit(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer],
+    ):
         pass
+
+    @abstractmethod
+    def fit_predict(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer],
+    ):
+        pass
+
 
 class ToponymyClusterer(Clusterer):
 
@@ -228,15 +245,21 @@ class ToponymyClusterer(Clusterer):
         min_samples: int = 5,
         base_min_cluster_size: int = 10,
         next_cluster_size_quantile: float = 0.85,
-        show_progress_bar: bool = False,
     ):
-        super().__init__(show_progress_bar=show_progress_bar)
+        super().__init__()
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
         self.next_cluster_size_quantile = next_cluster_size_quantile
 
-    def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+    def fit(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer],
+        show_progress_bar: bool = False,
+    ):
+        print("Building clusters")
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
             layer_class,
             clusterable_vectors=clusterable_vectors,
@@ -245,14 +268,24 @@ class ToponymyClusterer(Clusterer):
             min_samples=self.min_samples,
             base_min_cluster_size=self.base_min_cluster_size,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
-            show_progress_bar=self.show_progress_bar,
+            show_progress_bar=show_progress_bar,
         )
+        print("Clusters built")
         return self
 
     def fit_predict(
-        self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer],
+        show_progress_bar: bool = False,
     ):
-        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
+        self.fit(
+            clusterable_vectors,
+            embedding_vectors,
+            layer_class=layer_class,
+            show_progress_bar=show_progress_bar,
+        )
         return self.cluster_layers_, self.cluster_tree_
 
 
