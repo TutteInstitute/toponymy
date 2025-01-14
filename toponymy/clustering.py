@@ -60,7 +60,6 @@ def build_raw_cluster_layers(
     n_clusters_in_layer = clusters.max() + 1
 
     while n_clusters_in_layer >= min_clusters:
-        print(f"Found {n_clusters_in_layer} clusters in layer {len(cluster_layers)}")
         cluster_layers.append(clusters)
         cluster_sizes = np.bincount(clusters[clusters >= 0])
         next_min_cluster_size = int(
@@ -259,7 +258,6 @@ class ToponymyClusterer(Clusterer):
         layer_class: Type[ClusterLayer],
         show_progress_bar: bool = False,
     ):
-        print("Building clusters")
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
             layer_class,
             clusterable_vectors=clusterable_vectors,
@@ -270,7 +268,6 @@ class ToponymyClusterer(Clusterer):
             next_cluster_size_quantile=self.next_cluster_size_quantile,
             show_progress_bar=show_progress_bar,
         )
-        print("Clusters built")
         return self
 
     def fit_predict(

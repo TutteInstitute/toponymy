@@ -309,7 +309,6 @@ class KeyphraseBuilder:
         self.n_jobs = n_jobs
 
     def fit(self, objects: List[Any]):
-        print("Constructing keyphrase matrix")
         if self.object_to_text is None:
             object_texts = objects
         else:
@@ -325,7 +324,6 @@ class KeyphraseBuilder:
                 n_jobs=self.n_jobs,
             )
         )
-        print("Keyphrase matrix constructed")
 
         return self
 
