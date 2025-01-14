@@ -90,6 +90,9 @@ def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
                 labels[lower_layer][upper_cluster_order],
                 np.cumsum(np.bincount(labels[upper_layer] + 1))[:-1],
             )
+            # If there is no noise we are off by one, and need to drop the first cluster group
+            if len(cluster_groups) > upper_layer_unique_labels.shape[0]:
+                cluster_groups = cluster_groups[1:]
             for i, label in enumerate(upper_layer_unique_labels):
                 if label >= 0:
                     for child in cluster_groups[i]:
