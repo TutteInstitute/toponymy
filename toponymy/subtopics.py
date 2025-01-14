@@ -10,6 +10,8 @@ from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
 
+from tqdm import tqdm
+
 
 def subtopic_embeddings(
     subtopics: List[str], embedding_model: SentenceTransformer
@@ -26,6 +28,7 @@ def central_subtopics(
     embedding_model: Optional[SentenceTransformer] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
+    show_progress_bar: bool = False,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -35,7 +38,7 @@ def central_subtopics(
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     result = []
-    for cluster_num in range(cluster_label_vector.max() + 1):
+    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Selecting central subtopics", disable=not show_progress_bar):
         subtopic_label_vector_for_cluster = subtopic_label_vector[
             cluster_label_vector == cluster_num
         ]
@@ -92,6 +95,7 @@ def central_subtopics_from_all_subtopics(
     embedding_model: Optional[SentenceTransformer] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
+    show_progress_bar: bool = False,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -101,7 +105,7 @@ def central_subtopics_from_all_subtopics(
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
     result = []
-    for cluster_num in range(cluster_label_vector.max() + 1):
+    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Selecting subtopics by topic name", disable=not show_progress_bar):
         # Select the central subtopics as the closest samples to the centroid
         base_distances = pairwise_distances(
             centroid_vectors[cluster_num].reshape(1, -1),
@@ -139,6 +143,7 @@ def information_weighted_subtopics(
     n_dictionary_vectors: int = 512,
     coding_transform_alpha: float = 0.1,
     n_jobs=-1,
+    show_progress_bar: bool = False,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -174,7 +179,7 @@ def information_weighted_subtopics(
     scores = weighted_sparse_coding.sum(axis=1)
 
     result = []
-    for cluster_num in range(meta_cluster_label_vector.max() + 1):
+    for cluster_num in tqdm(range(meta_cluster_label_vector.max() + 1), desc="Selecting informative subtopics", disable=not show_progress_bar):
         candidate_subtopics = [
             subtopics[x] for x in np.where(meta_cluster_label_vector == cluster_num)[0]
         ]

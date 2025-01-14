@@ -163,6 +163,7 @@ def create_cluster_layers(
     min_samples: int = 5,
     base_min_cluster_size: int = 10,
     next_cluster_size_quantile: float = 0.8,
+    show_progress_bar: bool = False,
 ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
     """
     Create cluster layers from given vectors and parameters.
@@ -183,6 +184,8 @@ def create_cluster_layers(
         The base minimum size of clusters for the most fine-grained cluster layer (default is 10).
     next_cluster_size_quantile : float, optional
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
+    show_progress_bar : bool, optional
+        Whether to show a progress bar (default is False).
 
     Returns
     -------
@@ -198,7 +201,7 @@ def create_cluster_layers(
     )
     cluster_tree = build_cluster_tree(cluster_labels)
     layers = [
-        layer_class(labels, centroids_from_labels(labels, embedding_vectors), layer_id=i)
+        layer_class(labels, centroids_from_labels(labels, embedding_vectors), layer_id=i, show_progress_bar=show_progress_bar)
         for i, labels in enumerate(cluster_labels)
     ]
     return layers, cluster_tree
@@ -206,8 +209,8 @@ def create_cluster_layers(
 
 class Clusterer(ABC):
 
-    def __init__(self):
-        pass
+    def __init__(self, show_progress_bar: bool = False):
+        self.show_progress_bar = show_progress_bar
 
     @abstractmethod
     def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
@@ -225,8 +228,9 @@ class ToponymyClusterer(Clusterer):
         min_samples: int = 5,
         base_min_cluster_size: int = 10,
         next_cluster_size_quantile: float = 0.85,
+        show_progress_bar: bool = False,
     ):
-        super().__init__()
+        super().__init__(show_progress_bar=show_progress_bar)
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
@@ -241,6 +245,7 @@ class ToponymyClusterer(Clusterer):
             min_samples=self.min_samples,
             base_min_cluster_size=self.base_min_cluster_size,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
+            show_progress_bar=self.show_progress_bar,
         )
         return self
 
@@ -251,55 +256,55 @@ class ToponymyClusterer(Clusterer):
         return self.cluster_layers_, self.cluster_tree_
 
 
-try:
-    import evoc
+# try:
+#     import evoc
 
-    class EVoCClusterer(Clusterer):
+#     class EVoCClusterer(Clusterer):
 
-        def __init__(
-            self,
-            noise_level: float = 0.5,
-            base_min_cluster_size: int = 5,
-            min_num_clusters: int = 4,
-            n_neighbors: int = 15,
-            min_samples: int = 5,
-            next_cluster_size_quantile: float = 0.85,
-            n_epochs: int = 50,
-            node_embedding_init: str = "label_prop",
-            symmetrize_graph: bool = True,
-            node_embedding_dim: Optional[int] = None,
-            neighbor_scale: float = 1.0,
-        ):
-            super().__init__()
-            self.evoc = evoc.EVoC(
-                noise_level=noise_level,
-                base_min_cluster_size=base_min_cluster_size,
-                min_num_clusters=min_num_clusters,
-                n_neighbors=n_neighbors,
-                min_samples=min_samples,
-                next_cluster_size_quantile=next_cluster_size_quantile,
-                n_epochs=n_epochs,
-                node_embedding_init=node_embedding_init,
-                symmetrize_graph=symmetrize_graph,
-                node_embedding_dim=node_embedding_dim,
-                neighbor_scale=neighbor_scale,
-            )
+#         def __init__(
+#             self,
+#             noise_level: float = 0.5,
+#             base_min_cluster_size: int = 5,
+#             min_num_clusters: int = 4,
+#             n_neighbors: int = 15,
+#             min_samples: int = 5,
+#             next_cluster_size_quantile: float = 0.85,
+#             n_epochs: int = 50,
+#             node_embedding_init: str = "label_prop",
+#             symmetrize_graph: bool = True,
+#             node_embedding_dim: Optional[int] = None,
+#             neighbor_scale: float = 1.0,
+#         ):
+#             super().__init__()
+#             self.evoc = evoc.EVoC(
+#                 noise_level=noise_level,
+#                 base_min_cluster_size=base_min_cluster_size,
+#                 min_num_clusters=min_num_clusters,
+#                 n_neighbors=n_neighbors,
+#                 min_samples=min_samples,
+#                 next_cluster_size_quantile=next_cluster_size_quantile,
+#                 n_epochs=n_epochs,
+#                 node_embedding_init=node_embedding_init,
+#                 symmetrize_graph=symmetrize_graph,
+#                 node_embedding_dim=node_embedding_dim,
+#                 neighbor_scale=neighbor_scale,
+#             )
 
-        def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
-            self.evoc.fit(embedding_vectors)
-            cluster_labels = self.evoc.labels_
-            self.cluster_tree_ = build_cluster_tree(cluster_labels)
-            self.cluster_layers_ = [
-                layer_class(
-                    labels, centroids_from_labels(labels, embedding_vectors)
-                )
-                for labels in cluster_labels
-            ]
-            return self
+#         def fit(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+#             self.evoc.fit(embedding_vectors)
+#             cluster_labels = self.evoc.labels_
+#             self.cluster_tree_ = build_cluster_tree(cluster_labels)
+#             self.cluster_layers_ = [
+#                 layer_class(
+#                     labels, centroids_from_labels(labels, embedding_vectors)
+#                 )
+#                 for labels in cluster_labels
+#             ]
+#             return self
 
-        def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
-            self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
-            return self.cluster_layers_, self.cluster_tree_
+#         def fit_predict(self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray, layer_class: Type[ClusterLayer]):
+#             self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
+#             return self.cluster_layers_, self.cluster_tree_
 
-except ImportError:
-    pass
+# except ImportError:
+#     pass

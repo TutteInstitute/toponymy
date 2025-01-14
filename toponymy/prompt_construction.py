@@ -16,7 +16,7 @@ def find_threshold_for_max_cluster_size(
     distances: np.ndarray, max_cluster_size: int = 4, max_distance: float = 0.2
 ) -> float:
     """Find the smallest distance that would result in a cluster exceeding the maximum size, ignoring
-    clusters of duplicates, or very near duplicates (COSINE_DISTANCE_EPSILON). This caps out at 
+    clusters of duplicates, or very near duplicates (COSINE_DISTANCE_EPSILON). This caps out at
     a maximum distance threshold specified by max_distance, unless no non-duplicate clusters are formed
     at max_distance at which point we'll produce the minimum to get clusters again.
 
@@ -68,7 +68,7 @@ def cluster_topic_names_for_renaming(
     """
     Cluster topic names for renaming based on cosine similarity of their embeddings.
     If topic_name_embeddings is not provided, it will be computed using the embedding_model.
-    
+
     Parameters
     ----------
     topic_names : List[str]
@@ -77,7 +77,7 @@ def cluster_topic_names_for_renaming(
         Precomputed embeddings for the topic names, by default None.
     embedding_model : Optional[SentenceTransformer], optional
         SentenceTransformer model to compute embeddings for the topic names, by default None.
-    
+
     Returns
     -------
     Tuple[np.ndarray, np.ndarray]
@@ -125,7 +125,7 @@ def distinguish_topic_names_prompt(
 ) -> str:
     """
     Construct a prompt for distinguishing between multiple topics.
-    
+
     Parameters
     ----------
     topic_indices : np.ndarray
@@ -154,12 +154,12 @@ def distinguish_topic_names_prompt(
         Maximum number of subtopics to include, by default 16.
     max_num_exemplars : int, optional
         Maximum number of exemplar texts to include, by default 128.
-    
+
     Returns
     -------
     prompt: str
         LLM Prompt for distinguishing between the topics.
-"""
+    """
     attempted_topic_names = [all_topic_names[layer_id][x] for x in topic_indices]
     unique_topic_names = list(dict.fromkeys(attempted_topic_names))
     if len(unique_topic_names) == 1:
@@ -217,6 +217,7 @@ def distinguish_topic_names_prompt(
 
     return prompt
 
+
 def topic_name_prompt(
     topic_index: int,
     layer_id: int,
@@ -255,7 +256,7 @@ def topic_name_prompt(
         Description of the object being clustered.
     corpus_description : str
         Description of the corpus being clustered.
-    summary_kind : str 
+    summary_kind : str
         Kind of summary to generate.
     max_num_keyphrases : int, optional
         Maximum number of keyphrases to include, by default 32.
@@ -270,18 +271,30 @@ def topic_name_prompt(
         LLM Prompt for naming the topic.
     """
     if subtopics and cluster_tree is not None:
-        tree_subtopics = cluster_tree[(layer_id, topic_index)]
+        tree_subtopics = (
+            cluster_tree[(layer_id, topic_index)]
+            if (layer_id, topic_index) in cluster_tree
+            else []
+        )
 
         if len(tree_subtopics) == 1:
             return f"[!SKIP!]: {all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]]}"
 
         # Subtopics one layer down are major subtopics; two layers down are minor
-        major_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 1]
-        minor_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 2]
+        major_subtopics = [
+            all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 1
+        ]
+        minor_subtopics = [
+            all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] == layer_id - 2
+        ]
 
         if len(major_subtopics) <= 1:
             major_subtopics = major_subtopics + minor_subtopics
-            minor_subtopics = [all_topic_names[x[0]][x[1]] for x in tree_subtopics if x[0] < layer_id - 2]
+            minor_subtopics = [
+                all_topic_names[x[0]][x[1]]
+                for x in tree_subtopics
+                if x[0] < layer_id - 2
+            ]
 
         if layer_id > 1:
             other_subtopics = subtopics[topic_index][:max_num_subtopics]

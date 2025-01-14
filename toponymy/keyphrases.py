@@ -11,6 +11,8 @@ from sklearn.metrics import pairwise_distances
 
 import scipy.sparse
 
+from tqdm import tqdm
+
 
 def count_docs_ngrams(
     docs: List[str], ngrammer, stop_words: FrozenSet[str]
@@ -363,6 +365,7 @@ def information_weighted_keyphrases(
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
     diversify_alpha: float = 1.0,
+    show_progress_bar: bool = False,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer.
 
@@ -386,6 +389,8 @@ def information_weighted_keyphrases(
         The power to raise the information weights to, by default 2.0.
     diversify_alpha : float, optional
         The alpha parameter for diversifying the keyphrase selection, by default 1.0.
+    show_progress_bar : bool, optional
+        Whether to show a progress bar for the computation, by default False.
 
     Returns
     -------
@@ -408,7 +413,7 @@ def information_weighted_keyphrases(
     weighted_matrix = iwt.transform(count_matrix)
 
     result = []
-    for cluster_num in range(cluster_label_vector.max() + 1):
+    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Generating informative keyphrases", disable=not show_progress_bar):
         # Sum over the cluster; get the top scoring indices
         contrastive_scores = np.squeeze(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
@@ -447,7 +452,35 @@ def central_keyphrases(
     centroid_vectors: np.ndarray,
     n_keyphrases: int = 16,
     diversify_alpha: float = 1.0,
+    show_progress_bar: bool = False,
 ):
+    """
+    Generates a list of keyphrases for each cluster in a cluster layer using the central keyphrase method.
+    
+    Parameters
+    ----------
+    cluster_label_vector : np.ndarray
+        A vector of cluster labels for each object.
+    object_x_keyphrase_matrix : scipy.sparse.spmatrix
+        A sparse matrix of keyphrase counts for each object.
+    keyphrase_list : List[str]
+        A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+    keyphrase_vectors : np.ndarray
+        An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    centroid_vectors : np.ndarray
+        An ndarray of centroid vectors for each cluster.
+    n_keyphrases : int, optional
+        The number of keyphrases to generate for each cluster, by default 16.
+    diversify_alpha : float, optional
+        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
+    show_progress_bar : bool, optional
+        Whether to show a progress bar for the computation, by default False.
+        
+    Returns
+    -------
+    keyphrases : List[List[str]]
+        A list of lists of keyphrases for each cluster.
+    """
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -458,7 +491,7 @@ def central_keyphrases(
     )
 
     result = []
-    for cluster_num in range(cluster_label_vector.max() + 1):
+    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Generating central keyphrases", disable=not show_progress_bar):
         # Sum over the cluster; get the non-zero indices
         base_candidate_indices = np.where(
             np.squeeze(
@@ -508,6 +541,7 @@ def bm25_keyphrases(
     k1: float = 1.5,
     b: float = 0.75,
     diversify_alpha: float = 1.0,
+    show_progress_bar: bool = False,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer using BM25 for scoring.
 
@@ -573,7 +607,7 @@ def bm25_keyphrases(
 
     # Select the top scoring keyphrases for each cluster based on BM25 scores for the cluster
     result = []
-    for cluster_num in range(cluster_label_vector.max() + 1):
+    for cluster_num in tqdm(range(cluster_label_vector.max() + 1), desc="Generating bm25 keyphrases", disable=not show_progress_bar):
         # Sum over the cluster; get the top scoring indices
         contrastive_scores = bm25_matrix[cluster_num].toarray().flatten()
         if sum(contrastive_scores) == 0:

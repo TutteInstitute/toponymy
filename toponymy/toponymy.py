@@ -4,6 +4,8 @@ from toponymy.cluster_layer import ClusterLayer
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
+from tqdm import tqdm
+
 from typing import List, Any, Type
 
 class Toponymy:
@@ -31,6 +33,7 @@ class Toponymy:
             corpus_description: str = "collection of objects",
             lowest_detail_level: float = 0.0,
             highest_detail_level: float = 1.0,
+            show_progress_bar: bool = False,
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
@@ -41,6 +44,8 @@ class Toponymy:
         self.corpus_description = corpus_description
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
+        self.show_progress_bar = show_progress_bar
+        self.clusterer.show_progress_bar = show_progress_bar
 
     def fit(self, objects: List[Any], embedding_vectors: np.array, clusterable_vectors: np.array):
         """
@@ -70,7 +75,7 @@ class Toponymy:
         detail_levels = np.linspace(self.lowest_detail_level, self.highest_detail_level, len(self.cluster_layers_))
 
         # Iterate through the layers and build the topic names
-        for i, layer in enumerate(self.cluster_layers_):
+        for i, layer in tqdm(enumerate(self.cluster_layers_), desc=f"Building topic names by layer", disable=not self.show_progress_bar):
             layer.make_exemplar_texts(
                 objects,
                 embedding_vectors,
