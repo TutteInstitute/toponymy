@@ -11,7 +11,7 @@ SUMMARY_KINDS = [
     "simple (1 or 2 word)",
 ]
 
-GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*\d+\.\d+\s*\}'
+GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
 GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
 
 PROMPT_TEMPLATES = {

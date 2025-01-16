@@ -10,6 +10,7 @@ from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
 
 import scipy.sparse
+import numba
 
 from tqdm.auto import tqdm
 
@@ -98,6 +99,7 @@ def build_keyphrase_vocabulary(
     max_features: int = 50_000,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
+    verbose: bool = False,
 ) -> List[str]:
     """
     Builds a keyphrase vocabulary from a list of objects.
@@ -115,7 +117,9 @@ def build_keyphrase_vocabulary(
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
-        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used..
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    verbose : bool, optional
+        Whether to print out progress information, by default False.
 
     Returns
     -------
@@ -133,11 +137,15 @@ def build_keyphrase_vocabulary(
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
     chunk_size = (len(objects) // n_chunks) + 1
+    if verbose:
+        print(f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification.")
     chunked_count_dicts = Parallel(n_jobs=n_chunks)(
         delayed(count_docs_ngrams)(objects[i : i + chunk_size], ngrammer, stop_words)
         for i in range(0, len(objects), chunk_size)
     )
 
+    if verbose:
+        print("Combining count dictionaries ...")
     # Combine dictionaries and count the most common ngrams
     # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
     all_vocab_counts = tree_combine_dicts(chunked_count_dicts)
@@ -153,6 +161,7 @@ def build_keyphrase_count_matrix(
     ngram_range: Tuple[int, int] = (1, 4),
     token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
     n_jobs: int = -1,
+    verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
     Builds a count matrix of keyphrases in a list of objects.
@@ -169,6 +178,8 @@ def build_keyphrase_count_matrix(
         The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    verbose : bool, optional
+        Whether to print out progress information, by default False.
 
 
     Returns
@@ -188,10 +199,14 @@ def build_keyphrase_count_matrix(
     n_chunks = effective_n_jobs(n_jobs)
     chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
     n_chunks = len(objects) // chunk_size + 1
+    if verbose:
+        print(f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase count construction.")
     chunked_count_matrices = Parallel(n_jobs=n_chunks)(
         delayed(build_count_matrix)(objects[i : i + chunk_size], keyphrases, ngrammer)
         for i in range(0, len(objects), chunk_size)
     )
+    if verbose:
+        print("Combining count matrix chunks ...")
 
     # stack the count matrices
     result = scipy.sparse.vstack(chunked_count_matrices)
@@ -206,6 +221,7 @@ def build_object_x_keyphrase_matrix(
     max_features: int = 50_000,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
+    verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
     Builds a count matrix of keyphrases in a list of objects.
@@ -222,7 +238,10 @@ def build_object_x_keyphrase_matrix(
         The maximum number of features to consider, by default 50_000.
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
-
+    n_jobs : int, optional
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    verbose : bool, optional
+        Whether to print out progress information, by default False.
 
     Returns
     -------
@@ -236,7 +255,10 @@ def build_object_x_keyphrase_matrix(
         max_features=max_features,
         stop_words=stop_words,
         n_jobs=n_jobs,
+        verbose=verbose,
     )
+    if verbose:
+        print(f"Found {len(keyphrases)} keyphrases.")
 
     keyphrase_dict = {keyphrase: i for i, keyphrase in enumerate(keyphrases)}
     result = build_keyphrase_count_matrix(
@@ -245,6 +267,7 @@ def build_object_x_keyphrase_matrix(
         ngram_range=ngram_range,
         token_pattern=token_pattern,
         n_jobs=n_jobs,
+        verbose=verbose,
     )
 
     return result, keyphrases
@@ -300,6 +323,7 @@ class KeyphraseBuilder:
         max_features: int = 50_000,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
+        verbose: bool = False,
     ):
         self.object_to_text = object_to_text
         self.ngram_range = ngram_range
@@ -307,12 +331,16 @@ class KeyphraseBuilder:
         self.max_features = max_features
         self.stop_words = stop_words
         self.n_jobs = n_jobs
+        self.verbose = verbose
 
     def fit(self, objects: List[Any]):
         if self.object_to_text is None:
             object_texts = objects
         else:
             object_texts = [self.object_to_text(obj) for obj in objects]
+
+        if self.verbose:
+            print("Building keyphrase matrix ... ")
 
         self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
             build_object_x_keyphrase_matrix(
@@ -322,6 +350,7 @@ class KeyphraseBuilder:
                 max_features=self.max_features,
                 stop_words=self.stop_words,
                 n_jobs=self.n_jobs,
+                verbose=self.verbose,
             )
         )
 
@@ -332,6 +361,7 @@ class KeyphraseBuilder:
         return self.object_x_keyphrase_matrix_, self.keyphrase_list_
 
 
+@numba.njit()
 def longest_keyphrases(candidate_keyphrases):
     """
     Builds a list of keyphrases that are not substrings of other keyphrases.

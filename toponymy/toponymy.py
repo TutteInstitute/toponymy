@@ -81,7 +81,7 @@ class Toponymy:
         self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
             self.keyphrase_builder.fit_transform(objects)
         )
-        self.keyphrase_vectors_ = self.embedding_model.encode(self.keyphrase_list_)
+        self.keyphrase_vectors_ = self.embedding_model.encode(self.keyphrase_list_, show_progress_bar=self.show_progress_bars, )
 
         # Initialize other data structures
         self.topic_names_ = [[]] * len(self.cluster_layers_)

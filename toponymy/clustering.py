@@ -21,6 +21,7 @@ def build_raw_cluster_layers(
     min_samples: int = 5,
     base_min_cluster_size: int = 10,
     next_cluster_size_quantile: float = 0.8,
+    verbose=False,
 ) -> List[np.ndarray]:
     """
     Build hierarchical cluster layers from raw data using a KDTree and Boruvka's algorithm.
@@ -60,6 +61,8 @@ def build_raw_cluster_layers(
     n_clusters_in_layer = clusters.max() + 1
 
     while n_clusters_in_layer >= min_clusters:
+        if verbose:
+            print(f"Layer {len(cluster_layers)} found {n_clusters_in_layer} clusters")
         cluster_layers.append(clusters)
         cluster_sizes = np.bincount(clusters[clusters >= 0])
         next_min_cluster_size = int(
@@ -164,6 +167,7 @@ def create_cluster_layers(
     base_min_cluster_size: int = 10,
     next_cluster_size_quantile: float = 0.8,
     show_progress_bar: bool = False,
+    verbose: bool = False,
 ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
     """
     Create cluster layers from given vectors and parameters.
@@ -186,6 +190,8 @@ def create_cluster_layers(
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
     show_progress_bar : bool, optional
         Whether to show a progress bar (default is False).
+    verbose : bool, optional
+        Whether to show verbose output (default is False).
 
     Returns
     -------
@@ -198,6 +204,7 @@ def create_cluster_layers(
         min_samples=min_samples,
         base_min_cluster_size=base_min_cluster_size,
         next_cluster_size_quantile=next_cluster_size_quantile,
+        verbose=verbose,
     )
     cluster_tree = build_cluster_tree(cluster_labels)
     layers = [
@@ -244,12 +251,14 @@ class ToponymyClusterer(Clusterer):
         min_samples: int = 5,
         base_min_cluster_size: int = 10,
         next_cluster_size_quantile: float = 0.85,
+        verbose=False,
     ):
         super().__init__()
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
         self.next_cluster_size_quantile = next_cluster_size_quantile
+        self.verbose = verbose
 
     def fit(
         self,
@@ -267,6 +276,7 @@ class ToponymyClusterer(Clusterer):
             base_min_cluster_size=self.base_min_cluster_size,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
             show_progress_bar=show_progress_bar,
+            verbose=self.verbose,
         )
         return self
 

@@ -175,7 +175,7 @@ class ClusterLayer(ABC):
     def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
         for topic_indices, disambiguation_prompt in tqdm(
             zip(self.dismbiguation_topic_indices, self.disambiguation_prompts),
-            desc=f"Generating new disambiguated topics namesfor layer {self.layer_id}",
+            desc=f"Generating new disambiguated topics names for layer {self.layer_id}",
             disable=not self.show_progress_bar
             or len(self.dismbiguation_topic_indices) == 0,
             total=len(self.dismbiguation_topic_indices),
@@ -232,11 +232,11 @@ class ClusterLayerText(ClusterLayer):
         centroid_vectors: np.ndarray,
         layer_id: int,
         text_embedding_model: Optional[SentenceTransformer] = None,
-        n_keyphrases: int = 32,
+        n_keyphrases: int = 16,
         keyphrase_diversify_alpha: float = 1.0,
         n_exemplars: int = 8,
         exemplars_diversify_alpha: float = 1.0,
-        n_subtopics: int = 32,
+        n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
         show_progress_bar: bool = False,
     ):

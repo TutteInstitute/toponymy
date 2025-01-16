@@ -204,7 +204,7 @@ def distinguish_topic_names_prompt(
         larger_topic=larger_topic,
         document_type=object_description,
         corpus_description=corpus_description,
-        attempted_topic_names=attempted_topic_names,
+        topics=attempted_topic_names,
         cluster_keywords=keyphrases_per_topic,
         cluster_subtopics={
             "major": major_subtopics_per_topic,
