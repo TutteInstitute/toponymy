@@ -81,7 +81,7 @@
                 "subtopic": "Exercise",
                 "sentences": [
                     "Regular exercise improves cardiovascular health.",
-                    "Strength training builds muscle mass.",
+                    "Strength training exercises build muscle mass.",
                     "Flexibility exercises enhance range of motion.",
                     "Exercise can help with weight management.",
                     "Physical activity reduces the risk of chronic diseases."
@@ -101,10 +101,10 @@
                 "subtopic": "Public Health",
                 "sentences": [
                     "Public health focuses on community well-being.",
-                    "Vaccination programs prevent infectious diseases.",
+                    "Public health based Vaccination programs prevent infectious diseases.",
                     "Public health policies address health disparities.",
-                    "Epidemiology studies the spread of diseases.",
-                    "Health education promotes healthy behaviors."
+                    "Epidemiology studies the spread of diseases amongst the public.",
+                    "Public health education promotes healthy behaviors."
                 ]
             }
         ]
@@ -117,7 +117,7 @@
                 "sentences": [
                     "Climate change is caused by greenhouse gas emissions.",
                     "Global warming leads to rising sea levels.",
-                    "Renewable energy can mitigate climate change.",
+                    "New energy generation methods can mitigate climate change.",
                     "Deforestation contributes to climate change.",
                     "Climate change affects weather patterns."
                 ]
@@ -127,9 +127,9 @@
                 "sentences": [
                     "Sustainability aims to meet present needs without compromising future generations.",
                     "Sustainable agriculture practices protect soil health.",
-                    "Green building designs promote energy efficiency.",
+                    "Green building designs promote energy efficiency and aid in sustainability.",
                     "Sustainable transportation reduces carbon emissions.",
-                    "Circular economy principles minimize waste."
+                    "Circular economy principles minimize waste and imporves sustainability."
                 ]
             },
             {
@@ -137,7 +137,7 @@
                 "sentences": [
                     "Conservation efforts protect biodiversity.",
                     "Protected areas preserve natural habitats.",
-                    "Sustainable practices reduce environmental impact.",
+                    "It is important to reduce environmental impact on conservation areas.",
                     "Wildlife conservation prevents species extinction.",
                     "Conservation education raises awareness."
                 ]
@@ -147,9 +147,9 @@
                 "sentences": [
                     "Solar power is a renewable energy source.",
                     "Wind energy is harnessed using turbines.",
-                    "Hydropower generates electricity from water.",
+                    "Hydropower generates electricity from water as a renewable resource.",
                     "Renewable energy reduces reliance on fossil fuels.",
-                    "Geothermal energy is derived from the Earth's heat."
+                    "Renewable geothermal energy is derived from the Earth's heat."
                 ]
             },
             {
@@ -181,7 +181,7 @@
                 "subtopic": "Higher Education",
                 "sentences": [
                     "Higher education includes colleges and universities.",
-                    "Degrees can be earned in various fields of study.",
+                    "Advanced Degrees can be earned in various fields of study.",
                     "Research is a key component of higher education.",
                     "Scholarships and grants help fund higher education.",
                     "Higher education institutions offer diverse learning opportunities."
@@ -201,8 +201,8 @@
                 "subtopic": "Special Education",
                 "sentences": [
                     "Special education supports students with disabilities.",
-                    "Individualized Education Programs (IEPs) are tailored to student needs.",
-                    "Inclusive classrooms promote diversity and acceptance.",
+                    "Individualized Education Programs (IEPs) for special education are tailored to student needs.",
+                    "Inclusive classrooms promote diversity and acceptance in special education classes.",
                     "Assistive technology aids special education students.",
                     "Special education teachers require specialized training."
                 ]
@@ -226,19 +226,19 @@
                 "subtopic": "Macroeconomics",
                 "sentences": [
                     "Macroeconomics examines the economy as a whole.",
-                    "Gross Domestic Product (GDP) measures economic output.",
-                    "Inflation reflects rising prices over time.",
-                    "Unemployment rates indicate labor market health.",
-                    "Fiscal policy involves government spending and taxation."
+                    "Gross Domestic Product (GDP) measures economic output on a macroeconomic scale.",
+                    "Inflation is a macroeconomic indicator that reflects rising prices over time.",
+                    "Unemployment rates indicate labor market performance and quality.",
+                    "Macroeconomic Fiscal policy involves government spending and taxation."
                 ]
             },
             {
                 "subtopic": "Microeconomics",
                 "sentences": [
                     "Microeconomics studies individual economic behavior.",
-                    "Supply and demand determine market prices.",
-                    "Elasticity measures responsiveness to price changes.",
-                    "Consumer choice theory explains purchasing decisions.",
+                    "Supply and demand determine market prices in microeconomic models.",
+                    "In microeconomic theory Elasticity measures responsiveness to price changes.",
+                    "Consumer choice theory in microeconimics seeks to explain purchasing decisions.",
                     "Market structures include perfect competition and monopoly."
                 ]
             },
@@ -247,7 +247,7 @@
                 "sentences": [
                     "International trade involves the exchange of goods and services between countries.",
                     "Trade agreements can reduce tariffs and barriers.",
-                    "Comparative advantage explains trade benefits.",
+                    "Comparative advantage explains international trade benefits.",
                     "Exporting and importing affect a country's economy.",
                     "Globalization has increased international trade."
                 ]
@@ -257,8 +257,8 @@
                 "sentences": [
                     "Economic development aims to improve living standards.",
                     "Infrastructure investment supports economic growth.",
-                    "Education and healthcare are vital for development.",
-                    "Sustainable development balances economic and environmental goals.",
+                    "Public services are vital for economic development.",
+                    "Economic growth in developing countries is linked with infrastructure spending.",
                     "Foreign aid can assist developing countries."
                 ]
             },
