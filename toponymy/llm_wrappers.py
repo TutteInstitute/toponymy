@@ -69,7 +69,7 @@ try:
                 if len(mapping) == len(old_names):
                     result = [
                         mapping.get(f"{n}. {name}", name)
-                        for n, name in enumerate(old_names)
+                        for n, name in enumerate(old_names, start=1)
                     ]
                     return result
                 else:
@@ -136,7 +136,7 @@ try:
                 if len(mapping) == len(old_names):
                     result = [
                         mapping.get(f"{n}. {name}", name)
-                        for n, name in enumerate(old_names)
+                        for n, name in enumerate(old_names, start=1)
                     ]
                     return result
                 else:
@@ -189,23 +189,22 @@ try:
 
         @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
         def generate_topic_cluster_names(self, prompt: str, old_names: List[str], temperature: float = 0.5) -> List[str]:
-            try:
-                topic_name_info_raw = self.llm.chat(
-                    message=prompt,
-                    model=self.model,
-                    temperature=temperature,
-                )
-                topic_name_info_text = topic_name_info_raw.text
-                topic_name_info = json.loads(topic_name_info_text)
-            except Exception as e:
-                warn(f"Failed to generate topic cluster names with Cohere: {e}")
-                return old_names
+            topic_name_info_raw = self.llm.chat(
+                message=prompt,
+                model=self.model,
+                temperature=temperature,
+            )
+            topic_name_info_text = topic_name_info_raw.text
+            topic_name_info = re.findall(
+                GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+            )[0]
+            topic_name_info = json.loads(topic_name_info)
 
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
                     mapping.get(f"{n}. {name}", name)
-                    for n, name in enumerate(old_names)
+                    for n, name in enumerate(old_names, start=1)
                 ]
                 return result
             else:
@@ -214,8 +213,7 @@ try:
                 if len(new_names) == len(old_names):
                     return new_names
                 else:
-                    # warn(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
-                    return old_names
+                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
 
 except:
     pass
@@ -270,7 +268,7 @@ try:
             if len(mapping) == len(old_names):
                 result = [
                     mapping.get(f"{n}. {name}", name)
-                    for n, name in enumerate(old_names)
+                    for n, name in enumerate(old_names, start=1)
                 ]
                 return result
             else:
@@ -338,7 +336,7 @@ try:
             if len(mapping) == len(old_names):
                 result = [
                     mapping.get(f"{n}. {name}", name)
-                    for n, name in enumerate(old_names)
+                    for n, name in enumerate(old_names, start=1)
                 ]
                 return result
             else:
@@ -405,7 +403,7 @@ except:
 #                 mapping = topic_name_info["new_topic_name_mapping"]
 #                 if len(mapping) == len(old_names):
 #                     return [mapping.get(f"{n}. {name}", name) 
-#                            for n, name in enumerate(old_names)]
+#                            for n, name in enumerate(old_names, start=1)]
 #             except Exception as e:
 #                 warn(f"Failed to generate topic cluster names with Mistral: {e}")
 #             return old_names
@@ -459,7 +457,7 @@ except:
 #                 mapping = topic_name_info["new_topic_name_mapping"]
 #                 if len(mapping) == len(old_names):
 #                     return [mapping.get(f"{n}. {name}", name) 
-#                            for n, name in enumerate(old_names)]
+#                            for n, name in enumerate(old_names, start=1)]
 #             except Exception as e:
 #                 warn(f"Failed to generate topic cluster names with Together: {e}")
 #             return old_names
@@ -514,7 +512,7 @@ except:
 #                 mapping = topic_name_info["new_topic_name_mapping"]
 #                 if len(mapping) == len(old_names):
 #                     return [mapping.get(f"{n}. {name}", name) 
-#                            for n, name in enumerate(old_names)]
+#                            for n, name in enumerate(old_names, start=1)]
 #             except Exception as e:
 #                 warn(f"Failed to generate topic cluster names with Vertex AI: {e}")
 #             return old_names
