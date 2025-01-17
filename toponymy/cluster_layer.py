@@ -38,8 +38,8 @@ class ClusterLayer(ABC):
         text_embedding_model: Optional[SentenceTransformer] = None,
         object_to_text_function: Optional[Callable[[Any], List[str]]] = None,
         n_exemplars: int = 16,
-        n_keyphrases: int = 32,
-        n_subtopics: int = 32,
+        n_keyphrases: int = 24,
+        n_subtopics: int = 24,
         show_progress_bar: bool = False,
     ):
         self.cluster_labels = cluster_labels

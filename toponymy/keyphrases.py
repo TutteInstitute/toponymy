@@ -136,7 +136,8 @@ def build_keyphrase_vocabulary(
 
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = (len(objects) // n_chunks) + 1
+    chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
+    n_chunks = len(objects) // chunk_size + 1
     if verbose:
         print(f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification.")
     chunked_count_dicts = Parallel(n_jobs=n_chunks)(
@@ -471,7 +472,7 @@ def information_weighted_keyphrases(
             result.append(["No notable keyphrases"])
             continue
 
-        chosen_indices = np.argsort(contrastive_scores)[-(n_keyphrases**2) :]
+        chosen_indices = np.argsort(contrastive_scores)[-max((n_keyphrases * 4), 16) :]
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
