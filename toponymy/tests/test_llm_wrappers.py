@@ -7,15 +7,21 @@ from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace, LlamaC
 
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {
-    "topic_name": "Machine Learning"
+    "topic_name": "Machine Learning",
+    "topic_specificity": 0.6
 }
 
 VALID_CLUSTER_NAMES_RESPONSE = {
     "new_topic_name_mapping": {
-        "0. data": "Data Science",
-        "1. ml": "Machine Learning",
-        "2. ai": "Artificial Intelligence"
-    }
+        "1. data": "Data Science",
+        "2. ml": "Machine Learning",
+        "3. ai": "Artificial Intelligence"
+    },
+    "topic_specificities": [
+        0.6,
+        0.8,
+        0.7,
+    ]
 }
 
 MALFORMED_JSON_RESPONSE = "{"  # Incomplete JSON
@@ -27,7 +33,7 @@ the topic name is Machine Learning
 postamble.
 """
 EMPTY_MAPPING_RESPONSE = {"new_topic_name_mapping": {}}
-MALFORMED_MAPPING_RESPONSE = """{"new_topic_name_mapping": {"data science": "Data Science", "data science": "Machine Learning", "data science": "Artificial Intelligence"}}"""
+MALFORMED_MAPPING_RESPONSE = """{"new_topic_name_mapping": {"data science": "Data Science", "data science": "Machine Learning", "data science": "Artificial Intelligence"} , "topic_specificities": [0.6, 0.8, 0.7]}"""
 
 class MockLLMResponse:
     """Mock response object that mimics different LLM service response structures"""
@@ -62,7 +68,7 @@ class MockLLMResponse:
     
     @staticmethod
     def create_huggingface_response(content: str):
-        return [{"generated_text": [{"content": content}]}]
+        return [{"generated_text": content}]
     
     @staticmethod
     def create_llama_response(content: str):
@@ -76,13 +82,6 @@ def validate_cluster_names(result: List[str]):
     expected = ["Data Science", "Machine Learning", "Artificial Intelligence"]
     assert result == expected
 
-# Anthropic Tests
-@pytest.fixture
-def anthropic_wrapper():
-    with patch('anthropic.Anthropic'):
-        wrapper = Anthropic(API_KEY="dummy")
-        return wrapper
-
 @pytest.fixture
 def mock_data():
     return {
@@ -93,6 +92,101 @@ def mock_data():
         "malformed_json": MALFORMED_JSON_RESPONSE,
         "recoverable_malformed_json": RECOVERABLE_MALFORMED_JSON_RESPONSE,
     }
+
+# LlamaCpp Tests
+@pytest.fixture
+def llamacpp_wrapper():
+    with patch('llama_cpp.Llama'):
+        wrapper = LlamaCpp(model_path="dummy")
+        return wrapper
+
+def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
+    response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
+    
+    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    validate_topic_name(result)
+
+def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
+    response = MockLLMResponse.create_llama_response(mock_data["valid_cluster_names"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
+    
+    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(llamacpp_wrapper, mock_data):
+    response = MockLLMResponse.create_llama_response(mock_data["malformed_mapping"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
+    
+    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
+    llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
+    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    assert result == ""
+
+def test_llamacpp_generate_topic_name_failure_malformed_json(llamacpp_wrapper, mock_data):
+    llamacpp_wrapper.llm = Mock(mock_data["malformed_json"])
+    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    assert result == ""
+
+def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
+    llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
+    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    assert result == mock_data["old_names"]
+
+
+# Huggingface Tests
+@pytest.fixture
+def huggingface_wrapper():
+    with patch('transformers.pipeline'):
+        wrapper = HuggingFace(model="dummy")
+        return wrapper
+
+def test_huggingface_generate_topic_name_success(huggingface_wrapper, mock_data):
+    response = MockLLMResponse.create_huggingface_response(mock_data["valid_topic_name"])
+    huggingface_wrapper.llm = Mock(return_value=response)
+    
+    result = huggingface_wrapper.generate_topic_name("test prompt")
+    validate_topic_name(result)
+
+def test_huggingface_generate_cluster_names_success(huggingface_wrapper, mock_data):
+    response = MockLLMResponse.create_huggingface_response(mock_data["valid_cluster_names"])
+    huggingface_wrapper.llm = Mock(return_value=response)
+    
+    result = huggingface_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_huggingface_generate_cluster_names_success_on_malformed_mapping(huggingface_wrapper, mock_data):
+    response = MockLLMResponse.create_huggingface_response(mock_data["malformed_mapping"])
+    huggingface_wrapper.llm = Mock(return_value=response)
+    
+    result = huggingface_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_huggingface_generate_topic_name_failure(huggingface_wrapper):
+    huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
+    result = huggingface_wrapper.generate_topic_name("test prompt")
+    assert result == ""
+
+def test_huggingface_generate_topic_name_failure_malformed_json(huggingface_wrapper, mock_data):
+    huggingface_wrapper.llm = Mock(mock_data["malformed_json"])
+    result = huggingface_wrapper.generate_topic_name("test prompt")
+    assert result == ""
+
+def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_data):
+    huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
+    result = huggingface_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    assert result == mock_data["old_names"]
+
+
+# Anthropic Tests
+@pytest.fixture
+def anthropic_wrapper():
+    with patch('anthropic.Anthropic'):
+        wrapper = Anthropic(API_KEY="dummy")
+        return wrapper
 
 def test_anthropic_generate_topic_name_success(anthropic_wrapper, mock_data):
     response = MockLLMResponse.create_anthropic_response(mock_data["valid_topic_name"])
