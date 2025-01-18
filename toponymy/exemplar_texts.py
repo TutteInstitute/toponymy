@@ -151,7 +151,7 @@ def diverse_exemplars(
             max_alpha=diversify_alpha,
         )[:n_exemplars]
         if object_to_text_function is None:
-            chosen_exemplars = exemplar_candidates[chosen_indices].tolist()
+            chosen_exemplars = [exemplar_candidates[i] for i in chosen_indices]
         else:
             chosen_exemplars = [
                 object_to_text_function(exemplar_candidates[i]) for i in chosen_indices

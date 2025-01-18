@@ -29,8 +29,11 @@ def count_docs_ngrams(
             else:
                 result[gram] = 1
 
-    trim_value = np.sort(list(result.values()))[-max_ngrams]
-    return {key: value for key, value in result.items() if value >= trim_value}
+    if len(result) > max_ngrams:
+        trim_value = np.sort(list(result.values()))[-max_ngrams]
+        result = {key: value for key, value in result.items() if value >= trim_value}
+
+    return result
 
 
 def combine_dicts(
@@ -43,8 +46,10 @@ def combine_dicts(
         else:
             result[key] = dict2[key]
 
-    trim_value = np.sort(list(result.values()))[-max_ngrams]
-    return {key: value for key, value in result.items() if value >= trim_value}
+    if len(result) > max_ngrams:
+        trim_value = np.sort(list(result.values()))[-max_ngrams]
+        result = {key: value for key, value in result.items() if value >= trim_value}
+    return result
 
 
 def _combine_tree_layer(

@@ -53,7 +53,7 @@ def test_vocabulary_building(max_features, ngram_range):
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
 def test_count_matrix_building(ngram_range):
     vocabulary = build_keyphrase_vocabulary(
-        TEST_OBJECTS, n_jobs=4, max_features=1000, ngram_range=(1, ngram_range)
+        TEST_OBJECTS, n_jobs=2, max_features=1000, ngram_range=(1, ngram_range)
     )
     vocabulary_map = {word: i for i, word in enumerate(vocabulary)}
     count_matrix = build_keyphrase_count_matrix(
