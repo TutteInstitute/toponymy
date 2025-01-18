@@ -16,7 +16,7 @@ from tqdm.auto import tqdm
 
 
 def count_docs_ngrams(
-    docs: List[str], ngrammer, stop_words: FrozenSet[str]
+    docs: List[str], ngrammer, stop_words: FrozenSet[str], max_ngrams: int = 250_000
 ) -> Dict[str, int]:
     result = {}
     for doc in docs:
@@ -29,33 +29,42 @@ def count_docs_ngrams(
             else:
                 result[gram] = 1
 
-    return result
+    trim_value = np.sort(list(result.values()))[-max_ngrams]
+    return {key: value for key, value in result.items() if value >= trim_value}
 
 
-def combine_dicts(dict1: Dict[str, int], dict2: Dict[str, int]) -> Dict[str, int]:
+def combine_dicts(
+    dict1: Dict[str, int], dict2: Dict[str, int], max_ngrams: int = 250_000
+) -> Dict[str, int]:
     result = dict1
     for key in dict2:
         if key in result:
             result[key] += dict2[key]
         else:
             result[key] = dict2[key]
-    return result
+
+    trim_value = np.sort(list(result.values()))[-max_ngrams]
+    return {key: value for key, value in result.items() if value >= trim_value}
 
 
 def _combine_tree_layer(
-    dict_list: List[Dict[str, int]], n_jobs: int = -1
+    dict_list: List[Dict[str, int]], max_ngrams: int = 250_000
 ) -> List[Dict[str, int]]:
     result = []
     for i in range(0, len(dict_list) - 1, 2):
-        result.append(combine_dicts(dict_list[i], dict_list[i + 1]))
+        result.append(
+            combine_dicts(dict_list[i], dict_list[i + 1], max_ngrams=max_ngrams)
+        )
     if len(dict_list) % 2 == 1:
         result.append(dict_list[-1])
     return result
 
 
-def tree_combine_dicts(dict_list: List[Dict[str, int]]) -> Dict[str, int]:
+def tree_combine_dicts(
+    dict_list: List[Dict[str, int]], max_ngrams: int = 250_000
+) -> Dict[str, int]:
     while len(dict_list) > 1:
-        dict_list = _combine_tree_layer(dict_list)
+        dict_list = _combine_tree_layer(dict_list, max_ngrams=max_ngrams)
     return dict_list[0]
 
 
@@ -139,9 +148,11 @@ def build_keyphrase_vocabulary(
     chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
     n_chunks = len(objects) // chunk_size + 1
     if verbose:
-        print(f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification.")
+        print(
+            f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification."
+        )
     chunked_count_dicts = Parallel(n_jobs=n_chunks)(
-        delayed(count_docs_ngrams)(objects[i : i + chunk_size], ngrammer, stop_words)
+        delayed(count_docs_ngrams)(objects[i : i + chunk_size], ngrammer, stop_words, max_ngrams=max_features * 10)
         for i in range(0, len(objects), chunk_size)
     )
 
@@ -149,7 +160,7 @@ def build_keyphrase_vocabulary(
         print("Combining count dictionaries ...")
     # Combine dictionaries and count the most common ngrams
     # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
-    all_vocab_counts = tree_combine_dicts(chunked_count_dicts)
+    all_vocab_counts = tree_combine_dicts(chunked_count_dicts, max_ngrams=max_features * 10)
     vocab_counter = Counter(all_vocab_counts)
     result = [ngram for ngram, _ in vocab_counter.most_common(max_features)]
 
@@ -201,7 +212,9 @@ def build_keyphrase_count_matrix(
     chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
     n_chunks = len(objects) // chunk_size + 1
     if verbose:
-        print(f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase count construction.")
+        print(
+            f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase count construction."
+        )
     chunked_count_matrices = Parallel(n_jobs=n_chunks)(
         delayed(build_count_matrix)(objects[i : i + chunk_size], keyphrases, ngrammer)
         for i in range(0, len(objects), chunk_size)
