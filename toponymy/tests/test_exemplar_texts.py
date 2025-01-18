@@ -49,6 +49,7 @@ def test_diverse_exemplar_result_sizes(n_exemplars: Literal[3] | Literal[5], div
     assert len(exemplar_results) == len(np.unique(CLUSTER_LAYER)) - 1
     if diversify_alpha == 1.0:
         print(exemplar_results)
+    print([len(x) for x in exemplar_results])
     assert all([len(x) == n_exemplars for x in exemplar_results]) and exemplar_results
     assert all([len(set(x)) == n_exemplars for x in exemplar_results])
 

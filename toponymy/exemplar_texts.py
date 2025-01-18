@@ -151,10 +151,10 @@ def diverse_exemplars(
             max_alpha=diversify_alpha,
         )[:n_exemplars]
         if object_to_text_function is None:
-            chosen_exemplars = cluster_objects[exemplar_order].tolist()
+            chosen_exemplars = exemplar_candidates[chosen_indices].tolist()
         else:
             chosen_exemplars = [
-                object_to_text_function(cluster_objects[i]) for i in exemplar_order
+                object_to_text_function(exemplar_candidates[i]) for i in chosen_indices
             ]
         results.append(chosen_exemplars)
     return results

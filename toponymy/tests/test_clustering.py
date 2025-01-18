@@ -4,7 +4,7 @@ from toponymy.clustering import (
     centroids_from_labels,
     create_cluster_layers,
     ToponymyClusterer,
-#    EVoCClusterer,
+    #    EVoCClusterer,
 )
 from toponymy.cluster_layer import ClusterLayerText
 from sklearn.metrics import adjusted_mutual_info_score
@@ -79,12 +79,13 @@ def test_build_cluster_tree():
 
 def test_clusterer_class():
     clusterer = ToponymyClusterer(
-        min_clusters=5,
+        min_clusters=4,
         min_samples=5,
         base_min_cluster_size=10,
         next_cluster_size_quantile=0.8,
     )
 
+    np.random.seed(0)
     clusterable_data = np.vstack(
         [
             make_blobs(
@@ -100,18 +101,22 @@ def test_clusterer_class():
     )
     embedding_vectors = np.random.random_sample((1100, 256))
     cluster_label_vectors = build_raw_cluster_layers(
-        clusterable_data, min_clusters=5, min_samples=5
+        clusterable_data, min_clusters=4, min_samples=5
     )
     cluster_layers, cluster_tree = create_cluster_layers(
-        ClusterLayerText, clusterable_data, embedding_vectors
+        ClusterLayerText,
+        clusterable_data,
+        embedding_vectors,
+        base_min_cluster_size=10,
+        next_cluster_size_quantile=0.8,
+        min_clusters=4,
+        min_samples=5,
     )
-
     class_cluster_layers, class_tree = clusterer.fit_predict(
         clusterable_vectors=clusterable_data,
         embedding_vectors=embedding_vectors,
         layer_class=ClusterLayerText,
     )
-
     assert len(class_cluster_layers) == len(cluster_layers)
     assert all(
         adjusted_mutual_info_score(
@@ -123,12 +128,18 @@ def test_clusterer_class():
     cluster_distances = pairwise_distances(
         class_cluster_layers[0].centroid_vectors, cluster_layers[0].centroid_vectors
     )
-    mapping = dict(zip(linear_sum_assignment(cluster_distances)))
+    row_inds, col_inds = linear_sum_assignment(cluster_distances)
+    mapping = dict(zip(row_inds, col_inds))
     for key in class_tree:
         subclusters = sorted(class_tree[key])
         found = False
         for other_subclusters in cluster_tree.values():
-            if subclusters == sorted([mapping[x] for x in other_subclusters]):
+            if subclusters == sorted(
+                [(x[0], mapping[x[1]]) for x in other_subclusters]
+            ):
                 found = True
                 break
+        if not found:
+            print(subclusters)
+            print(cluster_tree)
         assert found

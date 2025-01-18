@@ -341,7 +341,7 @@ def test_distinguish_topic_names_prompt_no_subtopics():
         larger_topic="Topic C and Topic D",
         document_type=object_description,
         corpus_description=corpus_description,
-        attempted_topic_names=["Topic C", "Topic D"],
+        topics=["Topic C", "Topic D"],
         cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
         cluster_subtopics={
             "major": [False, False],
@@ -372,12 +372,12 @@ def test_distinguish_topic_names_prompt_with_subtopics():
     topic_indices = np.array([0, 1])
     layer_id = 1
     all_topic_names = [
-        ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
+        ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2", "SubtopicA3", "SubtopicA4", "SubtopicB3", "SubtopicB4"],
         ["Topic A", "Topic B"],
     ]
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = [["Subtopic A1", "Subtopic A2"], ["Subtopic D1", "Subtopic D2"]], [["Subtopic B1", "Subtopic B2"], ["Subtopic C1", "Subtopic C2"]]
+    subtopics = [["Subtopic A3", "Subtopic A4"], ["Subtopic B3", "Subtopic B4"]]
     cluster_tree = {(1, 0): [(0, 0), (0, 1)], (1, 1): [(0, 2), (0, 3)]}
     object_description = "document"
     corpus_description = "corpus"
@@ -387,12 +387,12 @@ def test_distinguish_topic_names_prompt_with_subtopics():
         larger_topic="Topic A and Topic B",
         document_type=object_description,
         corpus_description=corpus_description,
-        attempted_topic_names=["Topic A", "Topic B"],
+        topics=["Topic A", "Topic B"],
         cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
         cluster_subtopics={
             "major": [["Subtopic A1", "Subtopic A2"], ["Subtopic B1", "Subtopic B2"]],
             "minor": [[], []],
-            "misc": [[], []],
+            "misc": [["Subtopic A3", "Subtopic A4"], ["Subtopic B3", "Subtopic B4"]],
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
@@ -410,6 +410,8 @@ def test_distinguish_topic_names_prompt_with_subtopics():
         corpus_description,
         summary_kind,
     )
+    print(prompt)
+    print(expected_prompt)
 
     assert prompt == expected_prompt
 
@@ -418,7 +420,7 @@ def test_distinguish_topic_names_prompt_with_single_topic():
     topic_indices = np.array([0])
     layer_id = 1
     all_topic_names = [["Topic A"], ["Topic B"]]
-    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    exemplar_texts = [["Example text for Topic B"]]
     keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
     subtopics = None
     cluster_tree = None
@@ -430,7 +432,7 @@ def test_distinguish_topic_names_prompt_with_single_topic():
         larger_topic="Topic B",
         document_type=object_description,
         corpus_description=corpus_description,
-        attempted_topic_names=["Topic B"],
+        topics=["Topic B"],
         cluster_keywords=[["keyphrase1", "keyphrase2"]],
         cluster_subtopics={
             "major": [False],
@@ -476,7 +478,7 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
         larger_topic="Topic A and Topic B",
         document_type=object_description,
         corpus_description=corpus_description,
-        attempted_topic_names=["Subtopic A1", "Subtopic A2"],
+        topics=["Topic A", "Topic B"],
         cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
         cluster_subtopics={
             "major": [["Subtopic A1", "Subtopic A2"], ["Subtopic B1"]],
