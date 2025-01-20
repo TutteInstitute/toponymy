@@ -137,12 +137,13 @@ def diverse_exemplars(
                 f"method={method} is not a valid selection.  Please choose one of (centroid,random)"
             )
 
-        # I'm uncertain about selecting up to n_exemplar**2 candidates
+        # We need more exemplars than we want in case we drop some via diversify
+        n_exemplars_to_take = max((n_exemplars * 2), 16)
         exemplar_candidates = [
-            cluster_objects[i] for i in exemplar_order[: n_exemplars**2]
+            cluster_objects[i] for i in exemplar_order[: n_exemplars_to_take]
         ]
         candidate_vectors = np.asarray(
-            [cluster_object_vectors[i] for i in exemplar_order[: n_exemplars**2]]
+            [cluster_object_vectors[i] for i in exemplar_order[: n_exemplars_to_take]]
         )
         chosen_indices = diversify(
             centroid_vectors[cluster_num],
