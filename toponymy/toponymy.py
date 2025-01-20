@@ -35,7 +35,7 @@ class Toponymy:
         corpus_description: str = "collection of objects",
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
-        show_progress_bars: bool = False,
+        show_progress_bars: bool = True,
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
