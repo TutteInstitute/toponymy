@@ -185,8 +185,10 @@ try:
 
     class Cohere(LLMWrapper):
 
-        def __init__(self, API_KEY: str, model: str = "command-r-08-2024"):
-            self.llm = cohere.Client(api_key=API_KEY)
+        def __init__(self, API_KEY: str, model: str = "command-r-08-2024", base_url: str = None):
+            if base_url is None:
+                base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
+            self.llm = cohere.Client(api_key=API_KEY, base_url=base_url)
 
             try:
                 self.llm.models.get(model)
