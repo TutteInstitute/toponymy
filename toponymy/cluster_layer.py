@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Callable, Any, Optional
 import scipy.sparse
 import numpy as np
+import pandas as pd
 from toponymy.keyphrases import central_keyphrases, information_weighted_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
 from toponymy.subtopics import central_subtopics
@@ -127,6 +128,7 @@ class ClusterLayer(ABC):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
+        max_topics_per_prompt: int = 12,
     ) -> None:
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
@@ -142,6 +144,14 @@ class ClusterLayer(ABC):
             np.where(topic_name_cluster_labels == cluster_num)[0]
             for cluster_num in clusters_for_renaming
         ]
+
+        # Break up over-large clusters into manageable chunks
+        self.dismbiguation_topic_indices = [
+            topic_indices[i : i + max_topics_per_prompt]
+            for topic_indices in self.dismbiguation_topic_indices
+            for i in range(0, len(topic_indices), max_topics_per_prompt)
+        ]
+
         self.disambiguation_prompts = [
             distinguish_topic_names_prompt(
                 topic_indices,
@@ -331,6 +341,17 @@ class ClusterLayerText(ClusterLayer):
             cluster_tree=cluster_tree,
             embedding_model=embedding_model,
         )
+        # Run an extra disambiguation pass if we still have significant duplication
+        if pd.Series(self.topic_names).value_counts().iloc[0] > 2:
+            self.disambiguate_topics(
+                llm=llm,
+                detail_level=detail_level,
+                all_topic_names=all_topic_names,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                cluster_tree=cluster_tree,
+                embedding_model=embedding_model,
+            )  # pragma: no cover          
 
         return self.topic_names
 
