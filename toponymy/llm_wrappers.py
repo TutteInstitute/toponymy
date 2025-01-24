@@ -209,9 +209,13 @@ try:
                     message=prompt,
                     model=self.model,
                     temperature=temperature,
-                    response_format={"type": "json_object"},
+                    # This results in failures more often than useful output
+                    # response_format={"type": "json_object"},
                 ).text
-                topic_name_info = json.loads(topic_name_info_raw)
+                topic_name_info_text = re.findall(
+                    GET_TOPIC_NAME_REGEX, topic_name_info_raw, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info_text)
                 topic_name = topic_name_info["topic_name"]
             except:
                 raise ValueError(f"Failed to generate topic name with Cohere")

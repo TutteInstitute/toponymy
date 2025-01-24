@@ -353,15 +353,14 @@ class ClusterLayerText(ClusterLayer):
                 embedding_model=embedding_model,
             )  # pragma: no cover
 
-        # Why do they fail?
-        # # Try to fix any failures to generate a name
-        # if any(self.topic_names == ""):
-        #     self.topic_names = [
-        #         llm.generate_topic_name(prompt)
-        #         if name == ""
-        #         else name
-        #         for name, prompt in zip(self.topic_names, self.prompts)
-        #     ]
+        # Try to fix any failures to generate a name
+        if any(self.topic_names == ""):
+            self.topic_names = [
+                llm.generate_topic_name(prompt)
+                if name == ""
+                else name
+                for name, prompt in zip(self.topic_names, self.prompts)
+            ]
 
         return self.topic_names
 
