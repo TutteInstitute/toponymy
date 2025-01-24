@@ -85,6 +85,7 @@ class Toponymy:
 
         # Initialize other data structures
         self.topic_names_ = [[]] * len(self.cluster_layers_)
+        self.topic_name_vectors_ = [np.array([])] * len(self.cluster_layers_)
         detail_levels = np.linspace(
             self.lowest_detail_level,
             self.highest_detail_level,
@@ -132,7 +133,10 @@ class Toponymy:
                 self.cluster_tree_,
                 self.embedding_model,
             )
+            self.topic_name_vectors_[i] = layer.make_topic_name_vector()
+
+        return self
 
     def fit_predict(self, objects, object_vectors=None, object_map=None):
         self.fit(objects, object_vectors, object_map)
-        return self.topic_names_, [layer.label_vector for layer in self.cluster_layers_]
+        return self.topic_name_vectors_

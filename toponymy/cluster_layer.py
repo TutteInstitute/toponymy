@@ -421,3 +421,10 @@ class ClusterLayerText(ClusterLayer):
         )
 
         return self.exemplars
+
+    def make_topic_name_vector(self) -> np.ndarray:
+        self.topic_name_vector = np.full(self.cluster_labels.shape[0], "Unlabelled", dtype=object)
+        for i, name in enumerate(self.topic_names):
+            self.topic_name_vector[self.cluster_labels == i] = name
+
+        return self.topic_name_vector
