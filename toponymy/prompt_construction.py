@@ -277,7 +277,7 @@ def topic_name_prompt(
             else []
         )
 
-        if len(tree_subtopics) == 1:
+        if len(tree_subtopics) == 1 and all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]] != "":
             return f"[!SKIP!]: {all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]]}"
 
         # Subtopics one layer down are major subtopics; two layers down are minor
