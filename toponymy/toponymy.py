@@ -13,6 +13,29 @@ class Toponymy:
     """
     A class for generating topic names for vector based topic modeling.
 
+    Parameters:
+    -----------
+    llm_wrapper: class
+        A llm_wrapper class.  These should be objects that inherit from the LlmWrapper base classs.
+    embedding_model: callable
+        a function with an encode used to vectorize the objects that we are topic modeling.
+    layer_class: Type[Any]
+        The class to used for creating layers from our objects.
+    clusterer: Clusterer
+        The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
+    keyphrase_builder: KeyphraseBuilder
+        The keyphrase builder to use for building keyphrases from the objects.
+    object_description: str
+        A description of the objects being topic modeled.
+    corpus_description: str
+        A description of the collection of objects being topic modeled.
+    lowest_detail_level: float
+        The lowest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
+    highest_detail_level: float
+        The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
+    show_progress_bars: bool
+        Whether to show progress bars or not.
+    
     Attributes:
     -----------
     llm_wrapper: class
@@ -21,6 +44,39 @@ class Toponymy:
         a function with an encode used to vectorize the objects that we are topic modeling.
     layer_class: Type[Any]
         The class to used for creating layers from our objects.
+    clusterer: Clusterer
+        The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
+    keyphrase_builder: KeyphraseBuilder
+        The keyphrase builder to use for building keyphrases from the objects.
+    object_description: str
+        A description of the objects being topic modeled.
+    corpus_description: str
+        A description of the collection of objects being topic modeled.
+    lowest_detail_level: float
+        The lowest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
+    highest_detail_level: float
+        The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
+    show_progress_bars: bool
+        Whether to show progress bars or not.
+    clusterable_vectors_: np.array
+        A numpy array of shape=(number_of_objects, clustering_dimension) used for clustering.
+    embedding_vectors_: np.array
+        A numpy array of shape=(number_of_objects, embedding_dimension) used for vectorizing.
+    cluster_layers_: List[ClusterLayer]
+        A list of ClusterLayer objects that represent the layers of the topic model.
+    cluster_tree_: dict
+        A dictionary that represents the tree of clusters.
+    object_x_keyphrase_matrix_: np.array
+        A numpy array of shape=(number_of_objects, number_of_keyphrases) that represents the objects and their keyphrases.
+    keyphrase_list_: List[str]
+        A list of keyphrases.
+    keyphrase_vectors_: np.array
+        A numpy array of shape=(number_of_keyphrases, embedding_dimension) that represents the keyphrase vectors.
+    topic_names_: List[List[str]]
+        A list of lists of strings that represent the topic names at each layer of the topic model.
+    topic_name_vectors_: List[np.array]
+        A list of numpy arrays of shape=(number_of_topics, embedding_dimension) that represent the topic names of each object
+        at each layer of the topic model.
 
     """
 
@@ -55,8 +111,9 @@ class Toponymy:
         clusterable_vectors: np.array,
     ):
         """
-        Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't specc.
-        Attributes:
+        Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
+
+        Parameters:
         -----------
         objects: Object
             The objects over which to perform topic modeling.  These are often text documents or images.
@@ -65,6 +122,11 @@ class Toponymy:
         clusterable_vectors: np.array
             A numpy array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
             for density based clustering to be efficient (2-25).
+
+        Returns:
+        --------
+        self: object
+            Returns the instance of the class.
         """
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
@@ -137,6 +199,25 @@ class Toponymy:
 
         return self
 
-    def fit_predict(self, objects, object_vectors=None, object_map=None):
-        self.fit(objects, object_vectors, object_map)
+    def fit_predict(self, objects: List[Any], object_vectors: np.array, clusterable_vectors: np.array) -> List[np.array]:
+        """
+        Fit the model with objects and return the topic names.
+        
+        Parameters:
+        -----------
+        objects: List[Any]
+            A list of objects to perform topic modeling over.
+        object_vectors: np.array
+            An array of shape=(number_of_objects, embedding_dimension) created with the same embedding_model specified in the constructor.
+        object_map: np.array
+            An array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
+            for density based clustering to be efficient (2-25).
+        
+        Returns:
+        --------
+        topic_name_vectors: List[np.array]
+            A list of numpy arrays of shape=(number_of_topics, embedding_dimension) that represent the topic names of each object
+            at each layer of the topic model.
+        """
+        self.fit(objects, object_vectors, clusterable_vectors)
         return self.topic_name_vectors_
