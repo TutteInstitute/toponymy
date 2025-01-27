@@ -33,7 +33,7 @@ class Toponymy:
         The lowest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
     highest_detail_level: float
         The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
-    exemplar_delmiters: List[str]
+    exemplar_delimiters: List[str]
         A list of strings that represent the delimiters for the exemplar texts. Default is ["    *\"", "\"\n"].
     show_progress_bars: bool
         Whether to show progress bars or not.
@@ -58,7 +58,7 @@ class Toponymy:
         The lowest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
     highest_detail_level: float
         The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
-    exemplar_delmiters: List[str]
+    exemplar_delimiters: List[str]
         A list of strings that represent the delimiters for the exemplar texts.
     show_progress_bars: bool
         Whether to show progress bars or not.
@@ -95,7 +95,7 @@ class Toponymy:
         corpus_description: str = "collection of objects",
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
-        exemplar_delmiters: List[str] = ["    *\"", "\"\n"],
+        exemplar_delimiters: List[str] = ["    *\"", "\"\n"],
         show_progress_bars: bool = True,
     ):
         self.llm_wrapper = llm_wrapper
@@ -107,7 +107,7 @@ class Toponymy:
         self.corpus_description = corpus_description
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
-        self.exemplar_delmiters = exemplar_delmiters
+        self.exemplar_delimiters = exemplar_delimiters
         self.show_progress_bars = show_progress_bars
 
     def fit(
@@ -143,6 +143,7 @@ class Toponymy:
             embedding_vectors,
             self.layer_class,
             show_progress_bar=self.show_progress_bars,
+            exemplar_delimiters=self.exemplar_delimiters,
         )
 
         # Build keyphrase information

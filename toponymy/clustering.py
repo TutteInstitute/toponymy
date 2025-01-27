@@ -168,6 +168,7 @@ def create_cluster_layers(
     next_cluster_size_quantile: float = 0.8,
     show_progress_bar: bool = False,
     verbose: bool = False,
+    **layer_kwargs,
 ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
     """
     Create cluster layers from given vectors and parameters.
@@ -192,6 +193,8 @@ def create_cluster_layers(
         Whether to show a progress bar (default is False).
     verbose : bool, optional
         Whether to show verbose output (default is False).
+    **layer_kwargs : Any
+        Any additional keyword arguments to be passed to the layer class.
 
     Returns
     -------
@@ -213,6 +216,7 @@ def create_cluster_layers(
             centroids_from_labels(labels, embedding_vectors),
             layer_id=i,
             show_progress_bar=show_progress_bar,
+            **layer_kwargs,
         )
         for i, labels in enumerate(cluster_labels)
     ]
@@ -230,6 +234,7 @@ class Clusterer(ABC):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
+        **layer_kwargs,
     ):
         pass
 
@@ -239,6 +244,7 @@ class Clusterer(ABC):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
+        **layer_kwargs,
     ):
         pass
 
@@ -266,6 +272,7 @@ class ToponymyClusterer(Clusterer):
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
         show_progress_bar: bool = False,
+        **layer_kwargs,
     ):
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
             layer_class,
@@ -277,6 +284,7 @@ class ToponymyClusterer(Clusterer):
             next_cluster_size_quantile=self.next_cluster_size_quantile,
             show_progress_bar=show_progress_bar,
             verbose=self.verbose,
+            **layer_kwargs,
         )
         return self
 
@@ -286,12 +294,14 @@ class ToponymyClusterer(Clusterer):
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
         show_progress_bar: bool = False,
+        **layer_kwargs,
     ):
         self.fit(
             clusterable_vectors,
             embedding_vectors,
             layer_class=layer_class,
             show_progress_bar=show_progress_bar,
+            **layer_kwargs,
         )
         return self.cluster_layers_, self.cluster_tree_
 
