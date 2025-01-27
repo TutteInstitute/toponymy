@@ -41,6 +41,7 @@ class ClusterLayer(ABC):
         n_exemplars: int = 16,
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
+        exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
         show_progress_bar: bool = False,
     ):
         self.cluster_labels = cluster_labels
@@ -51,6 +52,7 @@ class ClusterLayer(ABC):
         self.n_exemplars = n_exemplars
         self.n_keyphrases = n_keyphrases
         self.n_subtopics = n_subtopics
+        self.exemplar_delimiters = exemplar_delimiters
         self.show_progress_bar = show_progress_bar
 
         # Initialize empty lists for the cluster layer's attributes
@@ -167,6 +169,8 @@ class ClusterLayer(ABC):
                 max_num_exemplars=self.n_exemplars,
                 max_num_keyphrases=self.n_keyphrases,
                 max_num_subtopics=self.n_subtopics,
+                exemplar_start_delimiter=self.exemplar_delimiters[0],
+                exemplar_end_delimiter=self.exemplar_delimiters[1],
             )
             for topic_indices in tqdm(
                 self.dismbiguation_topic_indices,
@@ -248,6 +252,7 @@ class ClusterLayerText(ClusterLayer):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
+        exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
         show_progress_bar: bool = False,
     ):
         super().__init__(
@@ -255,6 +260,7 @@ class ClusterLayerText(ClusterLayer):
             centroid_vectors,
             layer_id,
             text_embedding_model,
+            exemplar_delimiters=exemplar_delimiters,
             show_progress_bar=show_progress_bar,
         )
         self.n_keyphrases = n_keyphrases
@@ -292,6 +298,8 @@ class ClusterLayerText(ClusterLayer):
                 max_num_exemplars=self.n_exemplars,
                 max_num_keyphrases=self.n_keyphrases,
                 max_num_subtopics=self.n_subtopics,
+                exemplar_start_delimiter=self.exemplar_delimiters[0],
+                exemplar_end_delimiter=self.exemplar_delimiters[1],
             )
             for topic_index in tqdm(
                 range(self.centroid_vectors.shape[0]),
@@ -354,7 +362,7 @@ class ClusterLayerText(ClusterLayer):
             )  # pragma: no cover
 
         # Try to fix any failures to generate a name
-        if any(self.topic_names == ""):
+        if any([name == "" for name in self.topic_names]):
             self.topic_names = [
                 llm.generate_topic_name(prompt)
                 if name == ""

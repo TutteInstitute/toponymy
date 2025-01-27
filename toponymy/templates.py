@@ -45,7 +45,7 @@ are all on the same topic and need to be given topic name.
 {%- if cluster_sentences %}
  - Sample {{document_type}} from this group include:
 {%- for sentence in cluster_sentences %}
-      * "{{sentence}}"
+{{exemplar_start_delimiter}}{{sentence}}{{exemplar_end_delimiter}}
 {%- endfor %}
 {%- endif %}
 
@@ -63,44 +63,6 @@ large and diverse range of {{document_type}} contained in it at a glance.
 {%- endif %}
 The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} 
 where SCORE is a value in the range 0 to 1.
-"""
-    ),
-    "remedy": jinja2.Template(
-        """
-You are an expert in {{larger_topic}} and have been asked to provide a more specific name for a group of 
-{{document_type}} from {{corpus_description}}. The group of {{document_type}} has been described as having a topic of one of 
-{{attempted_topic_names}}. These topic names were not specific orr detailed enough to distinguish it
-from other more general groups of {{document_type}} such as:
-
-{% for topic in matching_topics  %}
-
-"{{loop.index}}. {{topic}}":
- - Keywords: {{", ".join(matching_topic_keywords[loop.index - 1])}}
- - Subtopics: {{", ".join(matching_topic_subtopics[loop.index - 1])}}
-{% endfor %}
-
-As an expert in {{larger_topic}}, you need to provide a more specific name for this group of {{document_type}}:
-{%- if cluster_keywords %}
- - Keywords: {{", ".join(cluster_keywords)}}
-{%- endif %}
-{%- if cluster_subtopics %}
- - Subtopics: {{", ".join(cluster_subtopics)}}
-{%- endif %}
-{%- if cluster_sentences %}
- - Sample {{document_type}}:
-{%- for sentence in cluster_sentences %}
-      * "{{sentence}}"
-{%- endfor %}
-{%- endif %}
-
-You should make use of the relative relationships between these topics as well as the keywords
-and {{self.document_type}} information and your expertise in {{larger_topic}} to generate new 
-better and more *specific* {{summary_kind}} name to this topic.
-
-The response should be only JSON with no preamble formatted as 
-  {"topic_name":<NAME>, "less_specific_topic_name":<NAME>, "topic_specificity":<SCORE>} 
-where SCORE is a value in the range 0 to 1.
-The response must contain only JSON with no preamble.
 """
     ),
     "disambiguate_topics": jinja2.Template(
@@ -137,7 +99,7 @@ Below are the auto-generated topic names, along with some keywords associated to
 {%- if cluster_sentences[loop.index - 1] %}
  - Sample {{document_type}} from this group include:
 {%- for sentence in cluster_sentences[loop.index - 1] %}
-      * "{{sentence}}"
+{{exemplar_start_delimiter}}{{sentence}}{{exemplar_end_delimiter}}
 {%- endfor %}
 {%- endif %}
 {% endfor %}

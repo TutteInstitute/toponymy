@@ -33,6 +33,8 @@ def test_topic_name_prompt_no_subtopics():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
     )
 
     prompt = topic_name_prompt(
@@ -77,6 +79,8 @@ def test_topic_name_prompt_with_subtopics():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
     )
 
     prompt = topic_name_prompt(
@@ -126,6 +130,8 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
     )
 
     prompt = topic_name_prompt(
@@ -170,6 +176,8 @@ def test_topic_name_prompt_with_empty_subtopics():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
     )
 
     prompt = topic_name_prompt(
@@ -350,6 +358,8 @@ def test_distinguish_topic_names_prompt_no_subtopics():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -396,6 +406,8 @@ def test_distinguish_topic_names_prompt_with_subtopics():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",        
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -441,6 +453,8 @@ def test_distinguish_topic_names_prompt_with_single_topic():
         },
         cluster_sentences=[["Example text for Topic B"]],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -487,6 +501,8 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",        
     )
 
     prompt = distinguish_topic_names_prompt(

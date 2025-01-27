@@ -122,6 +122,8 @@ def distinguish_topic_names_prompt(
     max_num_keyphrases: int = 32,
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
+    exemplar_start_delimiter: str = "    * \"",
+    exemplar_end_delimiter: str = "\"\n",
 ) -> str:
     """
     Construct a prompt for distinguishing between multiple topics.
@@ -154,6 +156,10 @@ def distinguish_topic_names_prompt(
         Maximum number of subtopics to include, by default 16.
     max_num_exemplars : int, optional
         Maximum number of exemplar texts to include, by default 128.
+    exemplar_start_delimiter : str, optional
+        Start delimiter for exemplar texts, by default "    * \""
+    exemplar_end_delimiter : str, optional
+        End delimiter for exemplar texts, by default "\"\n"
 
     Returns
     -------
@@ -212,6 +218,8 @@ def distinguish_topic_names_prompt(
             "misc": other_subtopics_per_topic,
         },
         cluster_sentences=exemplar_texts_per_topic,
+        exemplar_start_delimiter=exemplar_start_delimiter,
+        exemplar_end_delimiter=exemplar_end_delimiter,
         summary_kind=summary_kind,
     )
 
@@ -232,6 +240,8 @@ def topic_name_prompt(
     max_num_keyphrases: int = 32,
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
+    exemplar_start_delimiter: str = "    * \"",
+    exemplar_end_delimiter: str = "\"\n",
 ):
     """
     Construct a prompt for naming a topic.
@@ -264,6 +274,10 @@ def topic_name_prompt(
         Maximum number of subtopics to include, by default 16.
     max_num_exemplars : int, optional
         Maximum number of exemplar texts to include, by default 128.
+    exemplar_start_delimiter : str, optional
+        Start delimiter for exemplar texts, by default "    * \""
+    exemplar_end_delimiter : str, optional
+        End delimiter for exemplar texts, by default "\"\n"
 
     Returns
     -------
@@ -316,6 +330,8 @@ def topic_name_prompt(
         },
         cluster_sentences=exemplar_texts[topic_index][:max_num_exemplars],
         summary_kind=summary_kind,
+        exemplar_start_delimiter=exemplar_start_delimiter,
+        exemplar_end_delimiter=exemplar_end_delimiter,
     )
 
     return prompt
