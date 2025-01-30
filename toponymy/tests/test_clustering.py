@@ -4,6 +4,7 @@ from toponymy.clustering import (
     centroids_from_labels,
     create_cluster_layers,
     ToponymyClusterer,
+    KMeansClusterer,
     #    EVoCClusterer,
 )
 from toponymy.cluster_layer import ClusterLayerText
@@ -143,3 +144,35 @@ def test_clusterer_class():
             print(subclusters)
             print(cluster_tree)
         assert found
+
+
+def test_kmeans_clusterer_class():
+    clusterer = KMeansClusterer(
+        min_clusters=4,
+        base_n_clusters=64,
+    )
+
+    np.random.seed(0)
+    clusterable_data, clusterable_labels = make_blobs(
+        n_samples=1000,
+        n_features=2,
+        centers=5,
+        center_box=(0.0, 1.0),
+        cluster_std=0.05,
+        random_state=0,
+    )[0]
+    embedding_vectors = np.random.random_sample((1100, 256))
+
+    class_cluster_layers, class_tree = clusterer.fit_predict(
+        clusterable_vectors=clusterable_data,
+        embedding_vectors=embedding_vectors,
+        layer_class=ClusterLayerText,
+    )
+    assert len(class_cluster_layers) == 3
+    assert all(
+        adjusted_mutual_info_score(
+            class_cluster_layers[i].cluster_labels, clusterable_labels
+        )
+        > 0.5
+        for i in range(len(class_cluster_layers))
+    )

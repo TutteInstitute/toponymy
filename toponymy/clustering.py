@@ -13,6 +13,73 @@ from sklearn.neighbors import KDTree
 from typing import List, Tuple, Dict, Type, Any, Optional
 from toponymy.cluster_layer import ClusterLayer
 
+from sklearn.cluster import KMeans
+
+@numba.njit(cache=True)
+def binary_search_for_n_clusters(uncondensed_tree, approx_n_clusters, n_samples):
+    lower_bound_min_cluster_size = 2
+    upper_bound_min_cluster_size = n_samples // 2
+    mid_min_cluster_size = int(
+        round((lower_bound_min_cluster_size + upper_bound_min_cluster_size) / 2.0)
+    )
+    min_n_clusters = 0
+
+    upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
+    leaves = extract_leaves(upper_tree)
+    upper_n_clusters = len(leaves)
+
+    lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
+    leaves = extract_leaves(lower_tree)
+    lower_n_clusters = len(leaves)
+
+    while upper_bound_min_cluster_size - lower_bound_min_cluster_size > 1:
+        mid_min_cluster_size = int(
+            round((lower_bound_min_cluster_size + upper_bound_min_cluster_size) / 2.0)
+        )
+        if (
+            mid_min_cluster_size == lower_bound_min_cluster_size
+            or mid_min_cluster_size == upper_bound_min_cluster_size
+        ):
+            break
+        mid_tree = condense_tree(uncondensed_tree, mid_min_cluster_size)
+        leaves = extract_leaves(mid_tree)
+        mid_n_clusters = len(leaves)
+
+        if mid_n_clusters < approx_n_clusters:
+            upper_bound_min_cluster_size = mid_min_cluster_size
+            upper_n_clusters = mid_n_clusters
+        elif mid_n_clusters >= approx_n_clusters:
+            lower_bound_min_cluster_size = mid_min_cluster_size
+            lower_n_clusters = mid_n_clusters
+
+    if abs(lower_n_clusters - approx_n_clusters) < abs(
+        upper_n_clusters - approx_n_clusters
+    ):
+        lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
+        leaves = extract_leaves(lower_tree)
+        clusters = get_cluster_label_vector(lower_tree, leaves)
+        return leaves, clusters
+    elif abs(lower_n_clusters - approx_n_clusters) > abs(
+        upper_n_clusters - approx_n_clusters
+    ):
+        upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
+        leaves = extract_leaves(upper_tree)
+        clusters = get_cluster_label_vector(upper_tree, leaves)
+        return leaves, clusters
+    else:
+        lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
+        lower_leaves = extract_leaves(lower_tree)
+        lower_clusters = get_cluster_label_vector(lower_tree, lower_leaves)
+        upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
+        upper_leaves = extract_leaves(upper_tree)
+        upper_clusters = get_cluster_label_vector(upper_tree, upper_leaves)
+
+        if np.sum(lower_clusters >= 0) > np.sum(upper_clusters >= 0):
+            return lower_leaves, lower_clusters
+        else:
+            return upper_leaves, upper_clusters
+
+
 
 def build_raw_cluster_layers(
     data: np.ndarray,
@@ -20,6 +87,7 @@ def build_raw_cluster_layers(
     min_clusters: int = 3,
     min_samples: int = 5,
     base_min_cluster_size: int = 10,
+    base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
     verbose=False,
 ) -> List[np.ndarray]:
@@ -36,6 +104,9 @@ def build_raw_cluster_layers(
         The minimum number of samples in a cluster, by default 5.
     base_min_cluster_size : int, optional
         The initial minimum cluster size, by default 10.
+    base_n_clusters : Optional[int], optional
+        The initial number of clusters, by default None. If None, base_min_cluster_size is used.
+        If not None, this value will override base_min_cluster_size.
     next_cluster_size_quantile : float, optional
         The quantile to determine the next minimum cluster size, by default 0.8.
 
@@ -55,9 +126,15 @@ def build_raw_cluster_layers(
     )
     sorted_mst = edges[np.argsort(edges.T[2])]
     uncondensed_tree = mst_to_linkage_tree(sorted_mst)
-    new_tree = condense_tree(uncondensed_tree, base_min_cluster_size)
-    leaves = extract_leaves(new_tree)
-    clusters = get_cluster_label_vector(new_tree, leaves, 0.0, n_samples)
+    if base_n_clusters is not None:
+        leaves, clusters = binary_search_for_n_clusters(
+            uncondensed_tree, base_n_clusters, n_samples=n_samples
+        )
+    else:
+        new_tree = condense_tree(uncondensed_tree, base_min_cluster_size)
+        leaves = extract_leaves(new_tree)
+        clusters = get_cluster_label_vector(new_tree, leaves, 0.0, n_samples)
+
     n_clusters_in_layer = clusters.max() + 1
 
     while n_clusters_in_layer >= min_clusters:
@@ -165,6 +242,7 @@ def create_cluster_layers(
     min_clusters: int = 6,
     min_samples: int = 5,
     base_min_cluster_size: int = 10,
+    base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
     show_progress_bar: bool = False,
     verbose: bool = False,
@@ -187,6 +265,9 @@ def create_cluster_layers(
         The minimum number of samples for hdbscan style clustering (default is 5).
     base_min_cluster_size : int, optional
         The base minimum size of clusters for the most fine-grained cluster layer (default is 10).
+    base_n_clusters : Optional[int], optional
+        The base number of clusters for the most fine-grained cluster layer (default is None).
+        If None then base_min_cluster_size is used; otherwise this value will override base_min_cluster_size.
     next_cluster_size_quantile : float, optional
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
     show_progress_bar : bool, optional
@@ -206,6 +287,7 @@ def create_cluster_layers(
         min_clusters=min_clusters,
         min_samples=min_samples,
         base_min_cluster_size=base_min_cluster_size,
+        base_n_clusters=base_n_clusters,
         next_cluster_size_quantile=next_cluster_size_quantile,
         verbose=verbose,
     )
@@ -250,12 +332,40 @@ class Clusterer(ABC):
 
 
 class ToponymyClusterer(Clusterer):
+    """
+    A class for clustering data using a layered version of HDBSCAN.
+    
+    Parameters
+    ----------
+    min_clusters : int, optional
+        The minimum number of clusters to form in a layer (default is 6).
+    min_samples : int, optional
+        The minimum number of samples for hdbscan style clustering (default is 5).
+    base_min_cluster_size : int, optional
+        The base minimum size of clusters for the most fine-grained cluster layer (default is 10).
+    base_n_clusters : Optional[int], optional
+        The base number of clusters for the most fine-grained cluster layer (default is None).
+        If None then base_min_cluster_size is used; otherwise this value will override base_min_cluster_size.
+    next_cluster_size_quantile : float, optional
+        The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
+    verbose : bool, optional
+        Whether to show verbose output (default is False).
+
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of 
+        tuples representing child clusters.
+    """
 
     def __init__(
         self,
         min_clusters: int = 6,
         min_samples: int = 5,
-        base_min_cluster_size: int = 10,
+        base_min_cluster_size: Optional[int] = 10,
+        base_n_clusters: Optional[int] = None,
         next_cluster_size_quantile: float = 0.85,
         verbose=False,
     ):
@@ -263,8 +373,12 @@ class ToponymyClusterer(Clusterer):
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
+        self.base_n_clusters = base_n_clusters,
         self.next_cluster_size_quantile = next_cluster_size_quantile
         self.verbose = verbose
+
+        if self.base_min_cluster_size is None and self.base_n_clusters is None:
+            raise ValueError("Either base_min_cluster_size or base_n_clusters must be provided.")
 
     def fit(
         self,
@@ -305,6 +419,67 @@ class ToponymyClusterer(Clusterer):
         )
         return self.cluster_layers_, self.cluster_tree_
 
+
+
+class KMeansClusterer(Clusterer):
+    """
+    A class for clustering data in layers using KMeans. This class is mostly to demonstrate how one might write
+    an alternative Clusterer to the ToponymyClusterer (which uses a variation of HDBCSCAN). We recommend using the
+    ToponymyClusterer in practice.
+    
+    Parameters
+    ----------
+    min_clusters : int, optional
+        The minimum number of clusters to form in a layer (default is 6).
+    base_n_clusters : int, optional
+        The initial number of clusters for the most fine-grained cluster layer (default is 1024).
+        
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of
+        tuples representing child clusters.
+    """
+
+    def __init__(self, min_clusters: int = 6, base_n_clusters: int = 1024):
+        super().__init__()
+        self.min_clusters = min_clusters
+        self.base_n_clusters = base_n_clusters
+
+    def fit(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer],
+    ):
+        n_clusters = self.base_n_clusters
+        cluster_label_layers = []
+
+        while n_clusters >= self.min_clusters:
+            kmeans = KMeans(n_clusters=n_clusters)
+            cluster_labels = kmeans.fit_predict(clusterable_vectors)
+            cluster_label_layers.append(cluster_labels)
+            n_clusters //= 4
+
+        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
+        self.cluster_layers_ = [
+            layer_class(
+                labels, centroids_from_labels(labels, embedding_vectors)
+            )
+            for labels in cluster_label_layers
+        ]
+        return self
+
+    def fit_predict(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer],
+    ):
+        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
+        return self.cluster_layers_, self.cluster_tree_
 
 # try:
 #     import evoc
