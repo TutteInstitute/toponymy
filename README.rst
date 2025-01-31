@@ -41,9 +41,9 @@ a representation.  This can be very expensive without a GPU so we recommend stor
 needed.  For faster encoding change device to: "cuda", "mps", "npu" or "cpu" depending on hardware availability.  Once we 
 generate document vectors we will need to construct a low dimensional representation.  Here we do that via our UMAP library.
 
-.. code-block::python
+.. code-block:: python
 
-    data = pd.read_csv('doc/ai_papers.zip')
+    data = pd.read_csv("hf://datasets/CShorten/ML-ArXiv-Papers/ML-Arxiv-Papers.csv")
     text =data.title+" "+data.abstract
     embedding_model = sentence_transformers.SentenceTransformer("all-mpnet-base-v2", device="cpu") 
     document_vectors = embedding_model.encode(text, show_progress_bar=True)
@@ -54,7 +54,7 @@ Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via ser
 Huggingface and LlamaCpp. Here we show an example using Cohere.  The following code will generate a topic naming
 for the documents in the data set using the embedding_model, document_vectors and document_map created above.
 
-.. code-block::python
+.. code-block:: python
 
     from toponymy import Toponymy, ToponymyClusterer, ClusterLayerText, KeyphraseBuilder
     from toponymy.llm_wrappers import Cohere
@@ -67,7 +67,7 @@ for the documents in the data set using the embedding_model, document_vectors an
         layer_class=ClusterLayerText,
         clusterer=ToponymyClusterer(),
         keyphrase_builder=KeyphraseBuilder(),
-        object_description="papers titles and abstracts",
+        object_description="paper titles and abstracts",
         corpus_description="AI papers",
     )
     topic_model.fit(text, document_vectors, document_map)
