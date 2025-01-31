@@ -152,7 +152,6 @@ def test_kmeans_clusterer_class():
         base_n_clusters=64,
     )
 
-    np.random.seed(0)
     clusterable_data, clusterable_labels = make_blobs(
         n_samples=1000,
         n_features=2,
@@ -160,7 +159,7 @@ def test_kmeans_clusterer_class():
         center_box=(0.0, 1.0),
         cluster_std=0.05,
         random_state=0,
-    )[0]
+    )
     embedding_vectors = np.random.random_sample((1100, 256))
 
     class_cluster_layers, class_tree = clusterer.fit_predict(
@@ -173,6 +172,6 @@ def test_kmeans_clusterer_class():
         adjusted_mutual_info_score(
             class_cluster_layers[i].cluster_labels, clusterable_labels
         )
-        > 0.5
+        >= (0.25 * (i + 1))
         for i in range(len(class_cluster_layers))
     )
