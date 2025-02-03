@@ -52,27 +52,28 @@ def binary_search_for_n_clusters(uncondensed_tree, approx_n_clusters, n_samples)
             lower_bound_min_cluster_size = mid_min_cluster_size
             lower_n_clusters = mid_n_clusters
 
+    print(lower_bound_min_cluster_size, mid_min_cluster_size, upper_bound_min_cluster_size)
     if abs(lower_n_clusters - approx_n_clusters) < abs(
         upper_n_clusters - approx_n_clusters
     ):
         lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
         leaves = extract_leaves(lower_tree)
-        clusters = get_cluster_label_vector(lower_tree, leaves)
+        clusters = get_cluster_label_vector(lower_tree, leaves, 0.0, n_samples)
         return leaves, clusters
     elif abs(lower_n_clusters - approx_n_clusters) > abs(
         upper_n_clusters - approx_n_clusters
     ):
         upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
         leaves = extract_leaves(upper_tree)
-        clusters = get_cluster_label_vector(upper_tree, leaves)
+        clusters = get_cluster_label_vector(upper_tree, leaves, 0.0, n_samples)
         return leaves, clusters
     else:
         lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
         lower_leaves = extract_leaves(lower_tree)
-        lower_clusters = get_cluster_label_vector(lower_tree, lower_leaves)
+        lower_clusters = get_cluster_label_vector(lower_tree, lower_leaves, 0.0, n_samples)
         upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
         upper_leaves = extract_leaves(upper_tree)
-        upper_clusters = get_cluster_label_vector(upper_tree, upper_leaves)
+        upper_clusters = get_cluster_label_vector(upper_tree, upper_leaves, 0.0, n_samples)
 
         if np.sum(lower_clusters >= 0) > np.sum(upper_clusters >= 0):
             return lower_leaves, lower_clusters
@@ -130,6 +131,8 @@ def build_raw_cluster_layers(
         leaves, clusters = binary_search_for_n_clusters(
             uncondensed_tree, base_n_clusters, n_samples=n_samples
         )
+        cluster_sizes = np.bincount(clusters[clusters >= 0])
+        min_cluster_size = np.min(cluster_sizes)
     else:
         new_tree = condense_tree(uncondensed_tree, base_min_cluster_size)
         leaves = extract_leaves(new_tree)
@@ -373,7 +376,7 @@ class ToponymyClusterer(Clusterer):
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
-        self.base_n_clusters = base_n_clusters,
+        self.base_n_clusters = base_n_clusters
         self.next_cluster_size_quantile = next_cluster_size_quantile
         self.verbose = verbose
 
@@ -395,6 +398,7 @@ class ToponymyClusterer(Clusterer):
             min_clusters=self.min_clusters,
             min_samples=self.min_samples,
             base_min_cluster_size=self.base_min_cluster_size,
+            base_n_clusters=self.base_n_clusters,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
             show_progress_bar=show_progress_bar,
             verbose=self.verbose,
