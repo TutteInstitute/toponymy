@@ -52,7 +52,6 @@ def binary_search_for_n_clusters(uncondensed_tree, approx_n_clusters, n_samples)
             lower_bound_min_cluster_size = mid_min_cluster_size
             lower_n_clusters = mid_n_clusters
 
-    print(lower_bound_min_cluster_size, mid_min_cluster_size, upper_bound_min_cluster_size)
     if abs(lower_n_clusters - approx_n_clusters) < abs(
         upper_n_clusters - approx_n_clusters
     ):
