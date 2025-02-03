@@ -123,6 +123,7 @@ try:
                     max_new_tokens=64,
                     temperature=temperature,
                     do_sample=True,
+                    pad_token_id=self.llm.tokenizer.eos_token_id,
                 )
                 topic_name_info_text = topic_name_info_raw[0]["generated_text"]
                 topic_name_info = re.findall(
@@ -149,6 +150,7 @@ try:
                 max_new_tokens=1024,
                 temperature=temperature,
                 do_sample=True,
+                pad_token_id=self.llm.tokenizer.eos_token_id,
             )
             topic_name_info_text = topic_name_info_raw[0]["generated_text"]
             topic_name_info = re.findall(
