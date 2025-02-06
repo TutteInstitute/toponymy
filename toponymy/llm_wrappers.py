@@ -6,11 +6,12 @@ import transformers
 
 from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 import re
 import os
+import httpx
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -187,10 +188,10 @@ try:
 
     class Cohere(LLMWrapper):
 
-        def __init__(self, API_KEY: str, model: str = "command-r-08-2024", base_url: str = None):
+        def __init__(self, API_KEY: str, model: str = "command-r-08-2024", base_url: str = None, httpx_client: Optional[httpx.Client] = None):
             if base_url is None:
                 base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
-            self.llm = cohere.Client(api_key=API_KEY, base_url=base_url)
+            self.llm = cohere.Client(api_key=API_KEY, base_url=base_url, httpx_client=httpx_client)
 
             try:
                 self.llm.models.get(model)
