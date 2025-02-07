@@ -142,7 +142,6 @@ def test_central_keyphrases_result_sizes(n_keyphrases, diversify_alpha):
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
-        CENTROID_VECTORS,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -159,28 +158,30 @@ def test_central_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
-        CENTROID_VECTORS,
         diversify_alpha=0.0,
         n_keyphrases=10,
     )
     for cluster_num, keyphrases in enumerate(central_results):
+        phrases_indices_in_cluster = np.unique(MATRIX[CLUSTER_LAYER == cluster_num].indices)
+        keyphrase_centroid = np.mean(
+            KEYPHRASE_VECTORS[phrases_indices_in_cluster], axis=0
+        )
         assert keyphrases == sorted(
             keyphrases,
             key=lambda x: 1.0 - (
-                KEYPHRASE_VECTORS[KEYPHRASES.index(x)] @ CENTROID_VECTORS[cluster_num]
+                KEYPHRASE_VECTORS[KEYPHRASES.index(x)] @ keyphrase_centroid
             ),
         )
-        phrases_indices_in_cluster = np.unique(MATRIX[CLUSTER_LAYER == cluster_num].indices)
         worst_keyphrase_match_similarity = min(
             [
                 KEYPHRASE_VECTORS[KEYPHRASES.index(x)]
-                @ CENTROID_VECTORS[cluster_num]
+                @ keyphrase_centroid
                 for x in keyphrases
             ]
         )
         assert worst_keyphrase_match_similarity >= max(
             [
-                KEYPHRASE_VECTORS[i] @ CENTROID_VECTORS[cluster_num]
+                KEYPHRASE_VECTORS[i] @ keyphrase_centroid
                 for i in phrases_indices_in_cluster
                 if KEYPHRASES[i] not in keyphrases
             ]
@@ -195,7 +196,6 @@ def test_bm25_keyphrases_result_sizes(n_keyphrases, diversify_alpha):
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
-        CENTROID_VECTORS,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -210,7 +210,6 @@ def test_bm25_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
-        CENTROID_VECTORS,
         diversify_alpha=0.0,
     )
     bm25_objects = [
@@ -247,7 +246,6 @@ def test_information_weighted_keyphrases_result_sizes(n_keyphrases, diversify_al
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
-        CENTROID_VECTORS,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -261,7 +259,6 @@ def test_information_weighted_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
-        CENTROID_VECTORS,
         diversify_alpha=0.0,
     )
     sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(CLUSTER_LAYER, MATRIX)

@@ -52,6 +52,7 @@ def test_toponymy():
     )
     model.fit(ALL_SENTENCES, OBJECT_VECTORS, CLUSTERABLE_VECTORS)
     embedded_topic_names = EMBEDDER.encode(model.topic_names_[1])
+    print(model.topic_names_[1])
     distance_matrix = pairwise_distances(
         embedded_topic_names,
         EMBEDDER.encode([topic["topic"] for topic in SUBTOPIC_OBJECTS]),
