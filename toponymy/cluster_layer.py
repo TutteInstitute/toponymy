@@ -112,7 +112,7 @@ class ClusterLayer(ABC):
     ) -> List[List[str]]:
         pass
 
-    def _embed_topic_names(
+    def embed_topic_names(
         self,
         embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
@@ -214,7 +214,7 @@ class ClusterLayer(ABC):
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[SentenceTransformer] = None,
     ):
-        self._embed_topic_names(embedding_model)
+        self.embed_topic_names(embedding_model)
         self._make_disambiguation_prompts(
             detail_level=detail_level,
             all_topic_names=all_topic_names,
