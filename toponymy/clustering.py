@@ -16,7 +16,7 @@ from toponymy.cluster_layer import ClusterLayer
 from sklearn.cluster import KMeans
 
 @numba.njit(cache=True)
-def binary_search_for_n_clusters(uncondensed_tree, approx_n_clusters, n_samples):
+def binary_search_for_n_clusters(uncondensed_tree, approx_n_clusters, n_samples): # pragma: no cover
     lower_bound_min_cluster_size = 2
     upper_bound_min_cluster_size = n_samples // 2
     mid_min_cluster_size = int(
@@ -221,7 +221,7 @@ def build_cluster_tree(
 @numba.njit()
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
-) -> np.ndarray:
+) -> np.ndarray: # pragma: no cover
     result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
     counts = np.zeros(cluster_labels.max() + 1)
     for i in range(cluster_labels.shape[0]):
