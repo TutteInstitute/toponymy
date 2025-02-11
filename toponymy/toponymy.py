@@ -179,10 +179,13 @@ class Toponymy:
                 self.keyphrase_vectors_,
             )
             if i > 0:
+                if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
+                    self.cluster_layers_[0].embed_topic_names(self.embedding_model)
+                    
                 layer.make_subtopics(
                     self.topic_names_[0],
                     self.cluster_layers_[0].cluster_labels,
-                    self.cluster_layers_[0].centroid_vectors,
+                    self.cluster_layers_[0].topic_name_embeddings,
                     self.embedding_model,
                 )
 

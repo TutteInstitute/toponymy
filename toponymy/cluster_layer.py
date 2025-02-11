@@ -112,7 +112,7 @@ class ClusterLayer(ABC):
     ) -> List[List[str]]:
         pass
 
-    def _embed_topic_names(
+    def embed_topic_names(
         self,
         embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
@@ -214,7 +214,7 @@ class ClusterLayer(ABC):
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[SentenceTransformer] = None,
     ):
-        self._embed_topic_names(embedding_model)
+        self.embed_topic_names(embedding_model)
         self._make_disambiguation_prompts(
             detail_level=detail_level,
             all_topic_names=all_topic_names,
@@ -383,7 +383,6 @@ class ClusterLayerText(ClusterLayer):
             object_x_keyphrase_matrix,
             keyphrase_list,
             keyphrase_vectors,
-            self.centroid_vectors,
             diversify_alpha=self.keyphrase_diversify_alpha,
             n_keyphrases=self.n_keyphrases,
             show_progress_bar=self.show_progress_bar,
@@ -402,7 +401,6 @@ class ClusterLayerText(ClusterLayer):
             cluster_label_vector=self.cluster_labels,
             subtopics=topic_list,
             subtopic_label_vector=topic_labels,
-            centroid_vectors=self.centroid_vectors,
             subtopic_vectors=topic_vectors,
             diversify_alpha=self.subtopic_diversify_alpha,
             n_subtopics=self.n_subtopics,

@@ -22,7 +22,6 @@ def subtopic_embeddings(
 def central_subtopics(
     cluster_label_vector: np.ndarray,
     subtopics: List[str],
-    centroid_vectors: np.ndarray,
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
     embedding_model: Optional[SentenceTransformer] = None,
@@ -50,7 +49,6 @@ def central_subtopics(
             cluster_label_vector == cluster_num
         ]
         cluster_subtopic_indices = np.unique(subtopic_label_vector_for_cluster)
-        cluster_centroid = centroid_vectors[cluster_num]
         candidate_subtopic_centroids = np.asarray(
             [
                 subtopic_vectors[subtopic_index]
@@ -65,6 +63,7 @@ def central_subtopics(
                 if subtopic_index != -1
             ]
         )
+        cluster_centroid = np.mean(candidate_subtopic_centroids, axis=0)
         candidate_subtopic_indices = np.argsort(
             np.squeeze(
                 pairwise_distances(
@@ -96,7 +95,6 @@ def central_subtopics(
 def central_subtopics_from_all_subtopics(
     cluster_label_vector: np.ndarray,
     subtopics: List[str],
-    centroid_vectors: np.ndarray,
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
     embedding_model: Optional[SentenceTransformer] = None,
@@ -117,9 +115,15 @@ def central_subtopics_from_all_subtopics(
         desc="Selecting subtopics by topic name",
         disable=not show_progress_bar,
     ):
+        subtopics_in_cluster = np.unique(
+            subtopic_label_vector[cluster_label_vector == cluster_num]
+        )
+        cluster_centroid = np.mean(
+            subtopic_vectors[subtopics_in_cluster], axis=0
+        )
         # Select the central subtopics as the closest samples to the centroid
         base_distances = pairwise_distances(
-            centroid_vectors[cluster_num].reshape(1, -1),
+            cluster_centroid.reshape(1, -1),
             subtopic_vectors,
             metric="cosine",
         )
@@ -128,7 +132,7 @@ def central_subtopics_from_all_subtopics(
         chosen_subtopics = [subtopics[x] for x in base_order[: n_subtopics**2]]
         chosen_vectors = subtopic_vectors[base_order[: n_subtopics**2]]
         chosen_indices = diversify(
-            centroid_vectors[cluster_num],
+            cluster_centroid,
             chosen_vectors,
             n_subtopics,
             max_alpha=diversify_alpha,
@@ -143,7 +147,6 @@ def central_subtopics_from_all_subtopics(
 def information_weighted_subtopics(
     cluster_label_vector: np.ndarray,
     subtopics: List[str],
-    centroid_vectors: np.ndarray,
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
     embedding_model: Optional[SentenceTransformer] = None,
@@ -203,6 +206,8 @@ def information_weighted_subtopics(
         candidate_scores = scores[meta_cluster_label_vector == cluster_num]
         candidate_vectors = subtopic_vectors[meta_cluster_label_vector == cluster_num]
 
+        cluster_centroid = np.average(candidate_vectors, weights=candidate_scores, axis=0)
+
         if sum(candidate_scores) == 0:
             result.append(["No notable keyphrases"])
             continue
@@ -213,7 +218,7 @@ def information_weighted_subtopics(
         chosen_subtopics = [candidate_subtopics[j] for j in chosen_indices]
         chosen_vectors = candidate_vectors[chosen_indices]
         chosen_indices = diversify(
-            centroid_vectors[cluster_num],
+            cluster_centroid,
             chosen_vectors,
             n_subtopics,
             max_alpha=diversify_alpha,
