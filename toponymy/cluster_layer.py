@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Callable, Any, Optional
+from typing import List, Callable, Any, Optional, Tuple
 import scipy.sparse
 import numpy as np
 import pandas as pd
@@ -414,8 +414,8 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-    ) -> List[List[str]]:
-        self.exemplars = diverse_exemplars(
+    ) -> Tuple[List[List[str]], List[List[int]]]:
+        self.exemplar, self.exemplar_indices = diverse_exemplars(
             cluster_label_vector=self.cluster_labels,
             objects=object_list,
             object_vectors=object_vectors,
@@ -426,7 +426,7 @@ class ClusterLayerText(ClusterLayer):
             show_progress_bar=self.show_progress_bar,
         )
 
-        return self.exemplars
+        return self.exemplars, self.exemplar_indices
 
     def make_topic_name_vector(self) -> np.ndarray:
         self.topic_name_vector = np.full(self.cluster_labels.shape[0], "Unlabelled", dtype=object)

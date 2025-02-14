@@ -110,6 +110,7 @@ class Toponymy:
         self.exemplar_delimiters = exemplar_delimiters
         self.show_progress_bars = show_progress_bars
 
+
     def fit(
         self,
         objects: List[Any],
@@ -146,12 +147,6 @@ class Toponymy:
             exemplar_delimiters=self.exemplar_delimiters,
         )
 
-        # Build keyphrase information
-        self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
-            self.keyphrase_builder.fit_transform(objects)
-        )
-        self.keyphrase_vectors_ = self.embedding_model.encode(self.keyphrase_list_, show_progress_bar=self.show_progress_bars, )
-
         # Initialize other data structures
         self.topic_names_ = [[]] * len(self.cluster_layers_)
         self.topic_name_vectors_ = [np.array([])] * len(self.cluster_layers_)
@@ -159,6 +154,42 @@ class Toponymy:
             self.lowest_detail_level,
             self.highest_detail_level,
             len(self.cluster_layers_),
+        )
+
+        # Get exemplars for layer 0 first and build keyphrase matrix
+        if hasattr(self.cluster_layers_[0], 'object_to_text_function') and \
+        self.cluster_layers_[0].object_to_text_function is not None:
+            # Non-text objects: use exemplars to build keyphrase matrix
+            exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts_with_indices(
+                objects,
+                embedding_vectors,
+            )
+            
+            # Create aligned text list
+            aligned_texts = [''] * len(objects)  # Empty strings for non-exemplars
+            for cluster_idx, cluster_exemplars in enumerate(exemplars):
+                for exemplar_idx, exemplar_text in zip(exemplar_indices[cluster_idx], cluster_exemplars):
+                    aligned_texts[exemplar_idx] = exemplar_text
+                    
+            # Build keyphrase matrix from aligned texts
+            self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
+                self.keyphrase_builder.fit_transform(aligned_texts)
+            )
+        else:
+            # Text objects: build keyphrase matrix directly from objects
+            self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
+                self.keyphrase_builder.fit_transform(objects)
+            )
+            # Still need to generate exemplars for layer 0
+            self.cluster_layers_[0].make_exemplar_texts(
+                objects,
+                embedding_vectors,
+            )
+        
+        # Generate keyphrase vectors
+        self.keyphrase_vectors_ = self.embedding_model.encode(
+            self.keyphrase_list_, 
+            show_progress_bar=self.show_progress_bars,
         )
 
         # Iterate through the layers and build the topic names
@@ -169,15 +200,18 @@ class Toponymy:
             total=len(self.cluster_layers_),
             unit="layer",
         ):
-            layer.make_exemplar_texts(
-                objects,
-                embedding_vectors,
-            )
+            if i > 0:  # Skip layer 0 exemplars as we already did them
+                layer.make_exemplar_texts(
+                    objects,
+                    embedding_vectors,
+                )
+                
             layer.make_keyphrases(
                 self.keyphrase_list_,
                 self.object_x_keyphrase_matrix_,
                 self.keyphrase_vectors_,
             )
+            
             if i > 0:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
                     self.cluster_layers_[0].embed_topic_names(self.embedding_model)
