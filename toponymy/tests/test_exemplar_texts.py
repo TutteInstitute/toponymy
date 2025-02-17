@@ -37,7 +37,7 @@ def test_random_exemplar(n_exemplars):
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
 @pytest.mark.parametrize("method", ['centroid','random'])
 def test_diverse_exemplar_result_sizes(n_exemplars: Literal[3] | Literal[5], diversify_alpha: float, method: str):
-    exemplar_results = diverse_exemplars(
+    exemplar_results, exemplar_indices = diverse_exemplars(
         cluster_label_vector = CLUSTER_LAYER,
         objects = ALL_TOPIC_OBJECTS,
         object_vectors = TOPIC_VECTORS,
@@ -58,7 +58,7 @@ def test_diverse_exemplar_result_sizes(n_exemplars: Literal[3] | Literal[5], div
 def test_empty_cluster_diverse(method: str):
     new_clustering = CLUSTER_LAYER
     new_clustering[new_clustering==0] = 9
-    exemplar_results = diverse_exemplars(
+    exemplar_results, exemplar_indices = diverse_exemplars(
         cluster_label_vector = new_clustering,
         objects = ALL_TOPIC_OBJECTS,
         object_vectors = TOPIC_VECTORS,
@@ -70,7 +70,7 @@ def test_empty_cluster_diverse(method: str):
 def test_empty_cluster_random():
     new_clustering = CLUSTER_LAYER
     new_clustering[new_clustering==0] = 9
-    exemplar_results = random_exemplars(
+    exemplar_results, exemplar_indices = random_exemplars(
         cluster_label_vector = new_clustering,
         objects = ALL_TOPIC_OBJECTS,
     )
