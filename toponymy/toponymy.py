@@ -138,9 +138,6 @@ class Toponymy:
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
 
-        # Keyphhrase text is everything by default; this can be changed if we don't start with text for objects
-        self.keyphrase_text_ = objects
-
         # Build our layers and cluster tree
         self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
             clusterable_vectors,
