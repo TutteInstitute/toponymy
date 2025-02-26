@@ -2,6 +2,7 @@ black
 isort
 pylint
 pytest
+umap-learn
 anthropic
 cohere
 llama-cpp-python
