@@ -415,7 +415,7 @@ class ClusterLayerText(ClusterLayer):
         object_list: List[str],
         object_vectors: np.ndarray,
     ) -> Tuple[List[List[str]], List[List[int]]]:
-        self.exemplar, self.exemplar_indices = diverse_exemplars(
+        self.exemplars, self.exemplar_indices = diverse_exemplars(
             cluster_label_vector=self.cluster_labels,
             objects=object_list,
             object_vectors=object_vectors,

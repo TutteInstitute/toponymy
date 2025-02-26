@@ -72,7 +72,7 @@ def random_exemplars(
         
         # Map chosen indices back to original object list indices
         chosen_original_indices = [original_indices[i] for i in exemplar_order]
-        
+
         results.append(chosen_exemplars)
         indices.append(chosen_original_indices)
         
