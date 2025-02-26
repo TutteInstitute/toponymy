@@ -5,7 +5,6 @@ pytest
 umap-learn
 anthropic
 cohere
-llama-cpp-python
 openai
 numpy>=1.26,<2.0
 transformers

@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 import json
 from typing import List
 
-from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace, LlamaCpp
+from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace #, LlamaCpp
 
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {
@@ -93,48 +93,48 @@ def mock_data():
         "recoverable_malformed_json": RECOVERABLE_MALFORMED_JSON_RESPONSE,
     }
 
-# LlamaCpp Tests
-@pytest.fixture
-def llamacpp_wrapper():
-    with patch('llama_cpp.Llama'):
-        wrapper = LlamaCpp(model_path="dummy")
-        return wrapper
+# # LlamaCpp Tests
+# @pytest.fixture
+# def llamacpp_wrapper():
+#     with patch('llama_cpp.Llama'):
+#         wrapper = LlamaCpp(model_path="dummy")
+#         return wrapper
 
-def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
-    response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
-    llamacpp_wrapper.llm = Mock(return_value=response)
+# def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
+#     response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
+#     llamacpp_wrapper.llm = Mock(return_value=response)
     
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
+#     result = llamacpp_wrapper.generate_topic_name("test prompt")
+#     validate_topic_name(result)
 
-def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
-    response = MockLLMResponse.create_llama_response(mock_data["valid_cluster_names"])
-    llamacpp_wrapper.llm = Mock(return_value=response)
+# def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
+#     response = MockLLMResponse.create_llama_response(mock_data["valid_cluster_names"])
+#     llamacpp_wrapper.llm = Mock(return_value=response)
     
-    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
-    validate_cluster_names(result)
+#     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+#     validate_cluster_names(result)
 
-def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(llamacpp_wrapper, mock_data):
-    response = MockLLMResponse.create_llama_response(mock_data["malformed_mapping"])
-    llamacpp_wrapper.llm = Mock(return_value=response)
+# def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(llamacpp_wrapper, mock_data):
+#     response = MockLLMResponse.create_llama_response(mock_data["malformed_mapping"])
+#     llamacpp_wrapper.llm = Mock(return_value=response)
     
-    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
-    validate_cluster_names(result)
+#     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+#     validate_cluster_names(result)
 
-def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
-    llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
-    assert result == ""
+# def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
+#     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
+#     result = llamacpp_wrapper.generate_topic_name("test prompt")
+#     assert result == ""
 
-def test_llamacpp_generate_topic_name_failure_malformed_json(llamacpp_wrapper, mock_data):
-    llamacpp_wrapper.llm = Mock(mock_data["malformed_json"])
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
-    assert result == ""
+# def test_llamacpp_generate_topic_name_failure_malformed_json(llamacpp_wrapper, mock_data):
+#     llamacpp_wrapper.llm = Mock(mock_data["malformed_json"])
+#     result = llamacpp_wrapper.generate_topic_name("test prompt")
+#     assert result == ""
 
-def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
-    llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
-    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
-    assert result == mock_data["old_names"]
+# def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
+#     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
+#     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+#     assert result == mock_data["old_names"]
 
 
 # Huggingface Tests

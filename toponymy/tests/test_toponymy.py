@@ -60,9 +60,9 @@ def test_toponymy():
     )
     row_matching, col_matching = linear_sum_assignment(distance_matrix)
     assert distance_matrix[row_matching, col_matching].sum() < 2.66
-    assert all(
+    assert np.all(
         pd.Series(model.cluster_layers_[1].cluster_labels)
-        .map(dict(np.vstack([col_matching, np.arange(5)]).T))
+        .map(dict(np.vstack([np.arange(5), col_matching]).T))
         .values
         == CLUSTER_LABEL_VECTOR
     )
