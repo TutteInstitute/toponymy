@@ -27,7 +27,7 @@ def test_json_load():
 def test_random_exemplar(n_exemplars):
     #ALL_TOPIC_OBJECTS -> paragraphs = np.asarray(sum([x['paragraphs'] for x in TOPIC_OBJECTS], []))  
     #CLUSTER_LAYER -> cluster_label_vector = np.concatenate([[i]*len(x['paragraphs']) for i,x in enumerate(TOPIC_OBJECTS)])  
-    exemplars = random_exemplars(CLUSTER_LAYER, ALL_TOPIC_OBJECTS, n_exemplars=n_exemplars)
+    exemplars, indices = random_exemplars(CLUSTER_LAYER, ALL_TOPIC_OBJECTS, n_exemplars=n_exemplars)
     assert len(exemplars)==CLUSTER_LAYER.max()+1
     
     for i in range(CLUSTER_LAYER.max()+1):

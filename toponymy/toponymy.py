@@ -160,7 +160,7 @@ class Toponymy:
         if hasattr(self.cluster_layers_[0], 'object_to_text_function') and \
         self.cluster_layers_[0].object_to_text_function is not None:
             # Non-text objects: use exemplars to build keyphrase matrix
-            exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts_with_indices(
+            exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts(
                 objects,
                 embedding_vectors,
             )
