@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Callable, Any, Optional
+from typing import List, Callable, Any, Optional, Tuple
 import scipy.sparse
 import numpy as np
 import pandas as pd
@@ -112,7 +112,7 @@ class ClusterLayer(ABC):
     ) -> List[List[str]]:
         pass
 
-    def _embed_topic_names(
+    def embed_topic_names(
         self,
         embedding_model: Optional[SentenceTransformer] = None,
     ) -> None:
@@ -214,7 +214,7 @@ class ClusterLayer(ABC):
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[SentenceTransformer] = None,
     ):
-        self._embed_topic_names(embedding_model)
+        self.embed_topic_names(embedding_model)
         self._make_disambiguation_prompts(
             detail_level=detail_level,
             all_topic_names=all_topic_names,
@@ -383,7 +383,6 @@ class ClusterLayerText(ClusterLayer):
             object_x_keyphrase_matrix,
             keyphrase_list,
             keyphrase_vectors,
-            self.centroid_vectors,
             diversify_alpha=self.keyphrase_diversify_alpha,
             n_keyphrases=self.n_keyphrases,
             show_progress_bar=self.show_progress_bar,
@@ -402,7 +401,6 @@ class ClusterLayerText(ClusterLayer):
             cluster_label_vector=self.cluster_labels,
             subtopics=topic_list,
             subtopic_label_vector=topic_labels,
-            centroid_vectors=self.centroid_vectors,
             subtopic_vectors=topic_vectors,
             diversify_alpha=self.subtopic_diversify_alpha,
             n_subtopics=self.n_subtopics,
@@ -416,8 +414,8 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-    ) -> List[List[str]]:
-        self.exemplars = diverse_exemplars(
+    ) -> Tuple[List[List[str]], List[List[int]]]:
+        self.exemplar, self.exemplar_indices = diverse_exemplars(
             cluster_label_vector=self.cluster_labels,
             objects=object_list,
             object_vectors=object_vectors,
@@ -428,7 +426,7 @@ class ClusterLayerText(ClusterLayer):
             show_progress_bar=self.show_progress_bar,
         )
 
-        return self.exemplars
+        return self.exemplars, self.exemplar_indices
 
     def make_topic_name_vector(self) -> np.ndarray:
         self.topic_name_vector = np.full(self.cluster_labels.shape[0], "Unlabelled", dtype=object)

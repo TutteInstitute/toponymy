@@ -227,7 +227,7 @@ def build_cluster_tree(
 @numba.njit()
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
-) -> np.ndarray:  # pragma: no cover
+) -> np.ndarray:  # pragma: no cover # pragma: no cover
     result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
     counts = np.zeros(cluster_labels.max() + 1)
     for i in range(cluster_labels.shape[0]):

@@ -381,7 +381,7 @@ class KeyphraseBuilder:
 
 
 @numba.njit()
-def longest_keyphrases(candidate_keyphrases):
+def longest_keyphrases(candidate_keyphrases): # pragma: no cover
     """
     Builds a list of keyphrases that are not substrings of other keyphrases.
     """
@@ -421,7 +421,6 @@ def information_weighted_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    centroid_vectors: np.ndarray,
     n_keyphrases: int = 16,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
@@ -440,8 +439,6 @@ def information_weighted_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     prior_strength : float, optional
@@ -490,6 +487,17 @@ def information_weighted_keyphrases(
             result.append(["No notable keyphrases"])
             continue
 
+        keyphrases_present_indices = np.where(contrastive_scores > 0)[0]
+        keyphrase_weights = contrastive_scores[keyphrases_present_indices]
+        keyphrases_present = [
+            keyphrase_list[column_map[j]] for j in keyphrases_present_indices
+        ]
+        centroid_vector = np.average(
+            [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
+            weights=keyphrase_weights,
+            axis=0,
+        )
+
         chosen_indices = np.argsort(contrastive_scores)[-max((n_keyphrases * 4), 16) :]
 
         # Map the indices back to the original vocabulary
@@ -503,7 +511,7 @@ def information_weighted_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num],
+            centroid_vector,
             chosen_vectors,
             n_keyphrases,
             max_alpha=diversify_alpha,
@@ -520,7 +528,6 @@ def central_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    centroid_vectors: np.ndarray,
     n_keyphrases: int = 16,
     diversify_alpha: float = 1.0,
     show_progress_bar: bool = False,
@@ -538,8 +545,6 @@ def central_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     diversify_alpha : float, optional
@@ -585,10 +590,11 @@ def central_keyphrases(
         base_vectors = np.asarray(
             [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
         )
+        centroid = np.average(base_vectors, axis=0)
 
         # Select the central keyphrases as the closest samples to the centroid
         base_distances = pairwise_distances(
-            centroid_vectors[cluster_num].reshape(1, -1), base_vectors, metric="cosine"
+            centroid.reshape(1, -1), base_vectors, metric="cosine"
         )
         base_order = np.argsort(base_distances.flatten())
 
@@ -600,7 +606,7 @@ def central_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num],
+            centroid,
             chosen_vectors,
             n_keyphrases,
             max_alpha=diversify_alpha,
@@ -617,7 +623,6 @@ def bm25_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    centroid_vectors: np.ndarray,
     n_keyphrases: int = 16,
     k1: float = 1.5,
     b: float = 0.75,
@@ -636,8 +641,6 @@ def bm25_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     k1 : float, optional
@@ -708,6 +711,17 @@ def bm25_keyphrases(
             result.append(["No notable keyphrases"])
             continue
 
+        keyphrases_present_indices = np.where(contrastive_scores > 0)[0]
+        keyphrase_weights = contrastive_scores[keyphrases_present_indices]
+        keyphrases_present = [
+            keyphrase_list[column_map[j]] for j in keyphrases_present_indices
+        ]
+        centroid_vector = np.average(
+            [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
+            weights=keyphrase_weights,
+            axis=0,
+        )
+
         chosen_indices = np.argsort(contrastive_scores)[-(n_keyphrases**2) :]
 
         # Map the indices back to the original vocabulary
@@ -721,7 +735,7 @@ def bm25_keyphrases(
             [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num],
+            centroid_vector,
             chosen_vectors,
             n_keyphrases,
             max_alpha=diversify_alpha,

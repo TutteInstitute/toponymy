@@ -108,7 +108,7 @@ def test_make_data():
     )
     # Pretend we named clusters
     cluster_layer.topic_names = [x["topic"] for x in SUBTOPIC_OBJECTS]
-    cluster_layer._embed_topic_names(EMBEDDER)
+    cluster_layer.embed_topic_names(EMBEDDER)
     cluster_layer._make_disambiguation_prompts(
         1.0,
         [ALL_SUBTOPICS, [x["topic"] for x in SUBTOPIC_OBJECTS]],

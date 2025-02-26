@@ -42,10 +42,18 @@ needed.  For faster encoding change device to: "cuda", "mps", "npu" or "cpu" dep
 generate document vectors we will need to construct a low dimensional representation.  Here we do that via our UMAP library.
 
 .. code-block:: python
+    pip install umap-learn
+    pip install pandas
+    pip install sentence_transformers
 
-    data = pd.read_csv("hf://datasets/CShorten/ML-ArXiv-Papers/ML-Arxiv-Papers.csv")
+    import pandas as pd
+    from sentence_transformers import SentenceTransformer
+    import umap
+
+    data = pd.read_csv("hf://datasets/CShorten/ML-ArXiv-Papers/ML-Arxiv-Papers.csv")[:50]
     text =data.title+" "+data.abstract
-    embedding_model = sentence_transformers.SentenceTransformer("all-mpnet-base-v2", device="cpu") 
+    embedding_model = SentenceTransformer("all-mpnet-base-v2", device="cpu")
+
     document_vectors = embedding_model.encode(text, show_progress_bar=True)
     document_map = umap.UMAP(metric='cosine').fit_transform(document_vectors)
 

@@ -14,7 +14,7 @@ def random_exemplars(
     object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
     text_object_array: Optional[np.ndarray] = None,
     show_progress_bar: bool = False,
-) -> List[List[str]]:
+) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar texts for each cluster in a cluster layer.
     These exemplars are randomly sampled from each cluster.
 
@@ -34,11 +34,14 @@ def random_exemplars(
 
     Returns
     -------
-    exemplars List[List[str]]
-        A list of lists of exemplar text for each cluster.
+    Tuple[List[List[str]], List[List[int]]]
+        A tuple containing:
+        - A list of lists of exemplar texts for each cluster
+        - A list of lists of indices indicating the position of each exemplar in the original object list
     """
 
     results = []
+    indices = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting random exemplars",
@@ -47,12 +50,18 @@ def random_exemplars(
         leave=False,
         position=1,
     ):
-        # Grab the vectors associated with the objects in this cluster
-        cluster_objects = np.array(objects)[cluster_label_vector == cluster_num]
-        # If there is an empty cluster emit the empty list of exemplars
+        # Get mask for current cluster
+        cluster_mask = cluster_label_vector == cluster_num
+        cluster_objects = np.array(objects)[cluster_mask]
+        # Store original indices for this cluster
+        original_indices = np.where(cluster_mask)[0]
+        
+        # If there is an empty cluster emit empty lists
         if len(cluster_objects) == 0:
             results.append([])
+            indices.append([])
             continue
+        
         # Randomly permute the index to create a random selection
         exemplar_order = np.random.permutation(len(cluster_objects))[:n_exemplars]
         if object_to_text_function is None:
@@ -66,7 +75,9 @@ def random_exemplars(
                     text_object_array[cluster_index_to_global_index[i]] = text_result
 
         results.append(chosen_exemplars)
-    return results
+        indices.append(chosen_original_indices)
+        
+    return results, indices
 
 
 def diverse_exemplars(
@@ -80,7 +91,7 @@ def diverse_exemplars(
     text_object_array: Optional[np.ndarray] = None,
     method: str = "centroid",
     show_progress_bar: bool = False,
-) -> List[List[str]]:
+) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
     These exemplars are selected to be the closest vectors to the cluster centroid while retaining
     sufficient diversity.
@@ -108,10 +119,14 @@ def diverse_exemplars(
 
     Returns
     -------
-    exemplars List[List[str]]
-        A list of lists of exemplar text for each cluster.
+    Tuple[List[List[str]], List[List[int]]]
+        A tuple containing:
+        - A list of lists of exemplar texts for each cluster
+        - A list of lists of indices indicating the position of each exemplar in the original object list
     """
     results = []
+    indices = []
+    
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting central exemplars",
@@ -120,13 +135,19 @@ def diverse_exemplars(
         leave=False,
         position=1,
     ):
-        # Grab the vectors associated with the objects in this cluster
-        cluster_objects = np.array(objects)[cluster_label_vector == cluster_num]
-        # If there is an empty cluster emit the empty list of exemplars
+        # Get mask for current cluster
+        cluster_mask = cluster_label_vector == cluster_num
+        cluster_objects = np.array(objects)[cluster_mask]
+        # Store original indices for this cluster
+        original_indices = np.where(cluster_mask)[0]
+        
+        # If there is an empty cluster emit empty lists
         if len(cluster_objects) == 0:
             results.append([])
+            indices.append([])
             continue
-        cluster_object_vectors = object_vectors[cluster_label_vector == cluster_num]
+            
+        cluster_object_vectors = object_vectors[cluster_mask]
 
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
@@ -140,16 +161,16 @@ def diverse_exemplars(
             exemplar_order = np.random.permutation(len(cluster_objects))
         else:
             raise ValueError(
-                f"method={method} is not a valid selection.  Please choose one of (centroid,random)"
+                f"method={method} is not a valid selection. Please choose one of (centroid,random)"
             )
 
         # We need more exemplars than we want in case we drop some via diversify
         n_exemplars_to_take = max((n_exemplars * 2), 16)
         exemplar_candidates = [
-            cluster_objects[i] for i in exemplar_order[: n_exemplars_to_take]
+            cluster_objects[i] for i in exemplar_order[:n_exemplars_to_take]
         ]
         candidate_vectors = np.asarray(
-            [cluster_object_vectors[i] for i in exemplar_order[: n_exemplars_to_take]]
+            [cluster_object_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
         )
         chosen_indices = diversify(
             centroid_vectors[cluster_num],
@@ -157,11 +178,18 @@ def diverse_exemplars(
             n_exemplars,
             max_alpha=diversify_alpha,
         )[:n_exemplars]
+        
         if object_to_text_function is None:
             chosen_exemplars = [exemplar_candidates[i] for i in chosen_indices]
         else:
             chosen_exemplars = [
                 object_to_text_function(exemplar_candidates[i]) for i in chosen_indices
             ]
+            
+        # Map chosen indices back to original object list indices
+        chosen_original_indices = [original_indices[exemplar_order[i]] for i in chosen_indices]
+        
         results.append(chosen_exemplars)
-    return results
+        indices.append(chosen_original_indices)
+        
+    return results, indices
