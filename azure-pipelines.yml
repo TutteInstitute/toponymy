@@ -84,11 +84,13 @@ stages:
 
         - script: |
             pip install -r requirements.txt
+            pip install -r tests-requirements.txt
           displayName: 'Install dependencies'
           condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
 
         - script: |
             pip install --pre -r requirements.txt
+            pip install --pre -r tests-requirements.txt
           displayName: 'Install dependencies (allow pre-releases)'
           condition: ${{ eq(parameters.includeReleaseCandidates, true) }}
 

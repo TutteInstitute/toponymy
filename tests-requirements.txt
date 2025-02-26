@@ -1,0 +1,10 @@
+black
+isort
+pylint
+pytest
+anthropic
+cohere
+llama-cpp-python
+openai
+transformers
+bm25s
