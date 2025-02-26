@@ -2,11 +2,11 @@ numpy>=1.21
 pandas>=1.0
 numba>=0.56
 datasets
-scikit-learn
+scikit-learn>=1.6
 vectorizers
 scipy
 fast_hdbscan
-sentence_transformers
+sentence_transformers>=3.4
 dataclasses
 tqdm
 tenacity
