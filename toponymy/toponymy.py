@@ -137,6 +137,9 @@ class Toponymy:
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
 
+        # Keyphhrase text is everything by default; this can be changed if we don't start with text for objects
+        self.keyphrase_text_ = objects
+
         # Build our layers and cluster tree
         self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
             clusterable_vectors,
@@ -145,12 +148,6 @@ class Toponymy:
             show_progress_bar=self.show_progress_bars,
             exemplar_delimiters=self.exemplar_delimiters,
         )
-
-        # Build keyphrase information
-        self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
-            self.keyphrase_builder.fit_transform(objects)
-        )
-        self.keyphrase_vectors_ = self.embedding_model.encode(self.keyphrase_list_, show_progress_bar=self.show_progress_bars, )
 
         # Initialize other data structures
         self.topic_names_ = [[]] * len(self.cluster_layers_)
@@ -173,6 +170,16 @@ class Toponymy:
                 objects,
                 embedding_vectors,
             )
+            if i == 0:
+                # Build keyphrase information
+                if layer.object_to_text_function is not None:
+                    self.keyphrase_text_ = layer.object_texts
+
+                self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
+                    self.keyphrase_builder.fit_transform(self.keyphrase_text_)
+                )
+                self.keyphrase_vectors_ = self.embedding_model.encode(self.keyphrase_list_, show_progress_bar=self.show_progress_bars)
+
             layer.make_keyphrases(
                 self.keyphrase_list_,
                 self.object_x_keyphrase_matrix_,

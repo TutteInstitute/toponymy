@@ -1,6 +1,6 @@
 import random
 import numpy as np
-from typing import List, Tuple, FrozenSet, Dict, Callable, Any
+from typing import List, Tuple, FrozenSet, Dict, Callable, Any, Optional
 from sklearn.metrics import pairwise_distances
 from toponymy.utility_functions import diversify_max_alpha as diversify
 
@@ -12,6 +12,7 @@ def random_exemplars(
     objects: List[str],
     n_exemplars: int = 4,
     object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
+    text_object_array: Optional[np.ndarray] = None,
     show_progress_bar: bool = False,
 ) -> List[List[str]]:
     """Generates a list of exemplar texts for each cluster in a cluster layer.
@@ -57,9 +58,13 @@ def random_exemplars(
         if object_to_text_function is None:
             chosen_exemplars = cluster_objects[exemplar_order].tolist()
         else:
-            chosen_exemplars = [
-                object_to_text_function(cluster_objects[i]) for i in exemplar_order
-            ]
+            cluster_index_to_global_index = np.where(cluster_label_vector == cluster_num)[0]
+            for i in exemplar_order:
+                text_result = object_to_text_function(cluster_objects[i])
+                chosen_exemplars.append(text_result)
+                if text_object_array is not None:
+                    text_object_array[cluster_index_to_global_index[i]] = text_result
+
         results.append(chosen_exemplars)
     return results
 
@@ -72,6 +77,7 @@ def diverse_exemplars(
     n_exemplars: int = 4,
     diversify_alpha: float = 1.0,
     object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
+    text_object_array: Optional[np.ndarray] = None,
     method: str = "centroid",
     show_progress_bar: bool = False,
 ) -> List[List[str]]:
