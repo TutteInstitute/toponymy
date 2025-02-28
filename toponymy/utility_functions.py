@@ -1,7 +1,7 @@
 import numpy as np
 import numba
 
-@numba.njit(fastmath=True)
+@numba.njit(fastmath=True, cache=True)
 def distance_to_vector(vector, other_vectors):
     result = np.zeros(other_vectors.shape[0], dtype=np.float32)
     other_vector_norms = np.zeros(other_vectors.shape[0], dtype=np.float32)
@@ -20,7 +20,7 @@ def distance_to_vector(vector, other_vectors):
         return 1.0 - (result / np.sqrt(vector_norm * other_vector_norms))
         
 
-@numba.njit()
+@numba.njit(cache=True)
 def diversify_fixed_alpha(query_vector, candidate_neighbor_vectors, alpha=1.0):
     distance_to_query = distance_to_vector(query_vector, candidate_neighbor_vectors)
 
@@ -39,7 +39,7 @@ def diversify_fixed_alpha(query_vector, candidate_neighbor_vectors, alpha=1.0):
 
     return retained_neighbor_indices
 
-@numba.njit()
+@numba.njit(cache=True)
 def diversify_max_alpha(query_vector, candidate_neighbor_vectors, n_results, max_alpha=1.0):
     min_alpha = 0.0
     mid_alpha = max_alpha / 2.0
