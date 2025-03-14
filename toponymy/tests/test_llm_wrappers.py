@@ -3,7 +3,7 @@ from unittest.mock import Mock, patch
 import json
 from typing import List
 
-from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace #, LlamaCpp
+from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace, AzureAI #, LlamaCpp
 
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {
@@ -73,6 +73,16 @@ class MockLLMResponse:
     @staticmethod
     def create_llama_response(content: str):
         return {"choices": [{"text": content}]}
+    
+    @staticmethod
+    def create_azureai_response(content: str):
+        class Choice:
+            def __init__(self, content):
+                self.message = Mock(content=content)
+        
+        class Response:
+            def __init__(self, content):
+                self.choices = [Choice(content)]
 
 # Helper functions for validation
 def validate_topic_name(result: str):
@@ -308,6 +318,49 @@ def test_cohere_generate_topic_name_failure_malformed_json(cohere_wrapper, mock_
 def test_cohere_generate_cluster_names_failure(cohere_wrapper, mock_data):
     cohere_wrapper.llm.chat = Mock(side_effect=Exception("API Error"))
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    assert result == mock_data["old_names"]
+
+# AzureAI Tests
+@pytest.fixture
+def azureai_wrapper():
+    with patch('azure.ai.inference.ChatCompletionsClient'):
+        wrapper = AzureAI(API_KEY="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
+        return wrapper
+    
+def test_azureai_generate_topic_name_success(azureai_wrapper, mock_data):
+    response = MockLLMResponse.create_openai_response(mock_data["valid_topic_name"])
+    azureai_wrapper.llm.complete = Mock(return_value=response)
+    
+    result = azureai_wrapper.generate_topic_name("test prompt")
+    validate_topic_name(result)
+
+def test_azureai_generate_cluster_names_success(azureai_wrapper, mock_data):
+    response = MockLLMResponse.create_openai_response(mock_data["valid_cluster_names"])
+    azureai_wrapper.llm.complete = Mock(return_value=response)
+    
+    result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_azureai_generate_cluster_names_success_on_malformed_mapping(azureai_wrapper, mock_data):
+    response = MockLLMResponse.create_azureai_response(mock_data["malformed_mapping"])
+    azureai_wrapper.llm.complete = Mock(return_value=response)
+    
+    result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_azureai_generate_topic_name_failure(azureai_wrapper):
+    azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
+    result = azureai_wrapper.generate_topic_name("test prompt")
+    assert result == ""
+
+def test_azureai_generate_topic_name_failure_malformed_json(azureai_wrapper, mock_data):
+    azureai_wrapper.llm.complete = Mock(mock_data["malformed_json"])
+    result = azureai_wrapper.generate_topic_name("test prompt")
+    assert result == ""
+
+def test_azureai_generate_cluster_names_failure(azureai_wrapper, mock_data):
+    azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
+    result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     assert result == mock_data["old_names"]
 
 # @pytest.skip("Not quite sure this is right yet")
