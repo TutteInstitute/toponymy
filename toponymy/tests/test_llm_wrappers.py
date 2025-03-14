@@ -84,6 +84,8 @@ class MockLLMResponse:
             def __init__(self, content):
                 self.choices = [Choice(content)]
 
+        return Response(content)
+
 # Helper functions for validation
 def validate_topic_name(result: str):
     assert result == "Machine Learning"
