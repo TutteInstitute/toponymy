@@ -431,6 +431,89 @@ except:
     pass
 
 
+try:
+    import azure.ai.inference
+    from azure.ai.inference import ChatCompletionsClient
+    from azure.ai.inference.models import SystemMessage, UserMessage
+    from azure.core.credentials import AzureKeyCredential
+
+    class AzureAI(LLMWrapper):
+
+        def __init__(self, API_KEY: str, endpoint: str, model: str):
+            self.endpoint = endpoint
+            self.model = model
+            self.llm = ChatCompletionsClient(
+                endpoint=endpoint,
+                credential=AzureKeyCredential(API_KEY),
+            )
+
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            retry_error_callback=lambda x: "",
+        )
+        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+            try:
+                topic_name_info_raw = self.llm.complete(
+                    model=self.model,
+                    max_tokens=256,
+                    messages=[UserMessage(prompt)],
+                    temperature=temperature,
+                )
+                topic_name_info_text = topic_name_info_raw.choices[0].message.content
+                topic_name_info_text = re.findall(
+                    GET_TOPIC_NAME_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
+                topic_name_info = json.loads(topic_name_info_text)
+                topic_name = topic_name_info["topic_name"]
+            except:
+                raise ValueError(f"Failed to generate topic name with AzureAI")
+
+            return topic_name
+
+        @retry(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=4, max=10),
+            retry_error_callback=lambda retry_state: retry_state.args[2],
+        )
+        def generate_topic_cluster_names(
+            self, prompt: str, old_names: List[str], temperature: float = 0.5
+        ) -> List[str]:
+            try:
+                topic_name_info_raw = self.llm.complete(
+                    model=self.model,
+                    max_tokens=1024,
+                    messages=[UserMessage(prompt)],
+                    temperature=temperature,
+                )
+                topic_name_info_text = topic_name_info_raw.choices[0].message.content
+                topic_name_info = json.loads(topic_name_info_text)
+            except Exception as e:
+                warn(f"Failed to generate topic cluster names with AzureAI: {e}")
+                return old_names
+
+            mapping = topic_name_info["new_topic_name_mapping"]
+            if len(mapping) == len(old_names):
+                result = [
+                    mapping.get(f"{n}. {name}", name)
+                    for n, name in enumerate(old_names, start=1)
+                ]
+                return result
+            else:
+                mapping = re.findall(
+                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
+                    topic_name_info_text,
+                    re.DOTALL,
+                )[0]
+                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+                if len(new_names) == len(old_names):
+                    return new_names
+                else:
+                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+                
+except ImportError:
+    pass
+
 ############################ UNTESTED WRAPPERS ############################
 
 # # MistralAI wrapper
