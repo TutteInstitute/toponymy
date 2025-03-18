@@ -7,7 +7,7 @@ anthropic
 cohere
 openai
 azure-ai-inference
-mistral-ai
+mistralai
 numpy>=1.26,<2.0
 transformers
 bm25s
