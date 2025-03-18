@@ -10,10 +10,12 @@ from fast_hdbscan.cluster_trees import (
 from fast_hdbscan.boruvka import parallel_boruvka
 from fast_hdbscan.numba_kdtree import kdtree_to_numba
 from sklearn.neighbors import KDTree
-from typing import List, Tuple, Dict, Type, Any, Optional
+from typing import List, Tuple, Dict, Type, Any, Optional, NewType
 from toponymy.cluster_layer import ClusterLayer
 
 from sklearn.cluster import KMeans
+
+ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
 
 
 @numba.njit(cache=True)
@@ -198,7 +200,7 @@ def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
 
 def build_cluster_tree(
     labels: List[np.ndarray],
-) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
+) -> ClusterTree:
     """
     Builds a cluster tree from the given labels.
 
@@ -209,7 +211,7 @@ def build_cluster_tree(
 
     Returns
     -------
-    Dict[Tuple[int, int], List[Tuple[int, int]]]
+    ClusterTree
         A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
         and the values are lists of tuples representing the child clusters (layer, cluster index).
     """
@@ -255,7 +257,7 @@ def create_cluster_layers(
     show_progress_bar: bool = False,
     verbose: bool = False,
     **layer_kwargs,
-) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+) -> Tuple[List[ClusterLayer], ClusterTree]:
     """
     Create cluster layers from given vectors and parameters.
 
@@ -335,7 +337,7 @@ class Clusterer(ABC):
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
         **layer_kwargs,
-    ):
+    ) -> Tuple[List[ClusterLayer], ClusterTree]:
         pass
 
 
@@ -397,7 +399,7 @@ class ToponymyClusterer(Clusterer):
         layer_class: Type[ClusterLayer],
         show_progress_bar: bool = False,
         **layer_kwargs,
-    ):
+    ) -> Clusterer:
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
             layer_class,
             clusterable_vectors=clusterable_vectors,
@@ -420,7 +422,7 @@ class ToponymyClusterer(Clusterer):
         layer_class: Type[ClusterLayer],
         show_progress_bar: bool = False,
         **layer_kwargs,
-    ):
+    ) -> Tuple[List[ClusterLayer], ClusterTree]:
         self.fit(
             clusterable_vectors,
             embedding_vectors,
@@ -467,7 +469,7 @@ class KMeansClusterer(Clusterer):
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
         show_progress_bar: bool = False,
-    ):
+    ) -> Clusterer:
         n_clusters = self.base_n_clusters
         cluster_label_layers = []
 
@@ -496,7 +498,7 @@ class KMeansClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
-    ):
+    ) -> Tuple[List[ClusterLayer], ClusterTree]:
         self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
         return self.cluster_layers_, self.cluster_tree_
 
@@ -557,7 +559,7 @@ try:
             embedding_vectors: np.ndarray,
             layer_class: Type[ClusterLayer],
             show_progress_bar: bool = False,
-        ):
+        ) -> Clusterer:
             self.evoc.fit(embedding_vectors)
             cluster_labels = self.evoc.cluster_layers_
             self.cluster_tree_ = build_cluster_tree(cluster_labels)
@@ -577,7 +579,7 @@ try:
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
             layer_class: Type[ClusterLayer],
-        ):
+        ) -> Tuple[List[ClusterLayer], ClusterTree]:
             self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
             return self.cluster_layers_, self.cluster_tree_
 
