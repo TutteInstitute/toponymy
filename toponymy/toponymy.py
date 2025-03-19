@@ -1,6 +1,7 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.cluster_layer import ClusterLayer
+from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
+
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
@@ -19,10 +20,10 @@ class Toponymy:
         A llm_wrapper class.  These should be objects that inherit from the LlmWrapper base classs.
     embedding_model: callable
         a function with an encode used to vectorize the objects that we are topic modeling.
-    layer_class: Type[Any]
-        The class to used for creating layers from our objects.
     clusterer: Clusterer
         The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
+    layer_class: Type[Any]
+        The class to used for creating layers from our objects. Default is ClusterLayerText.
     keyphrase_builder: KeyphraseBuilder
         The keyphrase builder to use for building keyphrases from the objects.
     object_description: str
@@ -44,10 +45,10 @@ class Toponymy:
         A llm_wrapper class.  These should be objects that inherit from the LlmWrapper base classs.
     embedding_model: callable
         a function with an encode used to vectorize the objects that we are topic modeling.
-    layer_class: Type[Any]
-        The class to used for creating layers from our objects.
     clusterer: Clusterer
         The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
+    layer_class: Type[Any]
+        The class to used for creating layers from our objects.
     keyphrase_builder: KeyphraseBuilder
         The keyphrase builder to use for building keyphrases from the objects.
     object_description: str
@@ -88,8 +89,8 @@ class Toponymy:
         self,
         llm_wrapper,
         text_embedding_model: SentenceTransformer,
-        layer_class: Type[ClusterLayer],
         clusterer: Clusterer = ToponymyClusterer(),
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
         keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
         object_description: str = "objects",
         corpus_description: str = "collection of objects",

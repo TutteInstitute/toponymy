@@ -41,13 +41,13 @@ def test_toponymy():
     model = Toponymy(
         LLM,
         EMBEDDER,
-        ClusterLayerText,
         CLUSTERER,
-        KeyphraseBuilder(n_jobs=1),
-        "sentences",
-        "collection of sentences",
-        0.8,
-        1.0,
+        #ClusterLayerText,
+        keyphrase_builder = KeyphraseBuilder(n_jobs=1),
+        object_description = "sentences",
+        corpus_description = "collection of sentences",
+        lowest_detail_level = 0.8,
+        highest_detail_level = 1.0,
         show_progress_bars=True,
     )
     model.fit(ALL_SENTENCES, OBJECT_VECTORS, CLUSTERABLE_VECTORS)
