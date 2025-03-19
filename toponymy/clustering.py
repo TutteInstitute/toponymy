@@ -11,7 +11,7 @@ from fast_hdbscan.boruvka import parallel_boruvka
 from fast_hdbscan.numba_kdtree import kdtree_to_numba
 from sklearn.neighbors import KDTree
 from typing import List, Tuple, Dict, Type, Any, Optional
-from toponymy.cluster_layer import ClusterLayer
+from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 
 from sklearn.cluster import KMeans
 
@@ -394,7 +394,7 @@ class ToponymyClusterer(Clusterer):
         self,
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer],
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
         show_progress_bar: bool = False,
         **layer_kwargs,
     ):
@@ -417,7 +417,7 @@ class ToponymyClusterer(Clusterer):
         self,
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer],
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
         show_progress_bar: bool = False,
         **layer_kwargs,
     ):
@@ -465,7 +465,7 @@ class KMeansClusterer(Clusterer):
         self,
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer],
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
         show_progress_bar: bool = False,
     ):
         n_clusters = self.base_n_clusters
@@ -495,7 +495,7 @@ class KMeansClusterer(Clusterer):
         self,
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer],
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
     ):
         self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
         return self.cluster_layers_, self.cluster_tree_
@@ -555,7 +555,7 @@ try:
             self,
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
-            layer_class: Type[ClusterLayer],
+            layer_class: Type[ClusterLayer] = ClusterLayerText,
             show_progress_bar: bool = False,
         ):
             self.evoc.fit(embedding_vectors)
@@ -576,7 +576,7 @@ try:
             self,
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
-            layer_class: Type[ClusterLayer],
+            layer_class: Type[ClusterLayer] = ClusterLayerText,
         ):
             self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
             return self.cluster_layers_, self.cluster_tree_
