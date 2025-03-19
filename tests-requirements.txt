@@ -6,6 +6,8 @@ umap-learn
 anthropic
 cohere
 openai
+azure-ai-inference
+mistralai
 numpy>=1.26,<2.0
 transformers
 bm25s

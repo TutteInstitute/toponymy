@@ -5,7 +5,7 @@ datasets
 scikit-learn>=1.6
 vectorizers
 scipy
-fast_hdbscan
+fast_hdbscan>=0.2.2
 sentence_transformers>=3.4
 dataclasses
 tqdm
