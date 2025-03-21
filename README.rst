@@ -75,9 +75,15 @@ your data ahead of time via:
 
     from toponymy import ToponymyClusterer
     clusterer = ToponymyClusterer(min_clusters=4)
-    clusterer.fit(document_vectors, document_map)
+    clusterer.fit(clusterable_vectors=document_map, embedding_vectors=document_vectors)
     for i, layer in enumerate(clusterer.cluster_layers_):
         print(f'{len(np.unique(layer.cluster_labels))} clusters in layer {i}')
+
+    429 clusters in layer 0
+    137 clusters in layer 1
+    43 clusters in layer 2
+    15 clusters in layer 3
+    6 clusters in layer 4
 
 Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
 Huggingface and LlamaCpp. Here we show an example using OpenAI. The following code will generate a topic naming
@@ -106,6 +112,7 @@ for the documents in the data set using an embedding_model, document_vectors and
     topics_per_document = topic_model.cluster_layers_
     
 ``topic_names`` is a list of lists which can be used to explore the unique topic names in each layer or resolution.
+Let's examine the last two layers of topics.
 
 .. code-block:: python
 
@@ -136,9 +143,37 @@ for the documents in the data set using an embedding_model, document_vectors and
 cluster layers.  In our above case this will be a list of 5 layers each containing a list of 18,170 topic names.  
 Documents that aren't contained within a cluster at a given layer are given the topic ``Unlabelled``.
 
+.. code-block:: python
+
+    topics_per_document
+
+    [array(['Unlabelled',
+            'Discussion on VESA Local Bus Video Cards and Performance',
+            'Unlabelled', ...,
+            'Cooling Solutions and Components for CPUs and Power Supplies',
+            'Algorithms for Finding Sphere from Four Points in 3D',
+            'Automotive Discussions on Performance Cars and Specifications'], dtype=object),
+    array(['NHL Playoff Analysis and Predictions',
+            'Graphics Card Performance and Benchmark Discussions',
+            'Armenian Genocide and Turkish Atrocities Discourse', ...,
+            'Cooling Solutions and Components for CPUs and Power Supplies',
+            'Algorithms for 3D Polygon Processing and Geometry',
+            'Discussions on SUVs and Performance Cars'], dtype=object),
+    array(['NHL Playoff Analysis and Predictions',
+            'Video Card Drivers and Performance',
+            'Armenian Genocide and Turkish Atrocities', ..., 'Unlabelled',
+            'Unlabelled', 'Automotive Performance and Used Cars'], dtype=object),
+    array(['NHL Playoffs and Player Analysis',
+            'Vintage Computer Hardware and Upgrades', 'Unlabelled', ...,
+            'Unlabelled', 'X Window System and Graphics Software',
+            'Automotive Performance and Safety'], dtype=object),
+    array(['Sports Analysis', 'Computer Hardware', 'Unlabelled', ...,
+            'Unlabelled', 'X Window System and Graphics Software',
+            'Automotive Performance and Safety'], dtype=object)]
+
 At this point we recommend that you explore your data and topic names with an interactive visualization library.  
 Our `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library is particularly well suited to exploring 
-data maps and layered topic names.  It takes requires our ``document_map``, ``document_vectors`` and newly created ``topics_per_document``.
+data maps along with layers of topic names.  It takes requires our ``document_map``, ``document_vectors`` and newly created ``topics_per_document``.
 
 -------------------
 Vector Construction
