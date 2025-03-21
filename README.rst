@@ -38,10 +38,11 @@ Basic Usage
 
 We will need documents, document vectors and a low dimensional representation of these document vector to construct
 a representation.  This can be very expensive without a GPU so we recommend storing and reloading these vectors as 
-needed. For ease of experimentation we have precomputed and stored such vectors for the `20 Newsgroups dataset <http://qwone.com/~jason/20Newsgroups/>`_  
+needed. For ease of experimentation we have precomputed and stored such vectors for the `20-Newsgroups dataset <http://qwone.com/~jason/20Newsgroups/>`_  
 on hugging face.  Code to retrieve these vectors is below.
 
 .. code-block:: python
+
     pip install pandas
 
     import numpy as np
@@ -56,6 +57,7 @@ of our clusters.  This doesn't have to be the embedding model that our documents
 should be similar.
 
 .. code-block:: python
+
     pip install sentence_transformers
 
     from sentence_transformers import SentenceTransformer
@@ -68,7 +70,9 @@ clustering of our documents. It will then use a variety of sampling and summariz
 describing each cluster to pass to a large language model (LLM).  If you would like to experiment with testing 
 various cluster parameters in order construct cluster layers appropriate to your data feel free to cluster 
 your data ahead of time via:
+
 .. code-block:: python
+
     from toponymy import ToponymyClusterer
     clusterer = ToponymyClusterer(min_clusters=4)
     clusterer.fit(document_vectors, document_map)
@@ -102,7 +106,9 @@ for the documents in the data set using an embedding_model, document_vectors and
     topics_per_document = topic_model.cluster_layers_
     
 ``topic_names`` is a list of lists which can be used to explore the unique topic names in each layer or resolution.
+
 .. code-block:: python
+
     topic_names[-2:]
 
     [['NHL Playoffs and Player Analysis',
@@ -148,6 +154,7 @@ Or the embedding wrapper of your choice. Once we generate document vectors we wi
 Here we do that via our UMAP library.  
 
 .. code-block:: python
+
     pip install umap-learn
     pip install pandas
     pip install sentence_transformers
