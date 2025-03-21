@@ -87,7 +87,7 @@ your data ahead of time via:
 
 Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
 Huggingface and LlamaCpp. Here we show an example using OpenAI. The following code will generate a topic naming
-for the documents in the data set using an embedding_model, document_vectors and document_map created above.
+for the documents in the data set using an ``embedding_model``, ``document_vectors`` and ``document_map`` created above.
 
 .. code-block:: python
 
@@ -101,7 +101,6 @@ for the documents in the data set using an embedding_model, document_vectors and
         llm=llm,
         embedding_model=embedding_model,
         clusterer=clusterer,
-        keyphrase_builder=KeyphraseBuilder(ngram_range=(1,6)),
         object_description="newsgroup posts",
         corpus_description="20-newsgroups dataset",
         exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"],
@@ -181,11 +180,13 @@ Vector Construction
 
 If you do not have ready made document vectors and low dimensional representations of your data you will need to compute 
 your own. For faster encoding change device to: "cuda", "mps", "npu" or "cpu" depending on hardware availability. Alternatively,
-one could make use of an API call to embedding service.  Embedding wrappers can be found in
+one could make use of an API call to embedding service.  Embedding wrappers can be found in:
+
 .. code-block:: python
+
     from toponymy.embedding_wrappers import OpenAIEmbedder
 
-Or the embedding wrapper of your choice. Once we generate document vectors we will need to construct a low dimensional representation.  
+or the embedding wrapper of your choice. Once we generate document vectors we will need to construct a low dimensional representation.  
 Here we do that via our UMAP library.  
 
 .. code-block:: python
