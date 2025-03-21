@@ -77,13 +77,13 @@ your data ahead of time via:
     clusterer = ToponymyClusterer(min_clusters=4)
     clusterer.fit(clusterable_vectors=document_map, embedding_vectors=document_vectors)
     for i, layer in enumerate(clusterer.cluster_layers_):
-        print(f'{len(np.unique(layer.cluster_labels))} clusters in layer {i}')
+        print(f'{len(np.unique(layer.cluster_labels))-1} clusters in layer {i}')
 
-    429 clusters in layer 0
-    137 clusters in layer 1
-    43 clusters in layer 2
-    15 clusters in layer 3
-    6 clusters in layer 4
+    428 clusters in layer 0
+    136 clusters in layer 1
+    42 clusters in layer 2
+    14 clusters in layer 3
+    5 clusters in layer 4
 
 Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
 Huggingface and LlamaCpp. Here we show an example using OpenAI. The following code will generate a topic naming
