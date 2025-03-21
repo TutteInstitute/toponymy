@@ -17,7 +17,7 @@ Toponymy is designed to scale to very large corpora and collections, providing m
 from broad themes to fine-grained topics.  We make use a custom clustering methods, information extraction, 
 and large language models to power this. The library is designed to be flexible and easy to use.
 
-As of now this is an early beta version of the library. Things can and will break right now.
+As of now this is an beta version of the library. Things can and will break right now.
 We welcome feedback, use cases and feature suggestions.
 
 ------------------
