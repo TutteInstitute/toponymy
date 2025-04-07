@@ -115,7 +115,7 @@ for the documents in the data set using an ``embedding_model``, ``document_vecto
     topic_model.fit(text, document_vectors, document_map)
 
     topic_names = topic_model.topic_names_
-    topics_per_document = topic_model.cluster_layers_
+    topics_per_document = [cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_]
     
 ``topic_names`` is a list of lists which can be used to explore the unique topic names in each layer or resolution.
 Let's examine the last two layers of topics.
@@ -150,8 +150,9 @@ cluster layers.  In our above case this will be a list of 5 layers each containi
 Documents that aren't contained within a cluster at a given layer are given the topic ``Unlabelled``.
 
 .. code-block:: python
-
+    
     topics_per_document
+    
 
     [array(['Unlabelled',
             'Discussion on VESA Local Bus Video Cards and Performance',
