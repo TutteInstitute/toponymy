@@ -105,8 +105,8 @@ for the documents in the data set using an ``embedding_model``, ``document_vecto
     llm = OpenAI('openai_api_key')
 
     topic_model = Toponymy(
-        llm=llm,
-        embedding_model=embedding_model,
+        llm_wrapper=llm,
+        text_embedding_model=embedding_model,
         clusterer=clusterer,
         object_description="newsgroup posts",
         corpus_description="20-newsgroups dataset",
