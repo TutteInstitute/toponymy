@@ -66,6 +66,8 @@ should be similar.
 .. code-block:: python
 
     pip install sentence_transformers
+    pip install openai
+    pip install numpy==1.24
 
     from sentence_transformers import SentenceTransformer
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
