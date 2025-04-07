@@ -24,7 +24,14 @@ We welcome feedback, use cases and feature suggestions.
 Basic Installation
 ------------------
 
-For now install the latest version of Toponymy from source you can do so by cloning the repository and running:
+You can install Toponymy using
+
+.. code-block:: bash
+
+    pip install toponymy
+
+
+To install the latest version of Toponymy from source you can do so by cloning the repository and running:
 
 .. code-block:: bash
 
