@@ -4,6 +4,7 @@ from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 from toponymy.topic_tree import TopicTree
 
 from sentence_transformers import SentenceTransformer
+from sklearn.utils.validation import check_is_fitted
 import numpy as np
 
 from tqdm.auto import tqdm
@@ -278,6 +279,7 @@ class Toponymy:
         TopicTree
             A representation of the topic tree (either html or string).
         """
+        check_is_fitted(self, ["cluster_tree_", "topic_names"])
         return TopicTree(
             self.cluster_tree_,
             self.topic_names_,

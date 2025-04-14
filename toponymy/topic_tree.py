@@ -104,7 +104,7 @@ def topic_tree_html_recursion(
     elif variable_weight:
         combined_style = f"{weight_style}"
     elif variable_color:
-        combined_style = f"{weight_style}"
+        combined_style = f"{color_style}"
     else:
         combined_style = ""
 
