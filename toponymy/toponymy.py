@@ -279,7 +279,7 @@ class Toponymy:
         TopicTree
             A representation of the topic tree (either html or string).
         """
-        check_is_fitted(self, ["cluster_tree_", "topic_names"])
+        check_is_fitted(self, ["cluster_tree_", "topic_names_"])
         return TopicTree(
             self.cluster_tree_,
             self.topic_names_,
