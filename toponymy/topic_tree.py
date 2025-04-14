@@ -247,6 +247,26 @@ def topic_tree_html(
 
 
 class TopicTree:
+    """
+    A class to represent a topic tree. Provides string representations and
+    an HTML representation in notebooks.
+
+    Parameters
+    ----------
+    tree : ClusterTree
+        The topic tree represented as a dictionary.
+
+    topics : List[List[str]]
+        The list of topics to be included in the tree.
+    
+    Attributes
+    ----------
+    tree : ClusterTree
+        The topic tree represented as a dictionary.
+        
+    topics : List[List[str]]
+        The list of topics to be included in the tree.
+    """
     def __init__(self, tree: ClusterTree, topics: List[List[str]]):
         self.tree = tree
         self.topics = topics
