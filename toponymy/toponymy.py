@@ -1,6 +1,7 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
+from toponymy.topic_tree import TopicTree
 
 from sentence_transformers import SentenceTransformer
 import numpy as np
@@ -266,3 +267,19 @@ class Toponymy:
         """
         self.fit(objects, object_vectors, clusterable_vectors)
         return self.topic_name_vectors_
+    
+    @property
+    def topic_tree_(self) -> TopicTree:
+        """
+        Returns the topic tree.
+        
+        Returns:
+        --------
+        TopicTree
+            A representation of the topic tree (either html or string).
+        """
+        return TopicTree(
+            self.cluster_tree_,
+            self.topic_names_,
+        )
+
