@@ -46,7 +46,15 @@ def test_topic_tree_string():
         ["Topic A", "Topic B"],
     ]
 
-    result = topic_tree_string_recursion(tree_dict, (3, 0), topics)
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
+
+    result = topic_tree_string_recursion(tree_dict, (3, 0), topics, topic_sizes, n_objects)
+    print(result)
     expected_result = (
         "Topic tree:\n"
         "   - Topic A\n"
@@ -66,7 +74,7 @@ def test_topic_tree_string():
     )
     assert result == expected_result
 
-def test_topic_tree_html():
+def test_topic_tree_string_sizes():
     tree_dict = {
         (3, 0): [(2, 0), (2,1)],
         (2, 0): [(1, 0), (1, 1)],
@@ -83,7 +91,58 @@ def test_topic_tree_html():
         ["Topic A", "Topic B"],
     ]
 
-    result = topic_tree_html(tree_dict, topics)
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
+
+    result = topic_tree_string_recursion(tree_dict, (3, 0), topics, topic_sizes, n_objects, cluster_size=True, cluster_percentage=True)
+    print(result)
+    expected_result = (
+        "Topic tree:\n"
+        "   - Topic A (8 objects) [40.00%]\n"
+        "     - Subtopic A1 (4 objects) [20.00%]\n"
+        "       - Subtopic C1 (2 objects) [10.00%]\n"
+        "       - Subtopic C2 (2 objects) [10.00%]\n"
+        "     - Subtopic A2 (4 objects) [20.00%]\n"
+        "       - Subtopic C3 (2 objects) [10.00%]\n"
+        "       - Subtopic C4 (2 objects) [10.00%]\n"
+        "   - Topic B (12 objects) [60.00%]\n"
+        "     - Subtopic B1 (6 objects) [30.00%]\n"
+        "       - Subtopic C5 (3 objects) [15.00%]\n"
+        "       - Subtopic C6 (3 objects) [15.00%]\n"
+        "     - Subtopic B2 (6 objects) [30.00%]\n"
+        "       - Subtopic C7 (3 objects) [15.00%]\n"
+        "       - Subtopic C8 (3 objects) [15.00%]\n"
+    )
+    assert result == expected_result
+
+def test_topic_tree_html():
+    tree_dict = {
+        (3, 0): [(2, 0), (2,1)],
+        (2, 0): [(1, 0), (1, 1)],
+        (2, 1): [(1, 2), (1, 3)],
+        (1, 0): [(0, 0), (0, 1)],
+        (1, 1): [(0, 2), (0, 3)],
+        (1, 2): [(0, 4), (0, 5)],
+        (1, 3): [(0, 6), (0, 7)],
+    }
+
+    topics = [
+        ["Subtopic C1", "Subtopic C2", "Subtopic C3", "Subtopic C4", "Subtopic C5", "Subtopic C6", "Subtopic C7", "Subtopic C8"],
+        ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
+        ["Topic A", "Topic B"],
+    ]
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
+
+    result = topic_tree_html(tree_dict, topics, topic_sizes, n_objects)
     expected_result = """<div class="topic-tree">
     <style>
         .topic-tree ul {
@@ -233,8 +292,14 @@ def test_topic_tree_html_with_colors():
         ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
         ["Topic A", "Topic B"],
     ]
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
 
-    result = topic_tree_html(tree_dict, topics, variable_color=True)
+    result = topic_tree_html(tree_dict, topics, topic_sizes, n_objects, variable_color=True)
     expected_result = """<div class="topic-tree">
     <style>
         .topic-tree ul {
@@ -383,9 +448,14 @@ def test_topic_tree_html_with_colors_no_weight():
         ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
         ["Topic A", "Topic B"],
     ]
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
 
-    result = topic_tree_html(tree_dict, topics, variable_color=True, variable_weight=False)
-    print(result)
+    result = topic_tree_html(tree_dict, topics, topic_sizes, n_objects, variable_color=True, variable_weight=False)
     expected_result = """<div class="topic-tree">
     <style>
         .topic-tree ul {
@@ -535,8 +605,14 @@ def test_topic_tree_html_no_color_no_weight():
         ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
         ["Topic A", "Topic B"],
     ]
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
 
-    result = topic_tree_html(tree_dict, topics, variable_color=False, variable_weight=False)
+    result = topic_tree_html(tree_dict, topics, topic_sizes, n_objects, variable_color=False, variable_weight=False)
     expected_result = """<div class="topic-tree">
     <style>
         .topic-tree ul {
@@ -685,8 +761,14 @@ def test_topic_tree_class():
         ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
         ["Topic A", "Topic B"],
     ]
+    topic_sizes = [
+        [2, 2, 2, 2, 3, 3, 3, 3],
+        [4, 4, 6, 6],
+        [8, 12],
+    ]
+    n_objects = 20
 
-    tree_instance = TopicTree(tree_dict, topics)
+    tree_instance = TopicTree(tree_dict, topics, topic_sizes=topic_sizes, n_objects=n_objects)
     assert tree_instance.tree == tree_dict
     assert tree_instance.topics == topics
 
@@ -708,7 +790,7 @@ def test_topic_tree_class():
         "       - Subtopic C8\n"
     )
     assert str(tree_instance) == expected_string
-    assert tree_instance._repr_html_() == topic_tree_html(tree_dict, topics)
+    assert tree_instance._repr_html_() == topic_tree_html(tree_dict, topics, topic_sizes, n_objects)
 
 def test_unfitted_toponymy_fails():
     with pytest.raises(NotFittedError, match="This Toponymy instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator."):

@@ -279,9 +279,19 @@ class Toponymy:
         TopicTree
             A representation of the topic tree (either html or string).
         """
-        check_is_fitted(self, ["cluster_tree_", "topic_names_"])
+        check_is_fitted(self, ["cluster_tree_", "topic_names_", "topic_name_vectors_"])
+        def cluster_size(cluster_label_array):
+            if cluster_label_array.min() < 0:
+                return np.bincount(cluster_label_array - cluster_label_array.min())[-cluster_label_array.min():].tolist()
+            else:
+                return np.bincount(cluster_label_array).tolist()
+        topic_sizes = [
+            cluster_size(layer.cluster_labels) for layer in self.cluster_layers_
+        ]
         return TopicTree(
             self.cluster_tree_,
             self.topic_names_,
+            topic_sizes,
+            self.embedding_vectors_.shape[0],
         )
 

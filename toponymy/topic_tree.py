@@ -5,11 +5,41 @@ from typing_extensions import Literal
 
 ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
 
+def topic_name_string(
+    topic_names: List[List[str]],
+    layer: int,
+    index: int,
+    cluster_sizes: List[List[int]],
+    n_objects: int,
+    cluster_size: bool = False,
+    cluster_percentage: bool = False,
+    show_topic_id: bool = False,
+) -> str:
+    if layer < len(topic_names) and index < len(topic_names[layer]):
+        topic_string = topic_names[layer][index]
+    else:
+        topic_string = f"Unnamed topic from layer {layer} cluster {index}\n"
+
+    if show_topic_id:
+        topic_string = f"{layer}_{index}: {topic_string}"
+    if cluster_size:
+        topic_string += f" ({cluster_sizes[layer][index]} objects)"
+    if cluster_percentage:
+        topic_string += f" [{cluster_sizes[layer][index] / n_objects * 100:.2f}%]"
+
+    return topic_string
+
 def topic_tree_string_recursion(
     tree: ClusterTree,
     root_node: Tuple[int, int],
     topics: List[List[str]],
+    topic_sizes: List[List[int]],
+    n_objects: int,
     indent_level: int = 0,
+    indent_size: int = 2,
+    cluster_size: bool = False,
+    cluster_percentage: bool = False,
+    show_topic_id: bool = False,
 ) -> str:
     """
     Recursively traverses the topic tree and constructs a string representation of the topics.
@@ -29,16 +59,32 @@ def topic_tree_string_recursion(
         A string representation of the topics in the tree.
     """
     if root_node[0] < len(topics):
-        if root_node[1] < len(topics[root_node[0]]):
-            result = f"{' ' * indent_level} - {topics[root_node[0]][root_node[1]]}\n"
-        else:
-            result = f"{' ' * indent_level} - Unnamed topic from layer {root_node[0]} cluster {root_node[1]}\n"
+        topic_string = topic_name_string(
+            topics,
+            root_node[0],
+            root_node[1],
+            topic_sizes,
+            n_objects,
+            cluster_size=cluster_size,
+            cluster_percentage=cluster_percentage,
+            show_topic_id=show_topic_id,
+        )
+        result = f"{' ' * indent_level} - {topic_string}\n"
     else:
         result = "Topic tree:\n"
 
     for child_node in tree.get(root_node, []):
         result += topic_tree_string_recursion(
-            tree, child_node, topics, indent_level + 2
+            tree,
+            child_node,
+            topics,
+            topic_sizes,
+            n_objects,
+            indent_level + indent_size,
+            indent_size,
+            cluster_size,
+            cluster_percentage,
+            show_topic_id,
         )
 
     return result
@@ -48,9 +94,14 @@ def topic_tree_html_recursion(
     tree_dict: ClusterTree,
     root_node: Tuple[int, int],
     topic_names: List[List[str]],
+    topic_sizes: List[List[int]],
+    n_objects: int,
     max_layer: int,
     variable_color: bool = False,
     variable_weight: bool = True,
+    cluster_size: bool = False,
+    cluster_percentage: bool = False,
+    show_topic_id: bool = False,
 ) -> str:
     """
     Recursively traverses the topic tree and constructs an HTML representation of the topics.
@@ -77,7 +128,18 @@ def topic_tree_html_recursion(
     """
     layer, index = root_node
     if layer < len(topic_names):
-        topic_name = html.escape(topic_names[layer][index])
+        topic_name = html.escape(
+            topic_name_string(
+                topic_names,
+                layer,
+                index,
+                topic_sizes,
+                n_objects,
+                cluster_size=cluster_size,
+                cluster_percentage=cluster_percentage,
+                show_topic_id=show_topic_id,
+            )
+        )
     else:
         topic_name = "<b>Topic Tree</b>"
 
@@ -122,6 +184,8 @@ def topic_tree_html_recursion(
                 tree_dict,
                 child_id,
                 topic_names,
+                topic_sizes,
+                n_objects,
                 max_layer=max_layer,
                 variable_color=variable_color,
                 variable_weight=variable_weight,
@@ -143,15 +207,17 @@ def topic_tree_html_recursion(
 def topic_tree_html(
     tree_dict: ClusterTree,
     topic_names: List[List[str]],
+    topic_sizes: List[List[int]],
+    n_objects: int,
     variable_color: bool = False,
     variable_weight: bool = True,
 ) -> str:
     """
     Converts a topic tree into an HTML representation.
-    
+
     Parameters
     ----------
-    
+
     tree_dict : ClusterTree
         The topic tree represented as a dictionary.
     topic_names : List[List[str]]
@@ -160,7 +226,7 @@ def topic_tree_html(
         If True, the color of the topic name will vary based on its layer.
     variable_weight : bool
         If True, the font weight of the topic name will vary based on its layer.
-        
+
     Returns
     -------
     str
@@ -175,6 +241,8 @@ def topic_tree_html(
         tree_dict,
         root_node,
         topic_names,
+        topic_sizes,
+        n_objects,
         max_layer=root_node[0],
         variable_color=variable_color,
         variable_weight=variable_weight,
@@ -258,18 +326,27 @@ class TopicTree:
 
     topics : List[List[str]]
         The list of topics to be included in the tree.
-    
+
     Attributes
     ----------
     tree : ClusterTree
         The topic tree represented as a dictionary.
-        
+
     topics : List[List[str]]
         The list of topics to be included in the tree.
     """
-    def __init__(self, tree: ClusterTree, topics: List[List[str]]):
+
+    def __init__(
+        self,
+        tree: ClusterTree,
+        topics: List[List[str]],
+        topic_sizes: List[List[int]],
+        n_objects: int,
+    ) -> None:
         self.tree = tree
         self.topics = topics
+        self.topic_sizes = topic_sizes
+        self.n_objects = n_objects
 
     def __str__(self) -> str:
         root_node = max(
@@ -279,14 +356,94 @@ class TopicTree:
             self.tree,
             root_node,
             self.topics,
+            self.topic_sizes,
+            self.n_objects,
             indent_level=0,
         )
         return result
-    
+
     def _repr_html_(self) -> str:
         return topic_tree_html(
             self.tree,
             self.topics,
+            self.topic_sizes,
+            self.n_objects,
             variable_color=False,
             variable_weight=True,
+        )
+
+    def print(
+        self,
+        indent_size: int = 2,
+        cluster_size: bool = True,
+        cluster_percentage: bool = False,
+        show_topic_id: bool = False,
+    ) -> None:
+        """
+        Prints the topic tree in a human-readable format.
+        
+        Parameters
+        ----------
+        indent_size : int
+            The number of spaces to use for indentation.
+        cluster_size : bool
+            If True, include the size of each cluster in the output.
+        cluster_percentage : bool
+            If True, include the percentage of each cluster in the output.
+        show_topic_id : bool
+            If True, include the topic ID in the output.
+        """
+        tree_string = topic_tree_string_recursion(
+            self.tree,
+            max(self.tree.keys()),
+            self.topics,
+            self.topic_sizes,
+            n_objects=self.n_objects,
+            indent_level=0,
+            indent_size=indent_size,
+            cluster_size=cluster_size,
+            cluster_percentage=cluster_percentage,
+            show_topic_id=show_topic_id,
+        )
+        print(tree_string)
+
+    def html(
+        self,
+        variable_color: bool = False,
+        variable_weight: bool = True,
+        cluster_size: bool = True,
+        cluster_percentage: bool = False,
+        show_topic_id: bool = False,
+    ) -> str:
+        """
+        Returns an HTML representation of the topic tree.
+        
+        Parameters
+        ----------
+        variable_color : bool
+            If True, the color of the topic name will vary based on its layer.
+        variable_weight : bool
+            If True, the font weight of the topic name will vary based on its layer.
+        cluster_size : bool
+            If True, include the size of each cluster in the output.
+        cluster_percentage : bool
+            If True, include the percentage of each cluster in the output.
+        show_topic_id : bool
+            If True, include the topic ID in the output.
+            
+        Returns
+        -------
+        str
+            An HTML representation of the topics in the tree.
+        """
+        return topic_tree_html(
+            self.tree,
+            self.topics,
+            self.topic_sizes,
+            self.n_objects,
+            variable_color=variable_color,
+            variable_weight=variable_weight,
+            cluster_size=cluster_size,
+            cluster_percentage=cluster_percentage,
+            show_topic_id=show_topic_id,
         )
