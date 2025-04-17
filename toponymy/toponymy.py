@@ -142,13 +142,18 @@ class Toponymy:
         self.embedding_vectors_ = embedding_vectors
 
         # Build our layers and cluster tree
-        self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
-            clusterable_vectors,
-            embedding_vectors,
-            self.layer_class,
-            show_progress_bar=self.show_progress_bars,
-            exemplar_delimiters=self.exemplar_delimiters,
-        )
+        if hasattr(self.clusterer, "cluster_layers_") and hasattr(self.clusterer, "cluster_tree_"):
+            # If the clusterer has already been fit, we can skip this step
+            self.cluster_layers_ = self.clusterer.cluster_layers_
+            self.cluster_tree_ = self.clusterer.cluster_tree_
+        else:
+            self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
+                clusterable_vectors,
+                embedding_vectors,
+                self.layer_class,
+                show_progress_bar=self.show_progress_bars,
+                exemplar_delimiters=self.exemplar_delimiters,
+            )
 
         # Initialize other data structures
         self.topic_names_ = [[]] * len(self.cluster_layers_)
