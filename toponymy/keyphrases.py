@@ -214,8 +214,8 @@ def build_keyphrase_count_matrix(
 
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
-    n_chunks = len(objects) // chunk_size + 1
+    chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
+    n_chunks = (len(objects) // chunk_size) + 1
     if verbose:
         print(
             f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase count construction."
