@@ -1,6 +1,8 @@
 import numpy as np
 from tqdm.auto import tqdm
 import httpx
+from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
+
 
 from typing import Optional, List
 
@@ -91,24 +93,27 @@ try:
             self.client = azure.ai.inference.EmbeddingsClient(endpoint=endpoint, credential=self.credentials)
             self.model = model
 
+        @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+        def _encode_batch(self, texts: list) -> np.ndarray:
+            # Call the Azure AI Inference API
+            response = self.client.embed(
+                model=self.model,
+                input=[x if len(x) > 0 else "[NO_TEXT]" for x in texts]
+            )
+            # Extract embeddings from the response
+            embeddings = [item.embedding for item in response.data]
+            if len(embeddings) != len(texts):
+                print(f"Warning: Expected {len(texts)} embeddings, but got {len(embeddings)}.")
+                print(f"Texts: {texts}")
+            assert len(embeddings) == len(texts)
+            return np.array(embeddings)
+
         def encode(self, texts: list, show_progress_bar: bool = False) -> np.ndarray:
             result = []
             
             for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
-                batch = texts[i:i+96]
-                
-                # Call the Azure AI Inference API
-                response = self.client.embed(
-                    model=self.model,
-                    input=batch
-                )
-                
-                # Extract embeddings from the response
-                embeddings = []
-                for embedding_result in response.data:
-                    embeddings.append(embedding_result.embedding)
-                
-                result.append(np.array(embeddings))
+                embeddings = self._encode_batch(texts[i:i+96])
+                result.append(embeddings)
             
             return np.vstack(result)
 
