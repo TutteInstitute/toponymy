@@ -1,6 +1,6 @@
 import numpy as np
 
-from typing import List, Tuple, FrozenSet, Dict, Callable, Any, Optional
+from typing import List, Tuple, FrozenSet, Dict, Callable, Any, Optional, Protocol
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs
 from functools import reduce
@@ -14,15 +14,53 @@ import numba
 
 from tqdm.auto import tqdm
 
+Ngrammer = Callable[[str], List[str]]
+
+from typing import Union, overload, TypeVar, cast
+
+# Define a protocol for objects that behave like Tokenizers
+class TokenizerLike(Protocol):
+    def encode(self, text: str, *args: Any, **kwargs: Any) -> Any:
+        ...
+    
+    def decode(self, ids: Any, *args: Any, **kwargs: Any) -> str:
+        ...
+
+def create_tokenizers_ngrammer(tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)) -> Ngrammer:
+    """
+    Creates an ngrammer function that uses a tokenizer to tokenize the text and then generates n-grams.
+
+    Parameters
+    ----------
+    tokenizer : TokenizerLike
+        A tokenizer object that has encode and decode methods.
+    ngram_range : Tuple[int, int], optional
+        The range of n-grams to consider, by default (1, 4).
+
+    Returns
+    -------
+    Ngrammer
+        A function that takes a string and returns a list of n-grams.
+    """
+    def ngrammer(text: str) -> List[str]:
+        encoded = tokenizer.encode(text)
+        if isinstance(encoded, list):
+            tokens = encoded
+        else:
+            tokens = encoded.ids
+        return [tokenizer.decode(tokens[i : i + n]) for n in range(ngram_range[0], ngram_range[1] + 1) for i in range(len(tokens) - n)]
+
+    return ngrammer
+
 
 def count_docs_ngrams(
-    docs: List[str], ngrammer, stop_words: FrozenSet[str], max_ngrams: int = 250_000
+    docs: List[str], ngrammer: Ngrammer, stop_words: FrozenSet[str], max_ngrams: int = 250_000
 ) -> Dict[str, int]:
     result = {}
     for doc in docs:
         for gram in ngrammer(doc):
             split_gram = gram.split()
-            if split_gram[0] in stop_words or split_gram[-1] in stop_words:
+            if len(split_gram) > 0 and (split_gram[0] in stop_words or split_gram[-1] in stop_words):
                 continue
             if gram in result:
                 result[gram] += 1
@@ -74,7 +112,7 @@ def tree_combine_dicts(
 
 
 def build_count_matrix(
-    docs: List[str], vocab: Dict[str, int], ngrammer: Callable[[str], List[str]]
+    docs: List[str], vocab: Dict[str, int], ngrammer: Ngrammer
 ) -> scipy.sparse.csr_matrix:
     col_indices = []
     indptr = [0]
@@ -108,8 +146,7 @@ def build_count_matrix(
 
 def build_keyphrase_vocabulary(
     objects: List[str],
-    ngram_range: Tuple[int, int] = (1, 4),
-    token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
+    ngrammer: Ngrammer,
     max_features: int = 50_000,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
@@ -122,10 +159,8 @@ def build_keyphrase_vocabulary(
     ----------
     objects : List[str]
         A list of objects; for use in building avocabulary this should be string representations of the objects.
-    ngram_range : Tuple[int, int], optional
-        The range of n-grams to consider, by default (1, 4).
-    token_pattern : str, optional
-        The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
+    ngrammer : Ngrammer
+        A function that takes a string and returns a list of n-grams.
     max_features : int, optional
         The maximum number of features to consider, by default 50_000.
     stop_words : FrozenSet[str], optional
@@ -140,17 +175,9 @@ def build_keyphrase_vocabulary(
     List[str]
         A keyphrase list of the most commonly occurring keyphrases.
     """
-    # use Countvectorizer to build an ngram analyzer to ensure compatiability
-    cv = CountVectorizer(
-        lowercase=True,
-        token_pattern=token_pattern,
-        ngram_range=ngram_range,
-    )
-    ngrammer = cv.build_analyzer()
-
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = max((len(objects) // n_chunks) + 1, 10_000)
+    chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
     n_chunks = len(objects) // chunk_size + 1
     if verbose:
         print(
@@ -167,7 +194,11 @@ def build_keyphrase_vocabulary(
     # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
     all_vocab_counts = tree_combine_dicts(chunked_count_dicts, max_ngrams=max_features * 10)
     vocab_counter = Counter(all_vocab_counts)
-    result = [ngram for ngram, _ in vocab_counter.most_common(max_features)]
+    result = [ngram for ngram, _ in vocab_counter.most_common(max_features) if vocab_counter[ngram] > 1]
+    if len(result) == 0:
+        raise ValueError(
+            "No keyphrases found. Try increasing the max_features parameter or check that there are any re-occuring sections of text."
+        )
 
     return result
 
@@ -175,8 +206,7 @@ def build_keyphrase_vocabulary(
 def build_keyphrase_count_matrix(
     objects: List[str],
     keyphrases: Dict[str, int],
-    ngram_range: Tuple[int, int] = (1, 4),
-    token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
+    ngrammer: Ngrammer,
     n_jobs: int = -1,
     verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
@@ -189,10 +219,8 @@ def build_keyphrase_count_matrix(
         A list of objects; for use in building a count matrix this should be string representations of the objects.
     keyphrases : Dict[str, int]
         A dictionary where keys are keyphrases to count in the objects and values are their respective indices.
-    ngram_range : Tuple[int, int], optional
-        The range of n-grams to consider, by default (1, 4).
-    token_pattern : str, optional
-        The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
+    ngrammer : Ngrammer
+        A function that takes a string and returns a list of n-grams.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
     verbose : bool, optional
@@ -204,14 +232,6 @@ def build_keyphrase_count_matrix(
     scipy.sparse.spmatrix
         A sparse count matrix of keyphrases in the objects.
     """
-    # use Countvectorizer to build an ngram analyzer to ensure compatiability
-    cv = CountVectorizer(
-        lowercase=True,
-        token_pattern=token_pattern,
-        ngram_range=ngram_range,
-    )
-    ngrammer = cv.build_analyzer()
-
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
     chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
@@ -236,6 +256,7 @@ def build_keyphrase_count_matrix(
 def build_object_x_keyphrase_matrix(
     objects: List[str],
     ngram_range: Tuple[int, int] = (1, 4),
+    tokenizer: Optional[TokenizerLike] = None,
     token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
     max_features: int = 50_000,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
@@ -251,6 +272,8 @@ def build_object_x_keyphrase_matrix(
         A list of objects; for use in building a count matrix this should be string representations of the objects.
     ngram_range : Tuple[int, int], optional
         The range of n-grams to consider, by default (1, 4).
+    tokenizer : Optional[TokenizerLike], optional
+        A tokenizer object that has encode and decode methods, by default None. If None, a CountVectorizer is used.
     token_pattern : str, optional
         The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
     max_features : int, optional
@@ -267,10 +290,20 @@ def build_object_x_keyphrase_matrix(
     scipy.sparse.spmatrix
         A sparse count matrix of keyphrases in the objects.
     """
+    if tokenizer is None:
+        # use Countvectorizer to build an ngram analyzer to ensure compatiability
+        cv = CountVectorizer(
+            lowercase=True,
+            token_pattern=token_pattern,
+            ngram_range=ngram_range,
+        )
+        ngrammer = cv.build_analyzer()
+    else:
+        ngrammer = create_tokenizers_ngrammer(tokenizer, ngram_range=ngram_range)
+
     keyphrases = build_keyphrase_vocabulary(
         objects,
-        ngram_range=ngram_range,
-        token_pattern=token_pattern,
+        ngrammer=ngrammer,
         max_features=max_features,
         stop_words=stop_words,
         n_jobs=n_jobs,
@@ -283,8 +316,7 @@ def build_object_x_keyphrase_matrix(
     result = build_keyphrase_count_matrix(
         objects,
         keyphrase_dict,
-        ngram_range=ngram_range,
-        token_pattern=token_pattern,
+        ngrammer=ngrammer,
         n_jobs=n_jobs,
         verbose=verbose,
     )
@@ -310,6 +342,9 @@ class KeyphraseBuilder:
 
     ngram_range : Tuple[int, int], optional
         The range of n-grams to consider, by default (1, 4).
+
+    tokenizer : Optional[TokenizerLike], optional
+        A tokenizer object that has encode and decode methods, by default None. If None, a CountVectorizer is used.
 
     token_pattern : str, optional
         The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
@@ -338,6 +373,7 @@ class KeyphraseBuilder:
         self,
         object_to_text: Optional[Callable[[Any], str]] = None,
         ngram_range: Tuple[int, int] = (1, 4),
+        tokenizer: Optional[TokenizerLike] = None,
         token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
         max_features: int = 50_000,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
@@ -346,6 +382,7 @@ class KeyphraseBuilder:
     ):
         self.object_to_text = object_to_text
         self.ngram_range = ngram_range
+        self.tokenizer = tokenizer
         self.token_pattern = token_pattern
         self.max_features = max_features
         self.stop_words = stop_words
@@ -365,6 +402,7 @@ class KeyphraseBuilder:
             build_object_x_keyphrase_matrix(
                 object_texts,
                 ngram_range=self.ngram_range,
+                tokenizer=self.tokenizer,
                 token_pattern=self.token_pattern,
                 max_features=self.max_features,
                 stop_words=self.stop_words,
