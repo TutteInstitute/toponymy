@@ -148,6 +148,7 @@ def build_keyphrase_vocabulary(
     objects: List[str],
     ngrammer: Ngrammer,
     max_features: int = 50_000,
+    min_occurrences: int = 1,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
     verbose: bool = False,
@@ -163,6 +164,8 @@ def build_keyphrase_vocabulary(
         A function that takes a string and returns a list of n-grams.
     max_features : int, optional
         The maximum number of features to consider, by default 50_000.
+    min_occurrences : int, optional
+        The minimum number of occurrences for a keyphrase to be included, by default 1.
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
@@ -194,7 +197,7 @@ def build_keyphrase_vocabulary(
     # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
     all_vocab_counts = tree_combine_dicts(chunked_count_dicts, max_ngrams=max_features * 10)
     vocab_counter = Counter(all_vocab_counts)
-    result = [ngram for ngram, _ in vocab_counter.most_common(max_features) if vocab_counter[ngram] > 1]
+    result = [ngram for ngram, occurrences in vocab_counter.most_common(max_features) if occurrences >= min_occurrences]
     if len(result) == 0:
         raise ValueError(
             "No keyphrases found. Try increasing the max_features parameter or check that there are any re-occuring sections of text."
@@ -259,6 +262,7 @@ def build_object_x_keyphrase_matrix(
     tokenizer: Optional[TokenizerLike] = None,
     token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
     max_features: int = 50_000,
+    min_occurrences: int = 1,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
     verbose: bool = False,
@@ -278,6 +282,8 @@ def build_object_x_keyphrase_matrix(
         The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
     max_features : int, optional
         The maximum number of features to consider, by default 50_000.
+    min_occurrences : int, optional
+        The minimum number of occurrences for a keyphrase to be included, by default 1.
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
@@ -305,6 +311,7 @@ def build_object_x_keyphrase_matrix(
         objects,
         ngrammer=ngrammer,
         max_features=max_features,
+        min_occurrences=min_occurrences,
         stop_words=stop_words,
         n_jobs=n_jobs,
         verbose=verbose,
@@ -352,6 +359,9 @@ class KeyphraseBuilder:
     max_features : int, optional
         The maximum number of features to consider, by default 50_000.
 
+    min_occurrences : int, optional
+        The minimum number of occurrences for a keyphrase to be included, by default 2, so keyphrases have to re-occur.
+
     stop_words : FrozenSet[str], optional
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
 
@@ -376,6 +386,7 @@ class KeyphraseBuilder:
         tokenizer: Optional[TokenizerLike] = None,
         token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
         max_features: int = 50_000,
+        min_occurrences: int = 2,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
         verbose: bool = False,
@@ -385,6 +396,7 @@ class KeyphraseBuilder:
         self.tokenizer = tokenizer
         self.token_pattern = token_pattern
         self.max_features = max_features
+        self.min_occurrences = min_occurrences
         self.stop_words = stop_words
         self.n_jobs = n_jobs
         self.verbose = verbose
@@ -405,6 +417,7 @@ class KeyphraseBuilder:
                 tokenizer=self.tokenizer,
                 token_pattern=self.token_pattern,
                 max_features=self.max_features,
+                min_occurrences=self.min_occurrences,
                 stop_words=self.stop_words,
                 n_jobs=self.n_jobs,
                 verbose=self.verbose,

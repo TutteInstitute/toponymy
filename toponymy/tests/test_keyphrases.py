@@ -29,7 +29,6 @@ def create_ngrammer(ngram_range, token_pattern=r"(?u)\b\w\w+\b"):
     vectorizer = CountVectorizer(
         ngram_range=ngram_range,
         token_pattern=token_pattern,
-        stop_words="english",
     )
     return vectorizer.build_analyzer()
 
@@ -41,7 +40,7 @@ TOPIC_OBJECTS = json.load(open(Path(__file__).parent / "topic_objects.json", "r"
 ALL_TOPIC_OBJECTS = sum([x["paragraphs"] for x in TOPIC_OBJECTS], [])
 CLUSTER_LAYER = np.concatenate([np.arange(10).repeat(10), np.full(10, -1)])
 MATRIX, KEYPHRASES = build_object_x_keyphrase_matrix(
-    ALL_TOPIC_OBJECTS, token_pattern=r"(?u)\b\w\w+\b", ngram_range=(1, 1)
+    ALL_TOPIC_OBJECTS, token_pattern=r"(?u)\b\w\w+\b", ngram_range=(1, 1), min_occurrences=1
 )
 TOPIC_VECTORS = EMBEDDER.encode(ALL_TOPIC_OBJECTS)
 KEYPHRASE_VECTORS = EMBEDDER.encode(KEYPHRASES)
@@ -103,7 +102,9 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
         TEST_OBJECTS,
         n_jobs=1,
         max_features=max_features,
+        min_occurrences=1,
         ngrammer=ngrammer,
+        stop_words=ENGLISH_STOP_WORDS
     )
     vocabulary_map = {word: i for i, word in enumerate(sorted(vocabulary))}
     count_matrix = build_keyphrase_count_matrix(
@@ -116,6 +117,7 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
     vectorizer = CountVectorizer(
         ngram_range=(1, ngram_range),
         token_pattern=token_pattern,
+        stop_words=None,
     ).fit(TEST_OBJECTS)
     matrix = vectorizer.transform(TEST_OBJECTS)
 
@@ -126,7 +128,7 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
             if x.split()[0] not in ENGLISH_STOP_WORDS
             and x.split()[-1] not in ENGLISH_STOP_WORDS
         ],
-        key=lambda x: vocabulary_map[x] if x in vocabulary_map else len(vocabulary_map),
+        key=lambda x: vocabulary_map[x] if x in vocabulary_map else len(vocabulary_map) + 1,
     )
     all_counts = np.squeeze(np.asarray(matrix.sum(axis=0)))
     vocab_counts = np.asarray(
@@ -134,6 +136,7 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
     )
     vocab_counter = Counter(dict(zip(vocab_subset, vocab_counts)))
     vocab_subset = [x[0] for x in vocab_counter.most_common(max_features)]
+    assert len(vocab_subset) == len(vocabulary)
     assert set(vocab_subset) == set(vocabulary)
 
     sklearn_matrix = CountVectorizer(
