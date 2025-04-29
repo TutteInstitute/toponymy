@@ -1,4 +1,5 @@
 from toponymy.keyphrases import (
+    create_tokenizers_ngrammer,
     build_object_x_keyphrase_matrix,
     build_keyphrase_vocabulary,
     build_keyphrase_count_matrix,
@@ -60,6 +61,18 @@ def test_vocabulary_building(max_features, ngram_range):
     assert (" ".join(["quick", "brown", "fox", "jumps"][:ngram_range])) in vocabulary
     assert (" ".join(["sleeping", "dogs", "lie"][:ngram_range])) in vocabulary
 
+
+@pytest.mark.parametrize("max_features", [900, 450])
+@pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
+def test_tokenizer_vocabulary_building(max_features, ngram_range):
+    ngrammer = create_tokenizers_ngrammer(EMBEDDER.tokenizer, (1, ngram_range))
+    vocabulary = build_keyphrase_vocabulary(
+        TEST_OBJECTS, n_jobs=4, max_features=max_features, ngrammer=ngrammer
+    )
+    assert len(vocabulary) <= max_features
+    assert "the" not in vocabulary
+    assert (" ".join(["quick", "brown", "fox", "jumps"][:ngram_range])) in vocabulary
+    assert (" ".join(["sleeping", "dogs", "lie"][:ngram_range])) in vocabulary
 
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
 def test_count_matrix_building(ngram_range):
