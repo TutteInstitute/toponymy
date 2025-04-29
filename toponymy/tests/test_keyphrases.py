@@ -1,4 +1,5 @@
 from toponymy.keyphrases import (
+    create_tokenizers_ngrammer,
     build_object_x_keyphrase_matrix,
     build_keyphrase_vocabulary,
     build_keyphrase_count_matrix,
@@ -24,25 +25,36 @@ import json
 import bm25s
 import sentence_transformers
 
+def create_ngrammer(ngram_range, token_pattern=r"(?u)\b\w\w+\b"):
+    from sklearn.feature_extraction.text import CountVectorizer
+    vectorizer = CountVectorizer(
+        ngram_range=ngram_range,
+        token_pattern=token_pattern,
+    )
+    return vectorizer.build_analyzer()
+
 EMBEDDER = sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")
 
+BASE_NGRAMMER = create_ngrammer((1, 1))
 TEST_OBJECTS = json.load(open(Path(__file__).parent / "test_objects.json", "r"))
 TOPIC_OBJECTS = json.load(open(Path(__file__).parent / "topic_objects.json", "r"))
 ALL_TOPIC_OBJECTS = sum([x["paragraphs"] for x in TOPIC_OBJECTS], [])
 CLUSTER_LAYER = np.concatenate([np.arange(10).repeat(10), np.full(10, -1)])
 MATRIX, KEYPHRASES = build_object_x_keyphrase_matrix(
-    ALL_TOPIC_OBJECTS, ngram_range=(1, 1), token_pattern=r"(?u)\b\w\w+\b"
+    ALL_TOPIC_OBJECTS, token_pattern=r"(?u)\b\w\w+\b", ngram_range=(1, 1), min_occurrences=1
 )
 TOPIC_VECTORS = EMBEDDER.encode(ALL_TOPIC_OBJECTS)
 KEYPHRASE_VECTORS = EMBEDDER.encode(KEYPHRASES)
 CENTROID_VECTORS = centroids_from_labels(CLUSTER_LAYER, TOPIC_VECTORS)
 
 
+
 @pytest.mark.parametrize("max_features", [900, 300])
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
 def test_vocabulary_building(max_features, ngram_range):
+    ngrammer = create_ngrammer((1, ngram_range))
     vocabulary = build_keyphrase_vocabulary(
-        TEST_OBJECTS, n_jobs=4, max_features=max_features, ngram_range=(1, ngram_range)
+        TEST_OBJECTS, n_jobs=4, max_features=max_features, ngrammer=ngrammer
     )
     assert len(vocabulary) <= max_features
     assert "the" not in vocabulary
@@ -50,14 +62,27 @@ def test_vocabulary_building(max_features, ngram_range):
     assert (" ".join(["sleeping", "dogs", "lie"][:ngram_range])) in vocabulary
 
 
+@pytest.mark.parametrize("max_features", [900, 450])
+@pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
+def test_tokenizer_vocabulary_building(max_features, ngram_range):
+    ngrammer = create_tokenizers_ngrammer(EMBEDDER.tokenizer, (1, ngram_range))
+    vocabulary = build_keyphrase_vocabulary(
+        TEST_OBJECTS, n_jobs=4, max_features=max_features, ngrammer=ngrammer
+    )
+    assert len(vocabulary) <= max_features
+    assert "the" not in vocabulary
+    assert (" ".join(["quick", "brown", "fox", "jumps"][:ngram_range])) in vocabulary
+    assert (" ".join(["sleeping", "dogs", "lie"][:ngram_range])) in vocabulary
+
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
 def test_count_matrix_building(ngram_range):
+    ngrammer = create_ngrammer((1, ngram_range))
     vocabulary = build_keyphrase_vocabulary(
-        TEST_OBJECTS, n_jobs=2, max_features=1000, ngram_range=(1, ngram_range)
+        TEST_OBJECTS, n_jobs=2, max_features=1000, ngrammer=ngrammer
     )
     vocabulary_map = {word: i for i, word in enumerate(vocabulary)}
     count_matrix = build_keyphrase_count_matrix(
-        TEST_OBJECTS, vocabulary_map, n_jobs=4, ngram_range=(1, ngram_range)
+        TEST_OBJECTS, vocabulary_map, n_jobs=4, ngrammer=ngrammer
     )
     assert count_matrix.shape[0] == len(TEST_OBJECTS)
     assert count_matrix.shape[1] == len(vocabulary)
@@ -85,25 +110,27 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
     from sklearn.feature_extraction.text import CountVectorizer
     from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 
+    ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
     vocabulary = build_keyphrase_vocabulary(
         TEST_OBJECTS,
         n_jobs=1,
         max_features=max_features,
-        ngram_range=(1, ngram_range),
-        token_pattern=token_pattern,
+        min_occurrences=1,
+        ngrammer=ngrammer,
+        stop_words=ENGLISH_STOP_WORDS
     )
     vocabulary_map = {word: i for i, word in enumerate(sorted(vocabulary))}
     count_matrix = build_keyphrase_count_matrix(
         TEST_OBJECTS,
         vocabulary_map,
         n_jobs=1,
-        ngram_range=(1, ngram_range),
-        token_pattern=token_pattern,
+        ngrammer=ngrammer,
     )
 
     vectorizer = CountVectorizer(
         ngram_range=(1, ngram_range),
         token_pattern=token_pattern,
+        stop_words=None,
     ).fit(TEST_OBJECTS)
     matrix = vectorizer.transform(TEST_OBJECTS)
 
@@ -114,7 +141,7 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
             if x.split()[0] not in ENGLISH_STOP_WORDS
             and x.split()[-1] not in ENGLISH_STOP_WORDS
         ],
-        key=lambda x: vocabulary_map[x] if x in vocabulary_map else len(vocabulary_map),
+        key=lambda x: vocabulary_map[x] if x in vocabulary_map else len(vocabulary_map) + 1,
     )
     all_counts = np.squeeze(np.asarray(matrix.sum(axis=0)))
     vocab_counts = np.asarray(
@@ -122,6 +149,7 @@ def test_matching_sklearn(ngram_range, token_pattern, max_features):
     )
     vocab_counter = Counter(dict(zip(vocab_subset, vocab_counts)))
     vocab_subset = [x[0] for x in vocab_counter.most_common(max_features)]
+    assert len(vocab_subset) == len(vocabulary)
     assert set(vocab_subset) == set(vocabulary)
 
     sklearn_matrix = CountVectorizer(

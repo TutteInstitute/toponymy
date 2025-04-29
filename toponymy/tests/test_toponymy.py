@@ -17,6 +17,7 @@ import umap
 import pytest
 
 LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+# LLM = HuggingFace("Qwen/Qwen3.0-0.6B")
 EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
 SUBTOPIC_OBJECTS = json.load(open(Path(__file__).parent / "subtopic_objects.json", "r"))
 ALL_SENTENCES = sum(
