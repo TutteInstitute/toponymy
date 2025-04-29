@@ -41,7 +41,7 @@ TOPIC_OBJECTS = json.load(open(Path(__file__).parent / "topic_objects.json", "r"
 ALL_TOPIC_OBJECTS = sum([x["paragraphs"] for x in TOPIC_OBJECTS], [])
 CLUSTER_LAYER = np.concatenate([np.arange(10).repeat(10), np.full(10, -1)])
 MATRIX, KEYPHRASES = build_object_x_keyphrase_matrix(
-    ALL_TOPIC_OBJECTS, ngrammer=BASE_NGRAMMER,
+    ALL_TOPIC_OBJECTS, token_pattern=r"(?u)\b\w\w+\b", ngram_range=(1, 1)
 )
 TOPIC_VECTORS = EMBEDDER.encode(ALL_TOPIC_OBJECTS)
 KEYPHRASE_VECTORS = EMBEDDER.encode(KEYPHRASES)
