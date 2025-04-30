@@ -293,6 +293,9 @@ try:
                     temperature=temperature,
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
+                topic_name_info_text = re.findall(
+                    GET_TOPIC_NAME_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
                 topic_name_info = json.loads(topic_name_info_text)
                 topic_name = topic_name_info["topic_name"]
             except:
