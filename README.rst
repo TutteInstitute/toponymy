@@ -186,9 +186,9 @@ data maps along with layers of topic names.  It takes requires our ``document_ma
 Interactive Topic Visualization
 -----------------------------------
 
-Once you’ve generated the topic names and document map, it's helpful to visualize how topics are distributed across your corpus. We recommend using the `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library for this purpose. It creates interactive, zoomable maps that allow you to explore clusters and topic labels in a spatial layout.
+``Once you’ve generated the topic names and document map, it's helpful to visualize how topics are distributed across your corpus. We recommend using the `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library for this purpose. It creates interactive, zoomable maps that allow you to explore clusters and topic labels in a spatial layout.
 
-Here is an example of using `datamapplot` to visualize your data:
+``Here is an example of using `datamapplot` to visualize your data:
 .. code-block:: python
   pip install datamapplot
   conda install -c conda-forge datamapplot
@@ -203,7 +203,6 @@ Here is an example of using `datamapplot` to visualize your data:
   
   plot
 
-.. code-block:: python
 This will launch an interactive map in your browser or notebook environment, showing document clusters and their associated topic names across all hierarchical layers. You can zoom in to explore fine-grained topics and zoom out to see broader themes, enabling intuitive navigation of the information space.
 
 
