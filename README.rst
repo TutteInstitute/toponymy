@@ -190,14 +190,11 @@ Once you’ve generated the topic names and document map, it's helpful to visual
 
 Here is an example of using `datamapplot` to visualize your data:
 .. code-block:: python
-  # pip install datamapplot
-  # conda install -c conda-forge datamapplot
+  pip install datamapplot
+  conda install -c conda-forge datamapplot
   
   import datamapplot
-  
-  topic_name_vectors = [
-      cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_
-  ]
+  topic_name_vectors = [cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_]
   
   plot = datamapplot.create_interactive_plot(
       document_map,
