@@ -203,7 +203,7 @@ Here is an example of using `datamapplot` to visualize your data:
   
   plot
 
-
+.. code-block:: python
 This will launch an interactive map in your browser or notebook environment, showing document clusters and their associated topic names across all hierarchical layers. You can zoom in to explore fine-grained topics and zoom out to see broader themes, enabling intuitive navigation of the information space.
 
 
