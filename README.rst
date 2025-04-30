@@ -190,22 +190,23 @@ Once you’ve generated the topic names and document map, it's helpful to visual
 
 Here is an example of using `datamapplot` to visualize your data:
 
-.. code-block:: python
-    # pip install datamapplot
-    # conda install -c conda-forge datamapplot
+```python
+# pip install datamapplot
+# conda install -c conda-forge datamapplot
 
-    import datamapplot
+import datamapplot
 
-    topic_name_vectors = [
-        cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_
-    ]
+topic_name_vectors = [
+    cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_
+]
 
-    plot = datamapplot.create_interactive_plot(
-        document_map,
-        *topic_name_vectors,
-    )
+plot = datamapplot.create_interactive_plot(
+    document_map,
+    *topic_name_vectors,
+)
 
-    plot
+plot
+```
 
 This will launch an interactive map in your browser or notebook environment, showing document clusters and their associated topic names across all hierarchical layers. You can zoom in to explore fine-grained topics and zoom out to see broader themes, enabling intuitive navigation of the information space.
 
