@@ -17,7 +17,7 @@ ipykernel
 openai
 cohere
 anthropic
-llama_cpp
+llama-cpp-python
 transformers
 azure-ai-inference
 # For building the documentation
