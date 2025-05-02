@@ -25,8 +25,9 @@ How It Works (Conceptually)
 At its heart, Toponymy follows a multi-stage process:
 
 1.  **Embedding:** Assumes you have (or can generate) vector embeddings for your data items.
-2.  **Multi-Scale Clustering:** Applies hierarchical clustering techniques to the embeddings (or a derived representation like a UMAP projection) to identify groups of data points at various levels of granularity.
-3.  **Information Extraction:** For each cluster at each level, it identifies representative data points (exemplars) and extracts relevant keyphrases.
+2.  **Dimensionality Reduction:** Assumes you have reduced the dimensionality of the embeddings using techniques like UMAP or t-SNE to facilitate clustering and visualization.
+2.  **Multi-Scale Clustering:** Applies custom multiresolution clustering methods to identify groups of data points at various levels of granularity.
+3.  **Information Extraction:** For each cluster at each level, it identifies representative data points (exemplars), extracts relevant keyphrases, and identifies sub-topics.
 4.  **LLM-Powered Naming:** It synthesizes the exemplars, keyphrases, and potentially sub-topic names from finer levels, feeding them into an LLM with carefully crafted prompts to generate a concise, descriptive name for the cluster's topic.
 5.  **Refinement:** Includes steps to disambiguate similar topic names and ensure coherence across the hierarchy.
 
@@ -47,4 +48,4 @@ Next Steps
 Ready to start placing names on your information landmarks?
 
 * Head to the :ref:`installation` guide to get Toponymy set up.
-* Walk through the :ref:`basic_usage` tutorial to see a practical example in action.
+* Walk through the :doc:`basic_usage` tutorial to see a practical example in action.
