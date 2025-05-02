@@ -21,8 +21,16 @@ Toponymy is designed to scale to very large corpora and collections, providing m
 from broad themes to fine-grained topics.  We make use a custom clustering methods, information extraction, 
 and large language models to power this. The library is designed to be flexible and easy to use.
 
-As of now this is an beta version of the library. Things can and will break right now.
-We welcome feedback, use cases and feature suggestions.
+**Quick Install**
+
+.. code-block:: bash
+
+   pip install toponymy
+
+**Beta Status**
+
+   Please note: Toponymy is currently in beta. APIs may evolve. We welcome
+   `feedback and contributions <Your Contribution/Issues Link>`_!
 
 User Guide
 ----------
@@ -31,7 +39,7 @@ Toponymy is designed to be easy to use.  The user guide provides a quick start t
 and a tour of some of the richer functionality and uses cases.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Getting Started:
 
    intro
@@ -39,27 +47,27 @@ and a tour of some of the richer functionality and uses cases.
    basic_usage
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Advanced Usage:
 
    clusterers
-   clusterer_options
+   clustering_options
    keyphrases
    llm_wrappers
    embedding_wrappers
    cluster_layers
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Examples:
 
-   paper_titles
+   ml_papers
    images
    long_documents
    audio_samples
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: Sundries:
 
    api_reference
