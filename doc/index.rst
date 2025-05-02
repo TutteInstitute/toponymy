@@ -70,7 +70,7 @@ and a tour of some of the richer functionality and uses cases.
    :maxdepth: 1
    :caption: Sundries:
 
-   api_reference
+   api
    faq
 
 Indices and tables
