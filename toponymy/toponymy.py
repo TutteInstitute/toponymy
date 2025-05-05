@@ -194,11 +194,15 @@ class Toponymy:
                 embedding_vectors,
             )
         
-        # Generate keyphrase vectors
-        self.keyphrase_vectors_ = self.embedding_model.encode(
-            self.keyphrase_list_, 
-            show_progress_bar=self.show_progress_bars,
-        )
+        if False:
+            # Generate keyphrase vectors ahead of time
+            self.keyphrase_vectors_ = self.embedding_model.encode(
+                self.keyphrase_list_, 
+                show_progress_bar=self.show_progress_bars,
+            )
+        else:
+            # Initialize keyphrase vectors to zero, and fill on demand later
+            self.keyphrase_vectors_ = np.zeros((len(self.keyphrase_list_), self.embedding_model.get_sentence_embedding_dimension()))
 
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
@@ -218,6 +222,7 @@ class Toponymy:
                 self.keyphrase_list_,
                 self.object_x_keyphrase_matrix_,
                 self.keyphrase_vectors_,
+                self.embedding_model,
             )
             
             if i > 0:

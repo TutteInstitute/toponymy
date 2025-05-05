@@ -170,6 +170,7 @@ def test_central_keyphrases_result_sizes(n_keyphrases, diversify_alpha):
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -186,6 +187,7 @@ def test_central_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=0.0,
         n_keyphrases=10,
     )
@@ -224,6 +226,7 @@ def test_bm25_keyphrases_result_sizes(n_keyphrases, diversify_alpha):
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -238,6 +241,7 @@ def test_bm25_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=0.0,
     )
     bm25_objects = [
@@ -274,6 +278,7 @@ def test_information_weighted_keyphrases_result_sizes(n_keyphrases, diversify_al
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -286,7 +291,8 @@ def test_information_weighted_keyphrases():
         CLUSTER_LAYER,
         MATRIX,
         KEYPHRASES,
-        KEYPHRASE_VECTORS,
+        np.zeros_like(KEYPHRASE_VECTORS),
+        EMBEDDER,
         diversify_alpha=0.0,
     )
     sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(CLUSTER_LAYER, MATRIX)

@@ -91,6 +91,7 @@ class ClusterLayer(ABC):
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
+        embedding_model: SentenceTransformer,
     ) -> List[List[str]]:
         pass
 
@@ -377,12 +378,14 @@ class ClusterLayerText(ClusterLayer):
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
+        embedding_model: SentenceTransformer,
     ) -> List[List[str]]:
         self.keyphrases = information_weighted_keyphrases(
             self.cluster_labels,
             object_x_keyphrase_matrix,
             keyphrase_list,
             keyphrase_vectors,
+            embedding_model,
             diversify_alpha=self.keyphrase_diversify_alpha,
             n_keyphrases=self.n_keyphrases,
             show_progress_bar=self.show_progress_bar,
