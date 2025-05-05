@@ -550,11 +550,12 @@ def information_weighted_keyphrases(
         ]
         # Update keyphrase mapping with present keyphrases it is missing
         missing_keyphrases = [keyphrase for keyphrase in keyphrases_present if keyphrase not in keyphrase_vector_mapping]
-        missing_keyphrase_vectors = embedding_model.encode(
-            missing_keyphrases, show_progress_bar=False
-        )
-        for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-            keyphrase_vector_mapping[keyphrase] = vector
+        if len(missing_keyphrases) > 0:
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
 
         # Compute the centroid of the keyphrases present in the cluster
         centroid_vector = np.average(
@@ -662,11 +663,12 @@ def central_keyphrases(
         ]
         # Update keyphrase mapping with present keyphrases it is missing
         missing_keyphrases = [keyphrase for keyphrase in base_candidates if keyphrase not in keyphrase_vector_mapping]
-        missing_keyphrase_vectors = embedding_model.encode(
-            missing_keyphrases, show_progress_bar=False
-        )
-        for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-            keyphrase_vector_mapping[keyphrase] = vector
+        if len(missing_keyphrases) > 0:
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
 
         base_vectors = np.asarray(
             [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
@@ -808,11 +810,12 @@ def bm25_keyphrases(
         ]
                 # Update keyphrase mapping with present keyphrases it is missing
         missing_keyphrases = [keyphrase for keyphrase in keyphrases_present if keyphrase not in keyphrase_vector_mapping]
-        missing_keyphrase_vectors = embedding_model.encode(
-            missing_keyphrases, show_progress_bar=False
-        )
-        for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-            keyphrase_vector_mapping[keyphrase] = vector
+        if len(missing_keyphrases) > 0:
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
 
         # Compute the centroid of the keyphrases present in the cluster
         centroid_vector = np.average(
