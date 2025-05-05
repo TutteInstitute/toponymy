@@ -202,7 +202,12 @@ class Toponymy:
             )
         else:
             # Initialize keyphrase vectors to zero, and fill on demand later
-            self.keyphrase_vectors_ = np.zeros((len(self.keyphrase_list_), self.embedding_model.get_sentence_embedding_dimension()))
+            try:
+                embedding_dimension = self.embedding_model.get_sentence_embedding_dimension()
+            except AttributeError:
+                embedding_dimension = self.embedding_model.encode(["Get the embedding dimension of this string"]).shape[1]
+                
+            self.keyphrase_vectors_ = np.zeros((len(self.keyphrase_list_), embedding_dimension))
 
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
