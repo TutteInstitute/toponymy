@@ -319,6 +319,9 @@ try:
                     temperature=temperature,
                 )
                 topic_name_info_text = topic_name_info_raw.content[0].text
+                topic_name_info_text = re.findall(
+                    GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
                 topic_name_info = json.loads(topic_name_info_text)
             except Exception as e:
                 warn(f"Failed to generate topic cluster names with Anthropic: {e}")
@@ -406,6 +409,9 @@ try:
                     response_format={"type": "json_object"},
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
+                topic_name_info_text = re.findall(
+                    GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
                 topic_name_info = json.loads(topic_name_info_text)
             except Exception as e:
                 warn(f"Failed to generate topic cluster names with OpenAI: {e}")
@@ -490,6 +496,9 @@ try:
                     temperature=temperature,
                 )
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
+                topic_name_info_text = re.findall(
+                    GET_TOPIC_CLUSTER_NAMES_REGEX, topic_name_info_text, re.DOTALL
+                )[0]
                 topic_name_info = json.loads(topic_name_info_text)
             except Exception as e:
                 warn(f"Failed to generate topic cluster names with AzureAI: {e}")
