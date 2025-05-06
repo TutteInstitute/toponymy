@@ -82,7 +82,8 @@ try:
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
-                    mapping.get(f"{n}. {name}", name)
+                    # Empty names can cause issues, so cater to that is possible
+                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
                     for n, name in enumerate(old_names, start=1)
                 ]
                 return result
@@ -161,7 +162,8 @@ try:
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
-                    mapping.get(f"{n}. {name}", name)
+                    # Empty names can cause issues, so cater to that is possible
+                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
                     for n, name in enumerate(old_names, start=1)
                 ]
                 return result
@@ -246,7 +248,8 @@ try:
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
-                    mapping.get(f"{n}. {name}", name)
+                    # Empty names can cause issues, so cater to that is possible
+                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
                     for n, name in enumerate(old_names, start=1)
                 ]
                 return result
@@ -330,7 +333,8 @@ try:
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
-                    mapping.get(f"{n}. {name}", name)
+                    # Empty names can cause issues, so cater to that is possible
+                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
                     for n, name in enumerate(old_names, start=1)
                 ]
                 return result
@@ -420,7 +424,8 @@ try:
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
-                    mapping.get(f"{n}. {name}", name)
+                    # Empty names can cause issues, so cater to that is possible
+                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
                     for n, name in enumerate(old_names, start=1)
                 ]
                 return result
@@ -507,7 +512,8 @@ try:
             mapping = topic_name_info["new_topic_name_mapping"]
             if len(mapping) == len(old_names):
                 result = [
-                    mapping.get(f"{n}. {name}", name)
+                    # Empty names can cause issues, so cater to that is possible
+                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
                     for n, name in enumerate(old_names, start=1)
                 ]
                 return result
