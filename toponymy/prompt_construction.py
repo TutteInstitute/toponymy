@@ -175,6 +175,8 @@ def distinguish_topic_names_prompt(
         larger_topic = (
             ", ".join(unique_topic_names[:-1]) + " and " + unique_topic_names[-1]
         )
+    if len(larger_topic) == 0: 
+        larger_topic = f"topics found in {corpus_description}"
 
     keyphrases_per_topic = [keyphrases[i][:max_num_keyphrases] for i in topic_indices]
     exemplar_texts_per_topic = [

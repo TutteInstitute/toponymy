@@ -43,7 +43,7 @@ def test_abstract_cluster_layer():
         ALL_SENTENCES, OBJECT_VECTORS
     )
     keyphrases = concrete_cluster_layer.make_keyphrases(
-        ALL_SENTENCES, csr_matrix(np.array([[1, 0], [0, 1]])), OBJECT_VECTORS
+        ALL_SENTENCES, csr_matrix(np.array([[1, 0], [0, 1]])), OBJECT_VECTORS, EMBEDDER
     )
     subtopics = concrete_cluster_layer.make_subtopics(
         ALL_SUBTOPICS, SUBTOPIC_LABEL_VECTOR, SUBTOPIC_CENTROID_VECTORS
@@ -95,7 +95,7 @@ def test_make_data():
     matrix, keyphrases = keyphrase_builder.fit_transform(ALL_SENTENCES)
     keyphrase_vectors = EMBEDDER.encode(keyphrases)
     cluster_layer.make_exemplar_texts(ALL_SENTENCES, OBJECT_VECTORS)
-    cluster_layer.make_keyphrases(keyphrases, matrix, keyphrase_vectors)
+    cluster_layer.make_keyphrases(keyphrases, matrix, keyphrase_vectors, EMBEDDER)
     cluster_layer.make_subtopics(
         ALL_SUBTOPICS, SUBTOPIC_LABEL_VECTOR, SUBTOPIC_CENTROID_VECTORS
     )

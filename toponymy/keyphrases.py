@@ -9,6 +9,8 @@ from toponymy.utility_functions import diversify_max_alpha as diversify
 from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
 
+from sentence_transformers import SentenceTransformer
+
 import scipy.sparse
 import numba
 
@@ -472,6 +474,7 @@ def information_weighted_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
@@ -490,6 +493,8 @@ def information_weighted_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     prior_strength : float, optional
@@ -508,7 +513,7 @@ def information_weighted_keyphrases(
     """
     keyphrase_vector_mapping = {
         keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors) if not np.all(vector == 0.0)
     }
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
@@ -543,6 +548,16 @@ def information_weighted_keyphrases(
         keyphrases_present = [
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [keyphrase for keyphrase in keyphrases_present if keyphrase not in keyphrase_vector_mapping]
+        if len(missing_keyphrases) > 0:
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
+        # Compute the centroid of the keyphrases present in the cluster
         centroid_vector = np.average(
             [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
             weights=keyphrase_weights,
@@ -553,7 +568,7 @@ def information_weighted_keyphrases(
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
-            keyphrase_list[column_map[j]] for j in reversed(chosen_indices)
+            keyphrase_list[column_map[j]] for j in reversed(chosen_indices) if j in keyphrases_present_indices
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -571,6 +586,11 @@ def information_weighted_keyphrases(
 
         result.append(chosen_keyphrases)
 
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+
     return result
 
 
@@ -579,6 +599,7 @@ def central_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     diversify_alpha: float = 1.0,
     show_progress_bar: bool = False,
@@ -596,6 +617,8 @@ def central_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     diversify_alpha : float, optional
@@ -610,7 +633,7 @@ def central_keyphrases(
     """
     keyphrase_vector_mapping = {
         keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors) if not np.all(vector == 0.0)
     }
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
@@ -638,6 +661,15 @@ def central_keyphrases(
         base_candidates = [
             keyphrase_list[column_map[j]] for j in base_candidate_indices
         ]
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [keyphrase for keyphrase in base_candidates if keyphrase not in keyphrase_vector_mapping]
+        if len(missing_keyphrases) > 0:
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
         base_vectors = np.asarray(
             [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
         )
@@ -666,6 +698,12 @@ def central_keyphrases(
 
         result.append(chosen_keyphrases)
 
+
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+            
     return result
 
 
@@ -674,6 +712,7 @@ def bm25_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     k1: float = 1.5,
     b: float = 0.75,
@@ -692,6 +731,8 @@ def bm25_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     k1 : float, optional
@@ -708,7 +749,7 @@ def bm25_keyphrases(
     """
     keyphrase_vector_mapping = {
         keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors) if not np.all(vector == 0.0)
     }
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
@@ -767,6 +808,16 @@ def bm25_keyphrases(
         keyphrases_present = [
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
+                # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [keyphrase for keyphrase in keyphrases_present if keyphrase not in keyphrase_vector_mapping]
+        if len(missing_keyphrases) > 0:
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
+        # Compute the centroid of the keyphrases present in the cluster
         centroid_vector = np.average(
             [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
             weights=keyphrase_weights,
@@ -777,7 +828,7 @@ def bm25_keyphrases(
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
-            keyphrase_list[column_map[j]] for j in reversed(chosen_indices)
+            keyphrase_list[column_map[j]] for j in reversed(chosen_indices) if j in keyphrases_present_indices
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -794,5 +845,11 @@ def bm25_keyphrases(
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
         result.append(chosen_keyphrases)
+
+
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
 
     return result

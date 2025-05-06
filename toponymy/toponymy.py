@@ -138,6 +138,7 @@ class Toponymy:
         self: object
             Returns the instance of the class.
         """
+        pre_embed_all_keyphrases = True # True if the keyphrase vectors should be pre-embedded.  This is useful for large datasets where we want to save time later.
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
 
@@ -194,11 +195,20 @@ class Toponymy:
                 embedding_vectors,
             )
         
-        # Generate keyphrase vectors
-        self.keyphrase_vectors_ = self.embedding_model.encode(
-            self.keyphrase_list_, 
-            show_progress_bar=self.show_progress_bars,
-        )
+        if pre_embed_all_keyphrases:
+            # Generate keyphrase vectors ahead of time
+            self.keyphrase_vectors_ = self.embedding_model.encode(
+                self.keyphrase_list_, 
+                show_progress_bar=self.show_progress_bars,
+            )
+        else:
+            # Initialize keyphrase vectors to zero, and fill on demand later
+            try:
+                embedding_dimension = self.embedding_model.get_sentence_embedding_dimension()
+            except AttributeError:
+                embedding_dimension = self.embedding_model.encode(["Get the embedding dimension of this string"]).shape[1]
+
+            self.keyphrase_vectors_ = np.zeros((len(self.keyphrase_list_), embedding_dimension))
 
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
@@ -218,6 +228,7 @@ class Toponymy:
                 self.keyphrase_list_,
                 self.object_x_keyphrase_matrix_,
                 self.keyphrase_vectors_,
+                self.embedding_model,
             )
             
             if i > 0:

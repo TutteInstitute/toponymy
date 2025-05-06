@@ -70,7 +70,7 @@ where SCORE is a value in the range 0 to 1.
 You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
-Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {{self.document_type}} from the topic area.
+Below are the auto-generated topic names, along with some keywords associated to each topic, and a sampling of {{document_type}} from the topic area.
 
 {% for topic in topics %}
 
