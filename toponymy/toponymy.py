@@ -98,7 +98,7 @@ class Toponymy:
         corpus_description: str = "collection of objects",
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
-        exemplar_delimiters: List[str] = ["    *\"", "\"\n"],
+        exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
         show_progress_bars: bool = True,
     ):
         self.llm_wrapper = llm_wrapper

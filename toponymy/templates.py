@@ -114,7 +114,7 @@ Each new topic name should be specific to the information of that topic and suff
 {% elif "general" in summary_kind -%}
 Each topic name should be broad and simple enough to capture of overall sense of the large and diverse range of {{document_type}} contained in it at a glance, while still separating it from the other topics listed.
 {%- endif %}
-The new names must be in the same order as presented above. There should be no duplicate topic names in the final list.
+The new names must be in the same order as presented above. There should be no duplicate topic names in the final list. The primary goal is to make each new topic name clearly distinguishable from the others in this list, based on the provided details.
 
 The response should be formatted as JSON in the format 
     {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
