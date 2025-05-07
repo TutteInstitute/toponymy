@@ -155,7 +155,7 @@ class Toponymy:
                 self.layer_class,
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
-                prompt_format="system_user" if self.llm_wrapper.supports_system_prompt else "combined",
+                prompt_format="system_user" if self.llm_wrapper.supports_system_prompts else "combined",
             )
 
         # Initialize other data structures
