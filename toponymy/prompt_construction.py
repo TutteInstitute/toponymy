@@ -7,7 +7,7 @@ from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import pairwise_distances
 from sentence_transformers import SentenceTransformer
 
-from typing import List, Optional, Any, Tuple
+from typing import List, Optional, Any, Tuple, Union, Dict
 
 COSINE_DISTANCE_EPSILON = 1e-6
 
@@ -124,7 +124,9 @@ def distinguish_topic_names_prompt(
     max_num_exemplars: int = 128,
     exemplar_start_delimiter: str = "    * \"",
     exemplar_end_delimiter: str = "\"\n",
-) -> str:
+    prompt_format: str = "combined",
+    prompt_template: Optional[str] = None,
+) -> Union[str, Dict[str, str]]:
     """
     Construct a prompt for distinguishing between multiple topics.
 
@@ -160,10 +162,16 @@ def distinguish_topic_names_prompt(
         Start delimiter for exemplar texts, by default "    * \""
     exemplar_end_delimiter : str, optional
         End delimiter for exemplar texts, by default "\"\n"
+    prompt_format : str, optional
+        Format of the prompt, either "combined" or "system_user" to use a separate
+        system prompt, by default "combined". 
+    prompt_template : Optional[str], optional
+        Custom prompt template to use, by default None. If provided, this will override
+        the default prompt template.
 
     Returns
     -------
-    prompt: str
+    prompt: str or dict
         LLM Prompt for distinguishing between the topics.
     """
     attempted_topic_names = [all_topic_names[layer_id][x] for x in topic_indices]
@@ -182,6 +190,9 @@ def distinguish_topic_names_prompt(
     exemplar_texts_per_topic = [
         exemplar_texts[i][:max_num_exemplars] for i in topic_indices
     ]
+
+    has_any_major_subtopics = False
+
     if subtopics is not None and cluster_tree is not None:
         tree_subtopics_per_topic = [cluster_tree[(layer_id, x)] for x in topic_indices]
         major_subtopics_per_topic = [
@@ -192,6 +203,9 @@ def distinguish_topic_names_prompt(
             ]
             for tree_subtopics in tree_subtopics_per_topic
         ]
+        has_any_major_subtopics = any(
+            len(major_subtopics) > 0 for major_subtopics in major_subtopics_per_topic
+        )
         minor_subtopics_per_topic = [
             [
                 all_topic_names[layer_id - 2][a[1]]
@@ -208,24 +222,43 @@ def distinguish_topic_names_prompt(
         minor_subtopics_per_topic = [False] * len(topic_indices)
         other_subtopics_per_topic = [False] * len(topic_indices)
 
-    prompt = PROMPT_TEMPLATES["disambiguate_topics"].render(
-        larger_topic=larger_topic,
-        document_type=object_description,
-        corpus_description=corpus_description,
-        topics=attempted_topic_names,
-        cluster_keywords=keyphrases_per_topic,
-        cluster_subtopics={
+    is_very_specific = "very specific" in summary_kind
+    is_general = "general" in summary_kind
+
+    render_params = {
+        "larger_topic": larger_topic,
+        "document_type": object_description,
+        "corpus_description": corpus_description,
+        "topics": attempted_topic_names, 
+        "cluster_keywords": keyphrases_per_topic,
+        "cluster_subtopics": {
             "major": major_subtopics_per_topic,
             "minor": minor_subtopics_per_topic,
             "misc": other_subtopics_per_topic,
         },
-        cluster_sentences=exemplar_texts_per_topic,
-        exemplar_start_delimiter=exemplar_start_delimiter,
-        exemplar_end_delimiter=exemplar_end_delimiter,
-        summary_kind=summary_kind,
-    )
+        "cluster_sentences": exemplar_texts_per_topic,
+        "exemplar_start_delimiter": exemplar_start_delimiter,
+        "exemplar_end_delimiter": exemplar_end_delimiter,
+        "summary_kind": summary_kind,
+        "is_very_specific_summary": is_very_specific,
+        "is_general_summary": is_general,
+        "has_major_subtopics": has_any_major_subtopics,
+    }
 
-    return prompt
+    if prompt_template is not None:
+        template_set = prompt_template
+    else:
+        template_set = PROMPT_TEMPLATES["disambiguate_topics"]
+
+    if prompt_format == "system_user":
+        system_prompt = template_set["system"].render(**render_params)
+        user_prompt = template_set["user"].render(**render_params)
+        return {"system": system_prompt, "user": user_prompt}
+    elif prompt_format == "combined":
+        return template_set["combined"].render(**render_params)
+    else:
+        raise ValueError(f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'.")
+
 
 
 def topic_name_prompt(
@@ -244,7 +277,9 @@ def topic_name_prompt(
     max_num_exemplars: int = 128,
     exemplar_start_delimiter: str = "    * \"",
     exemplar_end_delimiter: str = "\"\n",
-):
+    prompt_format: str = "combined",
+    prompt_template: Optional[str] = None,
+) -> Union[str, Dict[str, str]]:
     """
     Construct a prompt for naming a topic.
 
@@ -280,10 +315,16 @@ def topic_name_prompt(
         Start delimiter for exemplar texts, by default "    * \""
     exemplar_end_delimiter : str, optional
         End delimiter for exemplar texts, by default "\"\n"
+    prompt_format : str, optional
+        Format of the prompt, either "combined" or "system_user" to use a separate
+        system prompt, by default "combined".
+    prompt_template : Optional[str], optional
+        Custom prompt template to use, by default None. If provided, this will override
+        the default prompt template.
 
     Returns
     -------
-    prompt: str
+    prompt: str or dict
         LLM Prompt for naming the topic.
     """
     if subtopics and cluster_tree is not None:
@@ -321,19 +362,40 @@ def topic_name_prompt(
         minor_subtopics = []
         other_subtopics = []
 
-    prompt = PROMPT_TEMPLATES["layer"].render(
-        document_type=object_description,
-        corpus_description=corpus_description,
-        cluster_keywords=keyphrases[topic_index][:max_num_keyphrases],
-        cluster_subtopics={
+    current_keyphrases = keyphrases[topic_index][:max_num_keyphrases] if topic_index < len(keyphrases) else []
+    current_exemplars = exemplar_texts[topic_index][:max_num_exemplars] if topic_index < len(exemplar_texts) else []
+    
+    is_very_specific = "very specific" in summary_kind
+    is_general = "general" in summary_kind
+    
+    render_params = {
+        "document_type": object_description,
+        "corpus_description": corpus_description,
+        "cluster_keywords": current_keyphrases,
+        "cluster_subtopics": {
             "major": major_subtopics,
             "minor": minor_subtopics,
             "misc": other_subtopics,
         },
-        cluster_sentences=exemplar_texts[topic_index][:max_num_exemplars],
-        summary_kind=summary_kind,
-        exemplar_start_delimiter=exemplar_start_delimiter,
-        exemplar_end_delimiter=exemplar_end_delimiter,
-    )
+        "cluster_sentences": current_exemplars,
+        "summary_kind": summary_kind,
+        "exemplar_start_delimiter": exemplar_start_delimiter,
+        "exemplar_end_delimiter": exemplar_end_delimiter,
+        "is_very_specific_summary": is_very_specific,
+        "is_general_summary": is_general,
+        "has_major_subtopics": bool(major_subtopics),
+    }
 
-    return prompt
+    if prompt_template is not None:
+        template_set = prompt_template
+    else:
+        template_set = PROMPT_TEMPLATES["layer"]
+
+    if prompt_format == "system_user":
+        system_prompt = template_set["system"].render(**render_params)
+        user_prompt = template_set["user"].render(**render_params)
+        return {"system": system_prompt, "user": user_prompt}
+    elif prompt_format == "combined":
+        return template_set["combined"].render(**render_params)
+    else:
+        raise ValueError(f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'.")

@@ -22,7 +22,7 @@ def test_topic_name_prompt_no_subtopics():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["layer"].render(
+    expected_prompt = PROMPT_TEMPLATES["layer"]["combined"].render(
         document_type=object_description,
         corpus_description=corpus_description,
         cluster_keywords=keyphrases[topic_index][:32],
@@ -68,7 +68,7 @@ def test_topic_name_prompt_with_subtopics():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["layer"].render(
+    expected_prompt = PROMPT_TEMPLATES["layer"]["combined"].render(
         document_type=object_description,
         corpus_description=corpus_description,
         cluster_keywords=keyphrases[topic_index][:32],
@@ -81,6 +81,7 @@ def test_topic_name_prompt_with_subtopics():
         summary_kind=summary_kind,
         exemplar_start_delimiter="    * \"",
         exemplar_end_delimiter="\"\n",
+        has_major_subtopics=True,
     )
 
     prompt = topic_name_prompt(
@@ -119,7 +120,7 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["layer"].render(
+    expected_prompt = PROMPT_TEMPLATES["layer"]["combined"].render(
         document_type=object_description,
         corpus_description=corpus_description,
         cluster_keywords=keyphrases[topic_index][:32],
@@ -132,6 +133,7 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
         summary_kind=summary_kind,
         exemplar_start_delimiter="    * \"",
         exemplar_end_delimiter="\"\n",
+        has_major_subtopics=True,
     )
 
     prompt = topic_name_prompt(
@@ -165,7 +167,7 @@ def test_topic_name_prompt_with_empty_subtopics():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["layer"].render(
+    expected_prompt = PROMPT_TEMPLATES["layer"]["combined"].render(
         document_type=object_description,
         corpus_description=corpus_description,
         cluster_keywords=keyphrases[topic_index][:32],
@@ -178,6 +180,7 @@ def test_topic_name_prompt_with_empty_subtopics():
         summary_kind=summary_kind,
         exemplar_start_delimiter="    * \"",
         exemplar_end_delimiter="\"\n",
+        has_major_subtopics=True,
     )
 
     prompt = topic_name_prompt(
@@ -345,7 +348,7 @@ def test_distinguish_topic_names_prompt_no_subtopics():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"].render(
+    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["combined"].render(
         larger_topic="Topic C and Topic D",
         document_type=object_description,
         corpus_description=corpus_description,
@@ -393,7 +396,7 @@ def test_distinguish_topic_names_prompt_with_subtopics():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"].render(
+    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["combined"].render(
         larger_topic="Topic A and Topic B",
         document_type=object_description,
         corpus_description=corpus_description,
@@ -440,7 +443,7 @@ def test_distinguish_topic_names_prompt_with_single_topic():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"].render(
+    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["combined"].render(
         larger_topic="Topic B",
         document_type=object_description,
         corpus_description=corpus_description,
@@ -488,7 +491,7 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"].render(
+    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["combined"].render(
         larger_topic="Topic A and Topic B",
         document_type=object_description,
         corpus_description=corpus_description,
@@ -519,3 +522,370 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
     )
 
     assert prompt == expected_prompt
+
+def test_topic_name_prompt_system_user_format():
+    topic_index = 0
+    layer_id = 1
+    all_topic_names = [["Topic A"], ["Topic B"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "summary"
+
+    expected_system_prompt = PROMPT_TEMPLATES["layer"]["system"].render(
+        document_type=object_description,
+        corpus_description=corpus_description,
+        cluster_keywords=keyphrases[topic_index][:32],
+        cluster_subtopics={
+            "major": [],
+            "minor": [],
+            "misc": [],
+        },
+        cluster_sentences=exemplar_texts[topic_index][:128],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+    )
+
+    expected_user_prompt = PROMPT_TEMPLATES["layer"]["user"].render(
+        document_type=object_description,
+        corpus_description=corpus_description,
+        cluster_keywords=keyphrases[topic_index][:32],
+        cluster_subtopics={
+            "major": [],
+            "minor": [],
+            "misc": [],
+        },
+        cluster_sentences=exemplar_texts[topic_index][:128],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+    )
+
+    prompts = topic_name_prompt(
+        topic_index,
+        layer_id,
+        all_topic_names,
+        exemplar_texts,
+        keyphrases,
+        subtopics,
+        cluster_tree,
+        object_description,
+        corpus_description,
+        summary_kind,
+        prompt_format="system_user"
+    )
+
+    assert prompts["system"] == expected_system_prompt
+    assert prompts["user"] == expected_user_prompt
+
+
+def test_topic_name_prompt_custom_template():
+    topic_index = 0
+    layer_id = 1
+    all_topic_names = [["Topic A"], ["Topic B"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "summary"
+    
+    custom_template = PROMPT_TEMPLATES["layer"]  # Using existing template for test
+
+    prompt = topic_name_prompt(
+        topic_index,
+        layer_id,
+        all_topic_names,
+        exemplar_texts,
+        keyphrases,
+        subtopics,
+        cluster_tree,
+        object_description,
+        corpus_description,
+        summary_kind,
+        prompt_template=custom_template
+    )
+
+    expected_prompt = custom_template["combined"].render(
+        document_type=object_description,
+        corpus_description=corpus_description,
+        cluster_keywords=keyphrases[topic_index][:32],
+        cluster_subtopics={
+            "major": [],
+            "minor": [],
+            "misc": [],
+        },
+        cluster_sentences=exemplar_texts[topic_index][:128],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+    )
+
+    assert prompt == expected_prompt
+
+
+def test_distinguish_topic_names_prompt_system_user_format():
+    topic_indices = np.array([0, 1])
+    layer_id = 1
+    all_topic_names = [["Topic A", "Topic B"], ["Topic C", "Topic D"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "summary"
+
+    expected_system_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["system"].render(
+        larger_topic="Topic C and Topic D",
+        document_type=object_description,
+        corpus_description=corpus_description,
+        topics=["Topic C", "Topic D"],
+        cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
+        cluster_subtopics={
+            "major": [False, False],
+            "minor": [False, False],
+            "misc": [False, False],
+        },
+        cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+    )
+
+    expected_user_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["user"].render(
+        larger_topic="Topic C and Topic D",
+        document_type=object_description,
+        corpus_description=corpus_description,
+        topics=["Topic C", "Topic D"],
+        cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
+        cluster_subtopics={
+            "major": [False, False],
+            "minor": [False, False],
+            "misc": [False, False],
+        },
+        cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+    )
+
+    prompts = distinguish_topic_names_prompt(
+        topic_indices,
+        layer_id,
+        all_topic_names,
+        exemplar_texts,
+        keyphrases,
+        subtopics,
+        cluster_tree,
+        object_description,
+        corpus_description,
+        summary_kind,
+        prompt_format="system_user"
+    )
+
+    assert prompts["system"] == expected_system_prompt
+    assert prompts["user"] == expected_user_prompt
+
+
+def test_distinguish_topic_names_prompt_custom_template():
+    topic_indices = np.array([0, 1])
+    layer_id = 1
+    all_topic_names = [["Topic A", "Topic B"], ["Topic C", "Topic D"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "summary"
+    
+    custom_template = PROMPT_TEMPLATES["disambiguate_topics"]  # Using existing template for test
+
+    prompt = distinguish_topic_names_prompt(
+        topic_indices,
+        layer_id,
+        all_topic_names,
+        exemplar_texts,
+        keyphrases,
+        subtopics,
+        cluster_tree,
+        object_description,
+        corpus_description,
+        summary_kind,
+        prompt_template=custom_template
+    )
+
+    expected_prompt = custom_template["combined"].render(
+        larger_topic="Topic C and Topic D",
+        document_type=object_description,
+        corpus_description=corpus_description,
+        topics=["Topic C", "Topic D"],
+        cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
+        cluster_subtopics={
+            "major": [False, False],
+            "minor": [False, False],
+            "misc": [False, False],
+        },
+        cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+    )
+
+    assert prompt == expected_prompt
+
+
+def test_distinguish_topic_names_prompt_very_specific_summary():
+    topic_indices = np.array([0, 1])
+    layer_id = 1
+    all_topic_names = [["Topic A", "Topic B"], ["Topic C", "Topic D"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "very specific summary"
+
+    expected_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["combined"].render(
+        larger_topic="Topic C and Topic D",
+        document_type=object_description,
+        corpus_description=corpus_description,
+        topics=["Topic C", "Topic D"],
+        cluster_keywords=[["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
+        cluster_subtopics={
+            "major": [False, False],
+            "minor": [False, False],
+            "misc": [False, False],
+        },
+        cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+        is_very_specific_summary=True,
+        is_general_summary=False,
+        has_major_subtopics=False,
+    )
+
+    prompt = distinguish_topic_names_prompt(
+        topic_indices,
+        layer_id,
+        all_topic_names,
+        exemplar_texts,
+        keyphrases,
+        subtopics,
+        cluster_tree,
+        object_description,
+        corpus_description,
+        summary_kind,
+    )
+
+    assert prompt == expected_prompt
+
+
+def test_topic_name_prompt_general_summary():
+    topic_index = 0
+    layer_id = 1
+    all_topic_names = [["Topic A"], ["Topic B"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "general summary"
+
+    expected_prompt = PROMPT_TEMPLATES["layer"]["combined"].render(
+        document_type=object_description,
+        corpus_description=corpus_description,
+        cluster_keywords=keyphrases[topic_index][:32],
+        cluster_subtopics={
+            "major": [],
+            "minor": [],
+            "misc": [],
+        },
+        cluster_sentences=exemplar_texts[topic_index][:128],
+        summary_kind=summary_kind,
+        exemplar_start_delimiter="    * \"",
+        exemplar_end_delimiter="\"\n",
+        is_very_specific_summary=False,
+        is_general_summary=True,
+        has_major_subtopics=False,
+    )
+
+    prompt = topic_name_prompt(
+        topic_index,
+        layer_id,
+        all_topic_names,
+        exemplar_texts,
+        keyphrases,
+        subtopics,
+        cluster_tree,
+        object_description,
+        corpus_description,
+        summary_kind,
+    )
+
+    assert prompt == expected_prompt
+
+
+def test_topic_name_prompt_invalid_format():
+    topic_index = 0
+    layer_id = 1
+    all_topic_names = [["Topic A"], ["Topic B"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "summary"
+
+    with pytest.raises(ValueError, match="Unsupported prompt_format"):
+        topic_name_prompt(
+            topic_index,
+            layer_id,
+            all_topic_names,
+            exemplar_texts,
+            keyphrases,
+            subtopics,
+            cluster_tree,
+            object_description,
+            corpus_description,
+            summary_kind,
+            prompt_format="invalid_format"
+        )
+
+
+def test_distinguish_topic_names_prompt_invalid_format():
+    topic_indices = np.array([0, 1])
+    layer_id = 1
+    all_topic_names = [["Topic A", "Topic B"], ["Topic C", "Topic D"]]
+    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
+    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
+    subtopics = None
+    cluster_tree = None
+    object_description = "document"
+    corpus_description = "corpus"
+    summary_kind = "summary"
+
+    with pytest.raises(ValueError, match="Unsupported prompt_format"):
+        distinguish_topic_names_prompt(
+            topic_indices,
+            layer_id,
+            all_topic_names,
+            exemplar_texts,
+            keyphrases,
+            subtopics,
+            cluster_tree,
+            object_description,
+            corpus_description,
+            summary_kind,
+            prompt_format="invalid_format"
+        )

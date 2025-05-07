@@ -67,6 +67,22 @@ class MockLLMResponse:
         return Mock(text=content)
     
     @staticmethod
+    def create_cohere_response_v2(content: str):
+        class Content:
+            def __init__(self, text):
+                self.text = text
+        
+        class Message:
+            def __init__(self, content):
+                self.content = [Content(content)]
+
+        class Response:
+            def __init__(self, content):
+                self.message = Message(content)
+        
+        return Response(content)
+    
+    @staticmethod
     def create_huggingface_response(content: str):
         return [{"generated_text": content}]
     
@@ -282,26 +298,29 @@ def test_openai_generate_cluster_names_failure(openai_wrapper, mock_data):
 # Cohere Tests
 @pytest.fixture
 def cohere_wrapper():
-    with patch('cohere.Client'):
+    with patch('cohere.ClientV2') as mock_client:
+        # Mock the models.get method to prevent UnauthorizedError
+        mock_client.return_value.models = Mock()
+        mock_client.return_value.models.get = Mock()
         wrapper = Cohere(API_KEY="dummy")
         return wrapper
 
 def test_cohere_generate_topic_name_success(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response(mock_data["valid_topic_name"])
+    response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_topic_name"])
     cohere_wrapper.llm.chat = Mock(return_value=response)
     
     result = cohere_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
 def test_cohere_generate_cluster_names_success(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response(mock_data["valid_cluster_names"])
+    response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_cluster_names"])
     cohere_wrapper.llm.chat = Mock(return_value=response)
     
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_cohere_generate_cluster_names_success_on_malformed_mapping(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response(mock_data["malformed_mapping"])
+    response = MockLLMResponse.create_cohere_response_v2(mock_data["malformed_mapping"])
     cohere_wrapper.llm.chat = Mock(return_value=response)
     
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
