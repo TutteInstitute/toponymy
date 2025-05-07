@@ -117,9 +117,6 @@ try:
                         f"Prompt must be a string or a dictionary, got {type(prompt)}"
                     )
                 
-                topic_name_info = self.llm(
-                    prompt, temperature=temperature, max_tokens=256
-                )["choices"][0]["text"]
                 topic_name_info = llm_output_to_result(topic_name_info, GET_TOPIC_NAME_REGEX)
                 topic_name = topic_name_info["topic_name"]
             except Exception as e:
