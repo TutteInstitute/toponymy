@@ -74,6 +74,14 @@ class LLMWrapper(ABC):
     ) -> List[str]:
         pass
 
+    @property
+    def supports_system_prompts(self) -> bool:
+        """
+        Check if the LLM wrapper supports system prompts.
+        By default, it does. Override in subclasses if not supported.
+        """
+        return True
+
 
 try:
 
@@ -163,6 +171,10 @@ try:
                     return new_names
                 else:
                     raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            return False
 
 except ImportError:
     pass
@@ -473,6 +485,8 @@ try:
                     )
                 
                 topic_name_info_text = topic_name_info_raw.content[0].text
+                if topic_name_info_text is None:
+                    raise ValueError(f"Empty response from Anthropic")
                 topic_name_info = llm_output_to_result(
                     topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
                 )
@@ -553,7 +567,8 @@ try:
                     )
                 
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
-
+                if topic_name_info_text is None:
+                    raise ValueError(f"Empty response from OpenAI API")
                 topic_name_info = llm_output_to_result(
                     topic_name_info_text, GET_TOPIC_NAME_REGEX
                 )
@@ -599,6 +614,8 @@ try:
                     )
                 
                 topic_name_info_text = topic_name_info_raw.choices[0].message.content
+                if topic_name_info_text is None:
+                    raise ValueError(f"Empty response from OpenAI API")
                 topic_name_info = llm_output_to_result(
                     topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
                 )
