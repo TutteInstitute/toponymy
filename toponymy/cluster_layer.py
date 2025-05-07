@@ -42,6 +42,8 @@ class ClusterLayer(ABC):
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
         exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
+        prompt_format: str = "combined",
+        prompt_template: Optional[str] = None,
         show_progress_bar: bool = False,
     ):
         self.cluster_labels = cluster_labels
@@ -53,6 +55,8 @@ class ClusterLayer(ABC):
         self.n_keyphrases = n_keyphrases
         self.n_subtopics = n_subtopics
         self.exemplar_delimiters = exemplar_delimiters
+        self.prompt_format = prompt_format
+        self.prompt_template = prompt_template
         self.show_progress_bar = show_progress_bar
 
         # Initialize empty lists for the cluster layer's attributes
@@ -172,6 +176,8 @@ class ClusterLayer(ABC):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
+                prompt_format=self.prompt_format,
+                prompt_template=self.prompt_template,
             )
             for topic_indices in tqdm(
                 self.dismbiguation_topic_indices,
@@ -254,6 +260,8 @@ class ClusterLayerText(ClusterLayer):
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
         exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
+        prompt_format: str = "combined",
+        prompt_template: Optional[str] = None,
         show_progress_bar: bool = False,
     ):
         super().__init__(
@@ -262,6 +270,8 @@ class ClusterLayerText(ClusterLayer):
             layer_id,
             text_embedding_model,
             exemplar_delimiters=exemplar_delimiters,
+            prompt_format=prompt_format,
+            prompt_template=prompt_template,
             show_progress_bar=show_progress_bar,
         )
         self.n_keyphrases = n_keyphrases
@@ -301,6 +311,8 @@ class ClusterLayerText(ClusterLayer):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
+                prompt_format=self.prompt_format,
+                prompt_template=self.prompt_template,
             )
             for topic_index in tqdm(
                 range(self.centroid_vectors.shape[0]),
@@ -328,7 +340,7 @@ class ClusterLayerText(ClusterLayer):
         self.topic_names = [
             (
                 llm.generate_topic_name(prompt)
-                if not prompt.startswith("[!SKIP!]: ")
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
                 else prompt.removeprefix("[!SKIP!]: ")
             )
             for prompt in tqdm(

@@ -2,6 +2,7 @@ from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 from toponymy.topic_tree import TopicTree
+from toponymy.llm_wrappers import LLMWrapper
 
 from sentence_transformers import SentenceTransformer
 from sklearn.utils.validation import check_is_fitted
@@ -89,7 +90,7 @@ class Toponymy:
 
     def __init__(
         self,
-        llm_wrapper,
+        llm_wrapper: LLMWrapper,
         text_embedding_model: SentenceTransformer,
         clusterer: Clusterer = ToponymyClusterer(),
         layer_class: Type[ClusterLayer] = ClusterLayerText,
@@ -154,6 +155,7 @@ class Toponymy:
                 self.layer_class,
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
+                prompt_format="system_user" if self.llm_wrapper.supports_system_prompts else "combined",
             )
 
         # Initialize other data structures
