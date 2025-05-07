@@ -6,7 +6,7 @@ import transformers
 
 from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Union, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 import re
@@ -65,12 +65,12 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
 class LLMWrapper(ABC):
 
     @abstractmethod
-    def generate_topic_name(self, prompt: str, temperature: float) -> str:
+    def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float) -> str:
         pass
 
     @abstractmethod
     def generate_topic_cluster_names(
-        self, prompt: str, old_names: List[str], temperature: float
+        self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float
     ) -> List[str]:
         pass
 
@@ -94,7 +94,7 @@ try:
             wait=wait_exponential(multiplier=1, min=4, max=10),
             retry_error_callback=lambda x: "",
         )
-        def generate_topic_name(self, prompt: str, temperature: float = 0.8) -> str:
+        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.8) -> str:
             try:
                 if isinstance(prompt, str):
                     topic_name_info = self.llm(
@@ -125,7 +125,7 @@ try:
             retry_error_callback=lambda retry_state: retry_state.args[2],
         )
         def generate_topic_cluster_names(
-            self, prompt: str, old_names: List[str], temperature: float = 0.5
+            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
         ) -> List[str]:
             if isinstance(prompt, str):
                 topic_name_info_raw = self.llm(
@@ -182,7 +182,7 @@ try:
             wait=wait_exponential(multiplier=1, min=4, max=10),
             retry_error_callback=lambda x: "",
         )
-        def generate_topic_name(self, prompt: str, temperature: float = 0.8) -> str:
+        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.8) -> str:
             try:
                 if isinstance(prompt, str):
                     topic_name_info_raw = self.llm(
@@ -222,7 +222,7 @@ try:
             retry_error_callback=lambda retry_state: retry_state.args[2],
         )
         def generate_topic_cluster_names(
-            self, prompt: str, old_names: List[str], temperature: float = 0.5
+            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
         ) -> List[str]:
             if isinstance(prompt, str):
                 topic_name_info_raw = self.llm(
@@ -301,7 +301,7 @@ try:
             wait=wait_exponential(multiplier=1, min=4, max=10),
             retry_error_callback=lambda x: "",
         )
-        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
             try:
                 if isinstance(prompt, str):
                     topic_name_info_raw = self.llm.chat(
@@ -339,7 +339,7 @@ try:
             retry_error_callback=lambda retry_state: retry_state.args[2],
         )
         def generate_topic_cluster_names(
-            self, prompt: str, old_names: List[str], temperature: float = 0.5
+            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
         ) -> List[str]:
             if isinstance(prompt, str):
                 topic_name_info_raw = self.llm.chat(
@@ -407,7 +407,7 @@ try:
             wait=wait_exponential(multiplier=1, min=4, max=10),
             retry_error_callback=lambda x: "",
         )
-        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
             try:
                 if isinstance(prompt, str):
                     topic_name_info_raw = self.llm.messages.create(
@@ -447,7 +447,7 @@ try:
             retry_error_callback=lambda retry_state: retry_state.args[2],
         )
         def generate_topic_cluster_names(
-            self, prompt: str, old_names: List[str], temperature: float = 0.5
+            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
         ) -> List[str]:
             try:
                 if isinstance(prompt, str):
@@ -526,7 +526,7 @@ try:
             wait=wait_exponential(multiplier=1, min=4, max=10),
             retry_error_callback=lambda x: "",
         )
-        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
             try:
                 if isinstance(prompt, str):
                     topic_name_info_raw = self.llm.chat.completions.create(
@@ -571,7 +571,7 @@ try:
             retry_error_callback=lambda retry_state: retry_state.args[2],
         )
         def generate_topic_cluster_names(
-            self, prompt: str, old_names: List[str], temperature: float = 0.5
+            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
         ) -> List[str]:
             try:
                 if isinstance(prompt, str):
@@ -651,7 +651,7 @@ try:
             wait=wait_exponential(multiplier=1, min=4, max=10),
             retry_error_callback=lambda x: "",
         )
-        def generate_topic_name(self, prompt: str, temperature: float = 0.5) -> str:
+        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
             try:
                 if isinstance(prompt, str):
                     topic_name_info_raw = self.llm.complete(
@@ -684,7 +684,7 @@ try:
             retry_error_callback=lambda retry_state: retry_state.args[2],
         )
         def generate_topic_cluster_names(
-            self, prompt: str, old_names: List[str], temperature: float = 0.5
+            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
         ) -> List[str]:
             try:
                 if isinstance(prompt, str):
