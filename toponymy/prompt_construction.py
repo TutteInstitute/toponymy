@@ -125,7 +125,7 @@ def distinguish_topic_names_prompt(
     exemplar_start_delimiter: str = "    * \"",
     exemplar_end_delimiter: str = "\"\n",
     prompt_format: str = "combined",
-    prompt_template: Optional[str] = None,
+    prompt_template: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, str]]:
     """
     Construct a prompt for distinguishing between multiple topics.
