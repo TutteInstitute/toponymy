@@ -1,9 +1,10 @@
 import pytest
 from unittest.mock import Mock, patch
 import json
-from typing import List
+from typing import List, Optional
+from toponymy.llm_wrappers import repair_json_string_backslashes
 
-from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace, AzureAI #, LlamaCpp
+from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace, AzureAI, LlamaCpp
 
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {
@@ -14,7 +15,7 @@ VALID_TOPIC_NAME_RESPONSE = {
 VALID_CLUSTER_NAMES_RESPONSE = {
     "new_topic_name_mapping": {
         "1. data": "Data Science",
-        "2. ml": "Machine Learning",
+        "2. ml": "Machine Learning\\ML",
         "3. ai": "Artificial Intelligence"
     },
     "topic_specificities": [
@@ -33,7 +34,7 @@ the topic name is Machine Learning
 postamble.
 """
 EMPTY_MAPPING_RESPONSE = {"new_topic_name_mapping": {}}
-MALFORMED_MAPPING_RESPONSE = """{"new_topic_name_mapping": {"data science": "Data Science", "data science": "Machine Learning", "data science": "Artificial Intelligence"} , "topic_specificities": [0.6, 0.8, 0.7]}"""
+MALFORMED_MAPPING_RESPONSE = """{"new_topic_name_mapping": {"data science": "Data Science", "data science": "Machine Learning\\ML", "data science": "Artificial Intelligence"} , "topic_specificities": [0.6, 0.8, 0.7]}"""
 
 class MockLLMResponse:
     """Mock response object that mimics different LLM service response structures"""
@@ -102,12 +103,13 @@ class MockLLMResponse:
 
         return Response(content)
 
+
 # Helper functions for validation
 def validate_topic_name(result: str):
     assert result == "Machine Learning"
 
 def validate_cluster_names(result: List[str]):
-    expected = ["Data Science", "Machine Learning", "Artificial Intelligence"]
+    expected = ["Data Science", "Machine Learning\\ML", "Artificial Intelligence"]
     assert result == expected
 
 @pytest.fixture
@@ -121,48 +123,48 @@ def mock_data():
         "recoverable_malformed_json": RECOVERABLE_MALFORMED_JSON_RESPONSE,
     }
 
-# # LlamaCpp Tests
-# @pytest.fixture
-# def llamacpp_wrapper():
-#     with patch('llama_cpp.Llama'):
-#         wrapper = LlamaCpp(model_path="dummy")
-#         return wrapper
+# LlamaCpp Tests
+@pytest.fixture
+def llamacpp_wrapper():
+    with patch('llama_cpp.Llama'):
+        wrapper = LlamaCpp(model_path="dummy")
+        return wrapper
 
-# def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
-#     response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
-#     llamacpp_wrapper.llm = Mock(return_value=response)
+def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
+    response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
     
-#     result = llamacpp_wrapper.generate_topic_name("test prompt")
-#     validate_topic_name(result)
+    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    validate_topic_name(result)
 
-# def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
-#     response = MockLLMResponse.create_llama_response(mock_data["valid_cluster_names"])
-#     llamacpp_wrapper.llm = Mock(return_value=response)
+def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
+    response = MockLLMResponse.create_llama_response(mock_data["valid_cluster_names"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
     
-#     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
-#     validate_cluster_names(result)
+    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
 
-# def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(llamacpp_wrapper, mock_data):
-#     response = MockLLMResponse.create_llama_response(mock_data["malformed_mapping"])
-#     llamacpp_wrapper.llm = Mock(return_value=response)
+def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(llamacpp_wrapper, mock_data):
+    response = MockLLMResponse.create_llama_response(mock_data["malformed_mapping"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
     
-#     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
-#     validate_cluster_names(result)
+    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
 
-# def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
-#     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
-#     result = llamacpp_wrapper.generate_topic_name("test prompt")
-#     assert result == ""
+def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
+    llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
+    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    assert result == ""
 
-# def test_llamacpp_generate_topic_name_failure_malformed_json(llamacpp_wrapper, mock_data):
-#     llamacpp_wrapper.llm = Mock(mock_data["malformed_json"])
-#     result = llamacpp_wrapper.generate_topic_name("test prompt")
-#     assert result == ""
+def test_llamacpp_generate_topic_name_failure_malformed_json(llamacpp_wrapper, mock_data):
+    llamacpp_wrapper.llm = Mock(mock_data["malformed_json"])
+    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    assert result == ""
 
-# def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
-#     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
-#     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
-#     assert result == mock_data["old_names"]
+def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
+    llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
+    result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    assert result == mock_data["old_names"]
 
 
 # Huggingface Tests
@@ -179,11 +181,25 @@ def test_huggingface_generate_topic_name_success(huggingface_wrapper, mock_data)
     result = huggingface_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
+def test_huggingface_generate_topic_name_success_system_prompt(huggingface_wrapper, mock_data):
+    response = MockLLMResponse.create_huggingface_response(mock_data["valid_topic_name"])
+    huggingface_wrapper.llm = Mock(return_value=response)
+    
+    result = huggingface_wrapper.generate_topic_name({"system": "system prompt", "user": "test prompt"})
+    validate_topic_name(result)
+
 def test_huggingface_generate_cluster_names_success(huggingface_wrapper, mock_data):
     response = MockLLMResponse.create_huggingface_response(mock_data["valid_cluster_names"])
     huggingface_wrapper.llm = Mock(return_value=response)
     
     result = huggingface_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_huggingface_generate_cluster_names_success_system_prompt(huggingface_wrapper, mock_data):
+    response = MockLLMResponse.create_huggingface_response(mock_data["valid_cluster_names"])
+    huggingface_wrapper.llm = Mock(return_value=response)
+    
+    result = huggingface_wrapper.generate_topic_cluster_names({"system": "system prompt", "user": "test prompt"}, mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_huggingface_generate_cluster_names_success_on_malformed_mapping(huggingface_wrapper, mock_data):
@@ -223,11 +239,25 @@ def test_anthropic_generate_topic_name_success(anthropic_wrapper, mock_data):
     result = anthropic_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
+def test_anthropic_generate_topic_name_success_system_prompt(anthropic_wrapper, mock_data):
+    response = MockLLMResponse.create_anthropic_response(mock_data["valid_topic_name"])
+    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
+    
+    result = anthropic_wrapper.generate_topic_name({"system": "system prompt", "user": "test prompt"})
+    validate_topic_name(result)
+
 def test_anthropic_generate_cluster_names_success(anthropic_wrapper, mock_data):
     response = MockLLMResponse.create_anthropic_response(mock_data["valid_cluster_names"])
     anthropic_wrapper.llm.messages.create = Mock(return_value=response)
     
     result = anthropic_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_anthropic_generate_cluster_names_success_system_prompt(anthropic_wrapper, mock_data):
+    response = MockLLMResponse.create_anthropic_response(mock_data["valid_cluster_names"])
+    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
+    
+    result = anthropic_wrapper.generate_topic_cluster_names({"system": "system prompt", "user": "test prompt"}, mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_anthropic_generate_cluster_names_success_on_malformed_mapping(anthropic_wrapper, mock_data):
@@ -266,11 +296,25 @@ def test_openai_generate_topic_name_success(openai_wrapper, mock_data):
     result = openai_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
+def test_openai_generate_topic_name_success_system_prompt(openai_wrapper, mock_data):
+    response = MockLLMResponse.create_openai_response(mock_data["valid_topic_name"])
+    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
+    
+    result = openai_wrapper.generate_topic_name({"system": "system prompt", "user": "test prompt"})
+    validate_topic_name(result)
+
 def test_openai_generate_cluster_names_success(openai_wrapper, mock_data):
     response = MockLLMResponse.create_openai_response(mock_data["valid_cluster_names"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
     
     result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_openai_generate_cluster_names_success_system_prompt(openai_wrapper, mock_data):
+    response = MockLLMResponse.create_openai_response(mock_data["valid_cluster_names"])
+    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
+    
+    result = openai_wrapper.generate_topic_cluster_names({"system": "system prompt", "user": "test prompt"}, mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_openai_generate_cluster_names_success_on_malformed_mapping(openai_wrapper, mock_data):
@@ -312,11 +356,25 @@ def test_cohere_generate_topic_name_success(cohere_wrapper, mock_data):
     result = cohere_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
+def test_cohere_generate_topic_name_success_system_prompt(cohere_wrapper, mock_data):
+    response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_topic_name"])
+    cohere_wrapper.llm.chat = Mock(return_value=response)
+    
+    result = cohere_wrapper.generate_topic_name({"system": "system prompt", "user": "test prompt"})
+    validate_topic_name(result)
+
 def test_cohere_generate_cluster_names_success(cohere_wrapper, mock_data):
     response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_cluster_names"])
     cohere_wrapper.llm.chat = Mock(return_value=response)
     
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_cohere_generate_cluster_names_success_system_prompt(cohere_wrapper, mock_data):
+    response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_cluster_names"])
+    cohere_wrapper.llm.chat = Mock(return_value=response)
+    
+    result = cohere_wrapper.generate_topic_cluster_names({"system": "system prompt", "user": "test prompt"}, mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_cohere_generate_cluster_names_success_on_malformed_mapping(cohere_wrapper, mock_data):
@@ -349,17 +407,31 @@ def azureai_wrapper():
         return wrapper
     
 def test_azureai_generate_topic_name_success(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["valid_topic_name"])
+    response = MockLLMResponse.create_azureai_response(mock_data["valid_topic_name"])
     azureai_wrapper.llm.complete = Mock(return_value=response)
     
     result = azureai_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
+def test_azureai_generate_topic_name_success_system_prompt(azureai_wrapper, mock_data):
+    response = MockLLMResponse.create_azureai_response(mock_data["valid_topic_name"])
+    azureai_wrapper.llm.complete = Mock(return_value=response)
+    
+    result = azureai_wrapper.generate_topic_name({"system": "system prompt", "user": "test prompt"})
+    validate_topic_name(result)
+
 def test_azureai_generate_cluster_names_success(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["valid_cluster_names"])
+    response = MockLLMResponse.create_azureai_response(mock_data["valid_cluster_names"])
     azureai_wrapper.llm.complete = Mock(return_value=response)
     
     result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+    validate_cluster_names(result)
+
+def test_azureai_generate_cluster_names_success_system_prompt(azureai_wrapper, mock_data):
+    response = MockLLMResponse.create_azureai_response(mock_data["valid_cluster_names"])
+    azureai_wrapper.llm.complete = Mock(return_value=response)
+    
+    result = azureai_wrapper.generate_topic_cluster_names({"system": "system prompt", "user": "test prompt"}, mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_azureai_generate_cluster_names_success_on_malformed_mapping(azureai_wrapper, mock_data):
@@ -383,6 +455,44 @@ def test_azureai_generate_cluster_names_failure(azureai_wrapper, mock_data):
     azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
     result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     assert result == mock_data["old_names"]
+
+def test_repair_json_string_backslashes_already_valid():
+    """Test that valid JSON strings are not modified."""
+    
+    valid_json = '{"key": "value with \\"quotes\\" inside"}'
+    result = repair_json_string_backslashes(valid_json)
+    assert result == valid_json
+
+def test_repair_json_string_backslashes_unescaped():
+    """Test repairing strings with unescaped backslashes."""
+    
+    invalid_json = '{"topic_name": "Machine Learning\\ML"}'
+    expected = '{"topic_name": "Machine Learning\\\\ML"}'
+    result = repair_json_string_backslashes(invalid_json)
+    assert result == expected
+
+def test_repair_json_string_backslashes_mixed():
+    """Test repairing strings with both properly escaped and unescaped backslashes."""
+    
+    mixed_json = '{"path": "C:\\Users\\username", "quoted": "with \\"quotes\\""}'
+    expected = '{"path": "C:\\\\Users\\\\username", "quoted": "with \\"quotes\\""}'
+    result = repair_json_string_backslashes(mixed_json)
+    assert result == expected
+
+def test_repair_json_string_backslashes_all_escape_sequences():
+    """Test that all valid escape sequences are preserved."""
+    
+    json_with_escapes = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\x"}'
+    expected = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\\\x"}'
+    result = repair_json_string_backslashes(json_with_escapes)
+    assert result == expected
+
+def test_repair_json_string_backslashes_empty():
+    """Test with empty string."""
+    
+    empty = ""
+    result = repair_json_string_backslashes(empty)
+    assert result == empty
 
 # @pytest.skip("Not quite sure this is right yet")
 # def test_importerror_handling():

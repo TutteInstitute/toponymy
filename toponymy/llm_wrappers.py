@@ -7,13 +7,23 @@ import transformers
 from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
 import re
 import os
 import httpx
+import json
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+class InvalidLLMInputError(ValueError):
+    """A custom exception for invalid LLM input. In these cases we do not want to retry, as the input will not change."""
+    pass
+
+def _should_retry(e: Exception) -> bool:
+    if isinstance(e, InvalidLLMInputError):
+        return False
+    return True
 
 def repair_json_string_backslashes(s: str) -> str:
     """
@@ -65,14 +75,105 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
 class LLMWrapper(ABC):
 
     @abstractmethod
-    def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float) -> str:
+    def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        """
+        Call the LLM with the given prompt and temperature.
+        This method should be implemented by subclasses.
+        """
         pass
 
     @abstractmethod
-    def generate_topic_cluster_names(
-        self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float
-    ) -> List[str]:
+    def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+        """
+        Call the LLM with a system prompt and user prompt.
+        This method should be implemented by subclasses.
+        """
         pass
+
+    # @abstractmethod
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry_error_callback=lambda x: "",
+        retry=retry_if_exception(_should_retry),
+    )
+    def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.4) -> str:
+        try:
+            if isinstance(prompt, str):
+                topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=128)
+            elif isinstance(prompt, dict) and self.supports_system_prompts:
+                topic_name_info_raw = self._call_llm_with_system_prompt(
+                    system_prompt=prompt["system"],
+                    user_prompt=prompt["user"],
+                    temperature=temperature,
+                    max_tokens=128,
+                )
+            else:
+                raise InvalidLLMInputError(
+                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
+                )
+            
+            topic_name_info = llm_output_to_result(topic_name_info_raw, GET_TOPIC_NAME_REGEX)
+            topic_name = topic_name_info["topic_name"]
+        except Exception as e:
+            raise ValueError(f"Failed to generate topic name with {self.__class__.__name__}")
+        return topic_name
+
+    # @abstractmethod
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry_error_callback=lambda retry_state: retry_state.args[1] if len(retry_state.args) > 1 and isinstance(retry_state.args[1], list) else [],
+        retry=retry_if_exception(_should_retry),
+    )
+    def generate_topic_cluster_names(
+        self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.4,
+    ) -> List[str]:
+        try:
+            if isinstance(prompt, str):
+                topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=1024)
+            elif isinstance(prompt, dict) and self.supports_system_prompts:
+                topic_name_info_raw = self._call_llm_with_system_prompt(
+                    system_prompt=prompt["system"],
+                    user_prompt=prompt["user"],
+                    temperature=temperature,
+                    max_tokens=1024,
+                )
+            else:
+                raise InvalidLLMInputError(f"Prompt must be a string or a dictionary, got {type(prompt)}")
+            
+            topic_name_info = llm_output_to_result(
+                topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
+            )
+        except Exception as e:
+            warn(f"Failed to generate topic cluster names with {self.__class__.__name__}: {e}")
+            return old_names
+
+        mapping = topic_name_info["new_topic_name_mapping"]
+        if len(mapping) == len(old_names):
+            result = []
+            for i, old_name_val in enumerate(old_names, start=1):
+                key_with_val = f"{i}. {old_name_val}"
+                key_just_index = f"{i}."
+                if key_with_val in mapping:
+                    result.append(mapping[key_with_val])
+                elif key_just_index in mapping: # This was `mapping.get(f"{n}.", name)` which is ambiguous
+                    result.append(mapping[key_just_index])
+                else:
+                    result.append(old_name_val) # Fallback to old name to maintain length
+            return result
+        else:
+            # Fallback to just parsing the string as best we can
+            mapping = re.findall(
+                r'"new_topic_name_mapping":\s*\{(.*?)\}',
+                topic_name_info_raw,
+                re.DOTALL,
+            )[0]
+            new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+            if len(new_names) == len(old_names):
+                return new_names
+            else:
+                raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
 
     @property
     def supports_system_prompts(self) -> bool:
@@ -84,7 +185,6 @@ class LLMWrapper(ABC):
 
 
 try:
-
     import llama_cpp
 
     class LlamaCpp(LLMWrapper):
@@ -97,77 +197,19 @@ try:
                 setattr(self, arg, val)
             self.llm = llama_cpp.Llama(model_path=model_path, **kwargs)
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda x: "",
-        )
-        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.8) -> str:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info = self.llm(
-                        prompt, temperature=temperature, max_tokens=256
-                    )["choices"][0]["text"]
-                elif isinstance(prompt, dict):
-                    raise ValueError(
-                        f"System/User prompts are not supported for LlamaCpp wrapper"
-                    )
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info = llm_output_to_result(topic_name_info, GET_TOPIC_NAME_REGEX)
-                topic_name = topic_name_info["topic_name"]
-            except Exception as e:
-                raise ValueError(f"Failed to generate topic name with LlamaCpp: {e}")
-
-            return topic_name
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda retry_state: retry_state.args[2],
-        )
-        def generate_topic_cluster_names(
-            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
-        ) -> List[str]:
-            if isinstance(prompt, str):
-                topic_name_info_raw = self.llm(
-                    prompt, temperature=temperature, max_tokens=1024
-                )
-            elif isinstance(prompt, dict):
-                raise ValueError(
-                    f"System/User prompts are not supported for LlamaCpp wrapper"
-                )
-            else:
-                raise ValueError(
-                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                )
-            
-            topic_name_info_text = topic_name_info_raw["choices"][0]["text"]
-            topic_name_info = llm_output_to_result(
-                topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm(
+                prompt,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
             )
-            mapping = topic_name_info["new_topic_name_mapping"]
-            if len(mapping) == len(old_names):
-                result = [
-                    # Empty names can cause issues, so cater to that is possible
-                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
-                    for n, name in enumerate(old_names, start=1)
-                ]
-                return result
-            else:
-                mapping = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    topic_name_info_text,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+            result = response["choices"][0]["text"]
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            raise InvalidLLMInputError(
+                "System prompts are not supported for LlamaCpp wrapper"
+            )
 
         @property
         def supports_system_prompts(self) -> bool:
@@ -186,108 +228,35 @@ try:
             self.model = model
             self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda x: "",
-        )
-        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.8) -> str:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm(
-                        [{"role": "user", "content": prompt}],
-                        return_full_text=False,
-                        max_new_tokens=64,
-                        temperature=temperature,
-                        do_sample=True,
-                        pad_token_id=self.llm.tokenizer.eos_token_id,
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm(
-                        [{"role": "system", "content": prompt["system"]},
-                         {"role": "user", "content": prompt["user"]}],
-                        return_full_text=False,
-                        max_new_tokens=64,
-                        temperature=temperature,
-                        do_sample=True,
-                        pad_token_id=self.llm.tokenizer.eos_token_id,
-                    )
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info_text = topic_name_info_raw[0]["generated_text"]
-                topic_name_info = llm_output_to_result(topic_name_info_text, GET_TOPIC_NAME_REGEX)
-                topic_name = topic_name_info["topic_name"]
-            except Exception as e:
-                raise ValueError(f"Failed to generate topic name with HuggingFace: {e}")
-
-            return topic_name
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda retry_state: retry_state.args[2],
-        )
-        def generate_topic_cluster_names(
-            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
-        ) -> List[str]:
-            if isinstance(prompt, str):
-                topic_name_info_raw = self.llm(
-                    [{"role": "user", "content": prompt}],
-                    return_full_text=False,
-                    max_new_tokens=1024,
-                    temperature=temperature,
-                    do_sample=True,
-                    pad_token_id=self.llm.tokenizer.eos_token_id,
-                )
-            elif isinstance(prompt, dict):
-                topic_name_info_raw = self.llm(
-                    [{"role": "system", "content": prompt["system"]},
-                     {"role": "user", "content": prompt["user"]}],
-                    return_full_text=False,
-                    max_new_tokens=1024,
-                    temperature=temperature,
-                    do_sample=True,
-                    pad_token_id=self.llm.tokenizer.eos_token_id,
-                )
-            else:   
-                raise ValueError(
-                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                )
-            
-            topic_name_info_text = topic_name_info_raw[0]["generated_text"]
-            topic_name_info = llm_output_to_result(
-                topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm(
+                [{"role": "user", "content": prompt}],
+                return_full_text=False,
+                max_new_tokens=max_tokens,
+                temperature=temperature,
+                do_sample=True,
+                pad_token_id=self.llm.tokenizer.eos_token_id,
             )
-            mapping = topic_name_info["new_topic_name_mapping"]
-            if len(mapping) == len(old_names):
-                result = [
-                    # Empty names can cause issues, so cater to that is possible
-                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
-                    for n, name in enumerate(old_names, start=1)
-                ]
-                return result
-            else:
-                mapping = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    topic_name_info_text,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+            result = response[0]["generated_text"]
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm(
+                [{"role": "system", "content": system_prompt},
+                 {"role": "user", "content": user_prompt}],
+                return_full_text=False,
+                max_new_tokens=64,
+                temperature=temperature,
+                do_sample=True,
+                pad_token_id=self.llm.tokenizer.eos_token_id,
+            )
+            result = response[0]["generated_text"]
+            return result
 
 except ImportError:
     pass
 
 try:
-
-    import json
-
     import cohere
 
     class Cohere(LLMWrapper):
@@ -305,104 +274,37 @@ try:
                 raise ValueError(msg)
             self.model = model
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda x: "",
-        )
-        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.chat(
-                        messages=[{"role":"user", "content": prompt}],
-                        model=self.model,
-                        temperature=temperature,
-                        # This results in failures more often than useful output
-                        # response_format={"type": "json_object"},
-                    ).message.content[0].text
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.chat(
-                        messages=[
-                            {"role": "system", "content": prompt["system"]},
-                            {"role": "user", "content": prompt["user"]},
-                        ],
-                        model=self.model,
-                        temperature=temperature,
-                        # This results in failures more often than useful output
-                        # response_format={"type": "json_object"},
-                    ).message.content[0].text
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info = llm_output_to_result(topic_name_info_raw, GET_TOPIC_NAME_REGEX)
-                topic_name = topic_name_info["topic_name"]
-            except:
-                raise ValueError(f"Failed to generate topic name with Cohere")
-            return topic_name
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda retry_state: retry_state.args[2],
-        )
-        def generate_topic_cluster_names(
-            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
-        ) -> List[str]:
-            if isinstance(prompt, str):
-                topic_name_info_raw = self.llm.chat(
-                    messages=[{"role":"user", "content": prompt}],
-                    model=self.model,
-                    temperature=temperature,
-                ).message.content[0].text
-            elif isinstance(prompt, dict):
-                topic_name_info_raw = self.llm.chat(
-                    messages=[
-                        {"role": "system", "content": prompt["system"]},
-                        {"role": "user", "content": prompt["user"]},
-                    ],
-                    model=self.model,
-                    temperature=temperature,
-                ).message.content[0].text
-            else:
-                raise ValueError(
-                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                )
-
-            topic_name_info = llm_output_to_result(
-                topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.chat(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                # This results in failures more often than useful output
+                # response_format={"type": "json_object"},
             )
-
-            mapping = topic_name_info["new_topic_name_mapping"]
-            if len(mapping) == len(old_names):
-                result = [
-                    # Empty names can cause issues, so cater to that is possible
-                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
-                    for n, name in enumerate(old_names, start=1)
-                ]
-                return result
-            else:
-                mapping = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    topic_name_info_raw,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(
-                        f"Failed to generate enough names when fixing {old_names}; got {mapping}"
-                    )
+            result = response.message.content[0].text
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.chat(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                # This results in failures more often than useful output
+                # response_format={"type": "json_object"},
+            )
+            result = response.message.content[0].text
+            return result
 
 except:
     pass
 
 try:
-
-    import json
-
     import anthropic
 
     class Anthropic(LLMWrapper):
@@ -411,112 +313,32 @@ try:
             self.llm = anthropic.Anthropic(api_key=API_KEY)
             self.model = model
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda x: "",
-        )
-        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.messages.create(
-                        model=self.model,
-                        max_tokens=256,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=temperature,
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.messages.create(
-                        model=self.model,
-                        max_tokens=256,
-                        messages=[
-                            {"role": "system", "content": prompt["system"]},
-                            {"role": "user", "content": prompt["user"]},
-                        ],
-                        temperature=temperature,
-                    )
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info_text = topic_name_info_raw.content[0].text
-                topic_name_info = llm_output_to_result(
-                    topic_name_info_text, GET_TOPIC_NAME_REGEX
-                )
-                topic_name = topic_name_info["topic_name"]
-            except:
-                raise ValueError(f"Failed to generate topic name with Anthropic")
-
-            return topic_name
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda retry_state: retry_state.args[2],
-        )
-        def generate_topic_cluster_names(
-            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
-        ) -> List[str]:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.messages.create(
-                        model=self.model,
-                        max_tokens=1024,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=temperature,
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.messages.create(
-                        model=self.model,
-                        max_tokens=1024,
-                        messages=[
-                            {"role": "system", "content": prompt["system"]},
-                            {"role": "user", "content": prompt["user"]},
-                        ],
-                        temperature=temperature,
-                    )
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info_text = topic_name_info_raw.content[0].text
-                if topic_name_info_text is None:
-                    raise ValueError(f"Empty response from Anthropic")
-                topic_name_info = llm_output_to_result(
-                    topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
-                )
-            except Exception as e:
-                warn(f"Failed to generate topic cluster names with Anthropic: {e}")
-                return old_names
-
-            mapping = topic_name_info["new_topic_name_mapping"]
-            if len(mapping) == len(old_names):
-                result = [
-                    # Empty names can cause issues, so cater to that is possible
-                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
-                    for n, name in enumerate(old_names, start=1)
-                ]
-                return result
-            else:
-                mapping = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    topic_name_info_text,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
-
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+            )
+            result = response.content[0].text
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+            )
+            result = response.content[0].text
+            return result
 except:
     pass
 
 try:
-    import json
-
     import openai
 
     class OpenAI(LLMWrapper):
@@ -532,120 +354,36 @@ try:
             self.model = model
             self.verbose = verbose
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda x: "",
-        )
-        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.chat.completions.create(
-                        model=self.model,
-                        max_tokens=256,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=temperature,
-                        response_format={"type": "json_object"},
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.chat.completions.create(
-                        model=self.model,
-                        max_tokens=256,
-                        messages=[
-                            {"role": "system", "content": prompt["system"]},
-                            {"role": "user", "content": prompt["user"]},
-                        ],
-                        temperature=temperature,
-                        response_format={"type": "json_object"},
-                    )
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info_text = topic_name_info_raw.choices[0].message.content
-                if topic_name_info_text is None:
-                    raise ValueError(f"Empty response from OpenAI API")
-                topic_name_info = llm_output_to_result(
-                    topic_name_info_text, GET_TOPIC_NAME_REGEX
-                )
-                topic_name = topic_name_info["topic_name"]
-                if self.verbose:
-                    print(topic_name_info)
-            except Exception as e:
-                raise ValueError(f"{e}\n{prompt}\n{topic_name_info_text}")
-
-            return topic_name
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda retry_state: retry_state.args[2],
-        )
-        def generate_topic_cluster_names(
-            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
-        ) -> List[str]:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.chat.completions.create(
-                        model=self.model,
-                        max_tokens=1024,
-                        messages=[{"role": "user", "content": prompt}],
-                        temperature=temperature,
-                        response_format={"type": "json_object"},
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.chat.completions.create(
-                        model=self.model,
-                        max_tokens=1024,
-                        messages=[
-                            {"role": "system", "content": prompt["system"]},
-                            {"role": "user", "content": prompt["user"]},
-                        ],
-                        temperature=temperature,
-                        response_format={"type": "json_object"},
-                    )
-                else:
-                    raise ValueError(
-                        f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                    )
-                
-                topic_name_info_text = topic_name_info_raw.choices[0].message.content
-                if topic_name_info_text is None:
-                    raise ValueError(f"Empty response from OpenAI API")
-                topic_name_info = llm_output_to_result(
-                    topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
-                )
-            except Exception as e:
-                warn(f"Failed to generate topic cluster names with OpenAI: {e}")
-                return old_names
-
-            mapping = topic_name_info["new_topic_name_mapping"]
-            if len(mapping) == len(old_names):
-                result = [
-                    # Empty names can cause issues, so cater to that is possible
-                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
-                    for n, name in enumerate(old_names, start=1)
-                ]
-                return result
-            else:
-                mapping = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    topic_name_info_text,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            )
+            result = response.choices[0].message.content
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.chat.completions.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            )
+            result = response.choices[0].message.content
+            return result
 
 except:
     pass
 
 
 try:
-    import azure.ai.inference
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.core.credentials import AzureKeyCredential
@@ -660,97 +398,79 @@ try:
                 credential=AzureKeyCredential(API_KEY),
             )
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda x: "",
-        )
-        def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.5) -> str:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.complete(
-                        model=self.model,
-                        max_tokens=256,
-                        messages=[UserMessage(prompt)],
-                        temperature=temperature,
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.complete(
-                        model=self.model,
-                        max_tokens=256,
-                        messages=[SystemMessage(prompt["system"]), UserMessage(prompt["user"])],
-                        temperature=temperature,
-                    )
-                else:
-                    raise ValueError(f"Prompt must be a string or a dictionary, got {type(prompt)}")
-                
-                topic_name_info_text = topic_name_info_raw.choices[0].message.content
-                topic_name_info = llm_output_to_result(topic_name_info_text, GET_TOPIC_NAME_REGEX)
-                topic_name = topic_name_info["topic_name"]
-            except:
-                raise ValueError(f"Failed to generate topic name with AzureAI")
-
-            return topic_name
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry_error_callback=lambda retry_state: retry_state.args[2],
-        )
-        def generate_topic_cluster_names(
-            self, prompt: Union[str, Dict[str, str]], old_names: List[str], temperature: float = 0.5
-        ) -> List[str]:
-            try:
-                if isinstance(prompt, str):
-                    topic_name_info_raw = self.llm.complete(
-                        model=self.model,
-                        max_tokens=1024,
-                        messages=[UserMessage(prompt)],
-                        temperature=temperature,
-                    )
-                elif isinstance(prompt, dict):
-                    topic_name_info_raw = self.llm.complete(
-                        model=self.model,
-                        max_tokens=1024,
-                        messages=[SystemMessage(prompt["system"]), UserMessage(prompt["user"])],
-                        temperature=temperature,
-                    )
-                else:
-                    raise ValueError(f"Prompt must be a string or a dictionary, got {type(prompt)}")
-                
-                topic_name_info_text = topic_name_info_raw.choices[0].message.content
-                topic_name_info = llm_output_to_result(
-                    topic_name_info_text, GET_TOPIC_CLUSTER_NAMES_REGEX
-                )
-            except Exception as e:
-                warn(f"Failed to generate topic cluster names with AzureAI: {e}")
-                return old_names
-
-            mapping = topic_name_info["new_topic_name_mapping"]
-            if len(mapping) == len(old_names):
-                result = [
-                    # Empty names can cause issues, so cater to that is possible
-                    mapping.get(f"{n}. {name}") if f"{n}. {name}" in mapping else mapping.get(f"{n}.", name)
-                    for n, name in enumerate(old_names, start=1)
-                ]
-                return result
-            else:
-                mapping = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    topic_name_info_text,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.complete(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[UserMessage(prompt)],
+                temperature=temperature,
+            )
+            result = response.choices[0].message.content
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.complete(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[SystemMessage(system_prompt), UserMessage(user_prompt)],
+                temperature=temperature,
+            )
+            result = response.choices[0].message.content
+            return result
                 
 except ImportError:
     pass
 
 ############################ UNTESTED WRAPPERS ############################
 
+# try:
+#     import google.generativeai as genai
+
+#     class Gemini(LLMWrapper): # Or simply `class Gemini:` if you don't have/use LLMWrapper
+
+#         def __init__(self, API_KEY: str, model: str = "gemini-1.5-flash-latest"):
+#             super().__init__(API_KEY, model) # If LLMWrapper.__init__ needs to be called
+#             genai.configure(api_key=API_KEY)
+#             self.model_name = model # Store the model name string
+#             try:
+#                 self.llm = genai.GenerativeModel(self.model_name)
+#             except Exception as e:
+#                 print(f"Failed to initialize Gemini model {self.model_name}: {e}")
+#                 self.llm = None # Or raise the exception
+
+#         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> Optional[str]:
+#             generation_config = genai.types.GenerationConfig(
+#                 max_output_tokens=max_tokens,
+#                 temperature=temperature
+#             )
+#             response = self.llm.generate_content(
+#                 prompt,
+#                 generation_config=generation_config
+#             )
+#             return response.text
+
+#         def _call_llm_with_system_prompt(
+#             self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+#         ) -> Optional[str]:
+#             # This ensures the system_prompt is correctly applied for this specific call.
+#             model_for_call = genai.GenerativeModel(
+#                 self.model_name,
+#                 system_instruction=system_prompt
+#             )
+#             generation_config = genai.types.GenerationConfig(
+#                 max_output_tokens=max_tokens,
+#                 temperature=temperature
+#             )
+#             response = model_for_call.generate_content(
+#                 user_prompt, 
+#                 generation_config=generation_config
+#             )
+#             return response.text
+
+            
+# except ImportError:
+#     pass
+        
 # # MistralAI wrapper
 # try:
 #     import mistralai
