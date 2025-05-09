@@ -20,15 +20,17 @@ Ngrammer = Callable[[str], List[str]]
 
 from typing import Union, overload, TypeVar, cast
 
+
 # Define a protocol for objects that behave like Tokenizers
 class TokenizerLike(Protocol):
-    def encode(self, text: str, *args: Any, **kwargs: Any) -> Any:
-        ...
-    
-    def decode(self, ids: Any, *args: Any, **kwargs: Any) -> str:
-        ...
+    def encode(self, text: str, *args: Any, **kwargs: Any) -> Any: ...
 
-def create_tokenizers_ngrammer(tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)) -> Ngrammer:
+    def decode(self, ids: Any, *args: Any, **kwargs: Any) -> str: ...
+
+
+def create_tokenizers_ngrammer(
+    tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)
+) -> Ngrammer:
     """
     Creates an ngrammer function that uses a tokenizer to tokenize the text and then generates n-grams.
 
@@ -44,25 +46,35 @@ def create_tokenizers_ngrammer(tokenizer: TokenizerLike, ngram_range: Tuple[int,
     Ngrammer
         A function that takes a string and returns a list of n-grams.
     """
+
     def ngrammer(text: str) -> List[str]:
         encoded = tokenizer.encode(text)
         if isinstance(encoded, list):
             tokens = encoded
         else:
             tokens = encoded.ids
-        return [tokenizer.decode(tokens[i : i + n]) for n in range(ngram_range[0], ngram_range[1] + 1) for i in range(len(tokens) - n)]
+        return [
+            tokenizer.decode(tokens[i : i + n])
+            for n in range(ngram_range[0], ngram_range[1] + 1)
+            for i in range(len(tokens) - n)
+        ]
 
     return ngrammer
 
 
 def count_docs_ngrams(
-    docs: List[str], ngrammer: Ngrammer, stop_words: FrozenSet[str], max_ngrams: int = 250_000
+    docs: List[str],
+    ngrammer: Ngrammer,
+    stop_words: FrozenSet[str],
+    max_ngrams: int = 250_000,
 ) -> Dict[str, int]:
     result = {}
     for doc in docs:
         for gram in ngrammer(doc):
             split_gram = gram.split()
-            if len(split_gram) > 0 and (split_gram[0] in stop_words or split_gram[-1] in stop_words):
+            if len(split_gram) > 0 and (
+                split_gram[0] in stop_words or split_gram[-1] in stop_words
+            ):
                 continue
             if gram in result:
                 result[gram] += 1
@@ -189,7 +201,12 @@ def build_keyphrase_vocabulary(
             f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification."
         )
     chunked_count_dicts = Parallel(n_jobs=n_chunks)(
-        delayed(count_docs_ngrams)(objects[i : i + chunk_size], ngrammer, stop_words, max_ngrams=max_features * 10)
+        delayed(count_docs_ngrams)(
+            objects[i : i + chunk_size],
+            ngrammer,
+            stop_words,
+            max_ngrams=max_features * 10,
+        )
         for i in range(0, len(objects), chunk_size)
     )
 
@@ -197,9 +214,15 @@ def build_keyphrase_vocabulary(
         print("Combining count dictionaries ...")
     # Combine dictionaries and count the most common ngrams
     # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
-    all_vocab_counts = tree_combine_dicts(chunked_count_dicts, max_ngrams=max_features * 10)
+    all_vocab_counts = tree_combine_dicts(
+        chunked_count_dicts, max_ngrams=max_features * 10
+    )
     vocab_counter = Counter(all_vocab_counts)
-    result = [ngram for ngram, occurrences in vocab_counter.most_common(max_features) if occurrences >= min_occurrences]
+    result = [
+        ngram
+        for ngram, occurrences in vocab_counter.most_common(max_features)
+        if occurrences >= min_occurrences
+    ]
     if len(result) == 0:
         raise ValueError(
             "No keyphrases found. Try increasing the max_features parameter or check that there are any re-occuring sections of text."
@@ -434,7 +457,7 @@ class KeyphraseBuilder:
 
 
 @numba.njit()
-def longest_keyphrases(candidate_keyphrases): # pragma: no cover
+def longest_keyphrases(candidate_keyphrases):  # pragma: no cover
     """
     Builds a list of keyphrases that are not substrings of other keyphrases.
     """
@@ -513,7 +536,8 @@ def information_weighted_keyphrases(
     """
     keyphrase_vector_mapping = {
         keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors) if not np.all(vector == 0.0)
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
     }
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
@@ -549,8 +573,16 @@ def information_weighted_keyphrases(
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
         # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [keyphrase for keyphrase in keyphrases_present if keyphrase not in keyphrase_vector_mapping]
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in keyphrases_present
+            if keyphrase not in keyphrase_vector_mapping
+        ]
         if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
             missing_keyphrase_vectors = embedding_model.encode(
                 missing_keyphrases, show_progress_bar=False
             )
@@ -568,7 +600,9 @@ def information_weighted_keyphrases(
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
-            keyphrase_list[column_map[j]] for j in reversed(chosen_indices) if j in keyphrases_present_indices
+            keyphrase_list[column_map[j]]
+            for j in reversed(chosen_indices)
+            if j in keyphrases_present_indices
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -633,7 +667,8 @@ def central_keyphrases(
     """
     keyphrase_vector_mapping = {
         keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors) if not np.all(vector == 0.0)
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
     }
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
@@ -662,8 +697,16 @@ def central_keyphrases(
             keyphrase_list[column_map[j]] for j in base_candidate_indices
         ]
         # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [keyphrase for keyphrase in base_candidates if keyphrase not in keyphrase_vector_mapping]
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in base_candidates
+            if keyphrase not in keyphrase_vector_mapping
+        ]
         if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
             missing_keyphrase_vectors = embedding_model.encode(
                 missing_keyphrases, show_progress_bar=False
             )
@@ -698,12 +741,11 @@ def central_keyphrases(
 
         result.append(chosen_keyphrases)
 
-
     # Update keyphrase vectors with vectors from the mapping
     for i, keyphrase in enumerate(keyphrase_list):
         if keyphrase in keyphrase_vector_mapping:
             keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
-            
+
     return result
 
 
@@ -749,7 +791,8 @@ def bm25_keyphrases(
     """
     keyphrase_vector_mapping = {
         keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors) if not np.all(vector == 0.0)
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
     }
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
@@ -808,9 +851,17 @@ def bm25_keyphrases(
         keyphrases_present = [
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
-                # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [keyphrase for keyphrase in keyphrases_present if keyphrase not in keyphrase_vector_mapping]
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in keyphrases_present
+            if keyphrase not in keyphrase_vector_mapping
+        ]
         if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
             missing_keyphrase_vectors = embedding_model.encode(
                 missing_keyphrases, show_progress_bar=False
             )
@@ -828,7 +879,9 @@ def bm25_keyphrases(
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
-            keyphrase_list[column_map[j]] for j in reversed(chosen_indices) if j in keyphrases_present_indices
+            keyphrase_list[column_map[j]]
+            for j in reversed(chosen_indices)
+            if j in keyphrases_present_indices
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -845,7 +898,6 @@ def bm25_keyphrases(
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
         result.append(chosen_keyphrases)
-
 
     # Update keyphrase vectors with vectors from the mapping
     for i, keyphrase in enumerate(keyphrase_list):
