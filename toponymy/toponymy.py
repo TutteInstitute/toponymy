@@ -41,7 +41,7 @@ class Toponymy:
         A list of strings that represent the delimiters for the exemplar texts. Default is ["    *\"", "\"\n"].
     show_progress_bars: bool
         Whether to show progress bars or not.
-    
+
     Attributes:
     -----------
     llm_wrapper: class
@@ -99,7 +99,7 @@ class Toponymy:
         corpus_description: str = "collection of objects",
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
-        exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
+        exemplar_delimiters: List[str] = ['    * "', '"\n'],
         show_progress_bars: bool = True,
     ):
         self.llm_wrapper = llm_wrapper
@@ -114,12 +114,14 @@ class Toponymy:
         self.exemplar_delimiters = exemplar_delimiters
         self.show_progress_bars = show_progress_bars
 
-
     def fit(
         self,
         objects: List[Any],
         embedding_vectors: np.array,
         clusterable_vectors: np.array,
+        exemplar_method: str = "central",
+        keyphrase_method: str = "information_weighted",
+        subtopic_method: str = "central",
     ):
         """
         Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
@@ -133,18 +135,25 @@ class Toponymy:
         clusterable_vectors: np.array
             A numpy array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
             for density based clustering to be efficient (2-25).
+        exemplar_method: str, Optional
+            The method to use for generating exemplars. Default is "central". Other options are to be implemented.
+        keyphrase_method: str, Optional
+            The method to use for generating keyphrases. Default is "information_weighted". Other options are "central" and "bm25".
+        subtopic_method: str, Optional
+            The method to use for generating subtopics. Default is "central". Other options are "information_weighted".
 
         Returns:
         --------
         self: object
             Returns the instance of the class.
         """
-        pre_embed_all_keyphrases = True # True if the keyphrase vectors should be pre-embedded.  This is useful for large datasets where we want to save time later.
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
 
         # Build our layers and cluster tree
-        if hasattr(self.clusterer, "cluster_layers_") and hasattr(self.clusterer, "cluster_tree_"):
+        if hasattr(self.clusterer, "cluster_layers_") and hasattr(
+            self.clusterer, "cluster_tree_"
+        ):
             # If the clusterer has already been fit, we can skip this step
             self.cluster_layers_ = self.clusterer.cluster_layers_
             self.cluster_tree_ = self.clusterer.cluster_tree_
@@ -155,7 +164,11 @@ class Toponymy:
                 self.layer_class,
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
-                prompt_format="system_user" if self.llm_wrapper.supports_system_prompts else "combined",
+                prompt_format=(
+                    "system_user"
+                    if self.llm_wrapper.supports_system_prompts
+                    else "combined"
+                ),
             )
 
         # Initialize other data structures
@@ -168,49 +181,49 @@ class Toponymy:
         )
 
         # Get exemplars for layer 0 first and build keyphrase matrix
-        if hasattr(self.cluster_layers_[0], 'object_to_text_function') and \
-        self.cluster_layers_[0].object_to_text_function is not None:
+        if (
+            hasattr(self.cluster_layers_[0], "object_to_text_function")
+            and self.cluster_layers_[0].object_to_text_function is not None
+        ):
             # Non-text objects: use exemplars to build keyphrase matrix
             exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts(
                 objects,
                 embedding_vectors,
             )
-            
+
             # Create aligned text list
-            aligned_texts = [''] * len(objects)  # Empty strings for non-exemplars
+            aligned_texts = [""] * len(objects)  # Empty strings for non-exemplars
             for cluster_idx, cluster_exemplars in enumerate(exemplars):
-                for exemplar_idx, exemplar_text in zip(exemplar_indices[cluster_idx], cluster_exemplars):
+                for exemplar_idx, exemplar_text in zip(
+                    exemplar_indices[cluster_idx], cluster_exemplars
+                ):
                     aligned_texts[exemplar_idx] = exemplar_text
-                    
+
             # Build keyphrase matrix from aligned texts
-            self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
-                self.keyphrase_builder.fit_transform(aligned_texts)
-            )
+            (
+                self.object_x_keyphrase_matrix_,
+                self.keyphrase_list_,
+                self.keyphrase_vectors_,
+            ) = self.keyphrase_builder.fit_transform(aligned_texts)
         else:
             # Text objects: build keyphrase matrix directly from objects
-            self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
-                self.keyphrase_builder.fit_transform(objects)
-            )
+            (
+                self.object_x_keyphrase_matrix_,
+                self.keyphrase_list_,
+                self.keyphrase_vectors_,
+            ) = self.keyphrase_builder.fit_transform(objects)
             # Still need to generate exemplars for layer 0
             self.cluster_layers_[0].make_exemplar_texts(
                 objects,
                 embedding_vectors,
             )
-        
-        if pre_embed_all_keyphrases:
-            # Generate keyphrase vectors ahead of time
+
+        if self.keyphrase_vectors_ is None:
+            # If the keyphrase vectors are None, we need to generate them
             self.keyphrase_vectors_ = self.embedding_model.encode(
-                self.keyphrase_list_, 
+                self.keyphrase_list_,
                 show_progress_bar=self.show_progress_bars,
             )
-        else:
-            # Initialize keyphrase vectors to zero, and fill on demand later
-            try:
-                embedding_dimension = self.embedding_model.get_sentence_embedding_dimension()
-            except AttributeError:
-                embedding_dimension = self.embedding_model.encode(["Get the embedding dimension of this string"]).shape[1]
-
-            self.keyphrase_vectors_ = np.zeros((len(self.keyphrase_list_), embedding_dimension))
 
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
@@ -224,24 +237,27 @@ class Toponymy:
                 layer.make_exemplar_texts(
                     objects,
                     embedding_vectors,
+                    method=exemplar_method,
                 )
-                
+
             layer.make_keyphrases(
                 self.keyphrase_list_,
                 self.object_x_keyphrase_matrix_,
                 self.keyphrase_vectors_,
                 self.embedding_model,
+                method=keyphrase_method,
             )
-            
+
             if i > 0:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
                     self.cluster_layers_[0].embed_topic_names(self.embedding_model)
-                    
+
                 layer.make_subtopics(
                     self.topic_names_[0],
                     self.cluster_layers_[0].cluster_labels,
                     self.cluster_layers_[0].topic_name_embeddings,
                     self.embedding_model,
+                    method=subtopic_method,
                 )
 
             layer.make_prompts(
@@ -264,10 +280,18 @@ class Toponymy:
 
         return self
 
-    def fit_predict(self, objects: List[Any], object_vectors: np.array, clusterable_vectors: np.array) -> List[np.array]:
+    def fit_predict(
+        self,
+        objects: List[Any],
+        object_vectors: np.array,
+        clusterable_vectors: np.array,
+        exemplar_method: str = "central",
+        keyphrase_method: str = "information_weighted",
+        subtopic_method: str = "central",
+    ) -> List[np.array]:
         """
         Fit the model with objects and return the topic names.
-        
+
         Parameters:
         -----------
         objects: List[Any]
@@ -277,32 +301,43 @@ class Toponymy:
         object_map: np.array
             An array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
             for density based clustering to be efficient (2-25).
-        
+
         Returns:
         --------
         topic_name_vectors: List[np.array]
             A list of numpy arrays of shape=(number_of_topics, embedding_dimension) that represent the topic names of each object
             at each layer of the topic model.
         """
-        self.fit(objects, object_vectors, clusterable_vectors)
+        self.fit(
+            objects,
+            object_vectors,
+            clusterable_vectors,
+            exemplar_method=exemplar_method,
+            keyphrase_method=keyphrase_method,
+            subtopic_method=subtopic_method,
+        )
         return self.topic_name_vectors_
-    
+
     @property
     def topic_tree_(self) -> TopicTree:
         """
         Returns the topic tree.
-        
+
         Returns:
         --------
         TopicTree
             A representation of the topic tree (either html or string).
         """
         check_is_fitted(self, ["cluster_tree_", "topic_names_", "topic_name_vectors_"])
+
         def cluster_size(cluster_label_array):
             if cluster_label_array.min() < 0:
-                return np.bincount(cluster_label_array - cluster_label_array.min())[-cluster_label_array.min():].tolist()
+                return np.bincount(cluster_label_array - cluster_label_array.min())[
+                    -cluster_label_array.min() :
+                ].tolist()
             else:
                 return np.bincount(cluster_label_array).tolist()
+
         topic_sizes = [
             cluster_size(layer.cluster_labels) for layer in self.cluster_layers_
         ]
@@ -312,4 +347,3 @@ class Toponymy:
             topic_sizes,
             self.embedding_vectors_.shape[0],
         )
-

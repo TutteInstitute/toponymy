@@ -92,10 +92,78 @@ def test_make_data():
         EMBEDDER,
     )
     keyphrase_builder = KeyphraseBuilder()
-    matrix, keyphrases = keyphrase_builder.fit_transform(ALL_SENTENCES)
+    matrix, keyphrases, vectors = keyphrase_builder.fit_transform(ALL_SENTENCES)
     keyphrase_vectors = EMBEDDER.encode(keyphrases)
     cluster_layer.make_exemplar_texts(ALL_SENTENCES, OBJECT_VECTORS)
     cluster_layer.make_keyphrases(keyphrases, matrix, keyphrase_vectors, EMBEDDER)
+    cluster_layer.make_subtopics(
+        ALL_SUBTOPICS, SUBTOPIC_LABEL_VECTOR, SUBTOPIC_CENTROID_VECTORS
+    )
+    cluster_layer.make_prompts(
+        1.0,
+        [ALL_SUBTOPICS, []],
+        "sentences",
+        "about specific popular topics",
+        CLUSTER_TREE,
+    )
+    # Pretend we named clusters
+    cluster_layer.topic_names = [x["topic"] for x in SUBTOPIC_OBJECTS]
+    cluster_layer.embed_topic_names(EMBEDDER)
+    cluster_layer._make_disambiguation_prompts(
+        1.0,
+        [ALL_SUBTOPICS, [x["topic"] for x in SUBTOPIC_OBJECTS]],
+        "sentences",
+        "about specific popular topics",
+        CLUSTER_TREE,
+    )
+
+def test_make_data_alternative_methods1():
+    cluster_layer = ClusterLayerText(
+        CLUSTER_LABEL_VECTOR,
+        CLUSTER_CENTROID_VECTORS,
+        1,
+        EMBEDDER,
+        prompt_format="system_user",
+    )
+    keyphrase_builder = KeyphraseBuilder()
+    matrix, keyphrases, vectors = keyphrase_builder.fit_transform(ALL_SENTENCES)
+    keyphrase_vectors = EMBEDDER.encode(keyphrases)
+    cluster_layer.make_exemplar_texts(ALL_SENTENCES, OBJECT_VECTORS)
+    cluster_layer.make_keyphrases(keyphrases, matrix, keyphrase_vectors, EMBEDDER, method="central")
+    cluster_layer.make_subtopics(
+        ALL_SUBTOPICS, SUBTOPIC_LABEL_VECTOR, SUBTOPIC_CENTROID_VECTORS
+    )
+    cluster_layer.make_prompts(
+        1.0,
+        [ALL_SUBTOPICS, []],
+        "sentences",
+        "about specific popular topics",
+        CLUSTER_TREE,
+    )
+    # Pretend we named clusters
+    cluster_layer.topic_names = [x["topic"] for x in SUBTOPIC_OBJECTS]
+    cluster_layer.embed_topic_names(EMBEDDER)
+    cluster_layer._make_disambiguation_prompts(
+        1.0,
+        [ALL_SUBTOPICS, [x["topic"] for x in SUBTOPIC_OBJECTS]],
+        "sentences",
+        "about specific popular topics",
+        CLUSTER_TREE,
+    )
+
+def test_make_data_alternative_methods2():
+    cluster_layer = ClusterLayerText(
+        CLUSTER_LABEL_VECTOR,
+        CLUSTER_CENTROID_VECTORS,
+        1,
+        EMBEDDER,
+        prompt_format="combined",
+    )
+    keyphrase_builder = KeyphraseBuilder()
+    matrix, keyphrases, vectors = keyphrase_builder.fit_transform(ALL_SENTENCES)
+    keyphrase_vectors = EMBEDDER.encode(keyphrases)
+    cluster_layer.make_exemplar_texts(ALL_SENTENCES, OBJECT_VECTORS)
+    cluster_layer.make_keyphrases(keyphrases, matrix, keyphrase_vectors, EMBEDDER, method="bm25")
     cluster_layer.make_subtopics(
         ALL_SUBTOPICS, SUBTOPIC_LABEL_VECTOR, SUBTOPIC_CENTROID_VECTORS
     )
