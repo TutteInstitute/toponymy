@@ -3,9 +3,9 @@ from typing import List, Callable, Any, Optional, Tuple
 import scipy.sparse
 import numpy as np
 import pandas as pd
-from toponymy.keyphrases import central_keyphrases, information_weighted_keyphrases
+from toponymy.keyphrases import central_keyphrases, information_weighted_keyphrases, bm25_keyphrases
 from toponymy.exemplar_texts import diverse_exemplars
-from toponymy.subtopics import central_subtopics
+from toponymy.subtopics import central_subtopics, information_weighted_subtopics
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.prompt_construction import (
     topic_name_prompt,
@@ -95,7 +95,7 @@ class ClusterLayer(ABC):
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
-        embedding_model: SentenceTransformer,
+        embedding_model: Optional[SentenceTransformer] = None,
     ) -> List[List[str]]:
         pass
 
@@ -263,6 +263,7 @@ class ClusterLayerText(ClusterLayer):
         prompt_format: str = "combined",
         prompt_template: Optional[str] = None,
         show_progress_bar: bool = False,
+        **kwargs: Any,
     ):
         super().__init__(
             cluster_labels,
@@ -273,6 +274,7 @@ class ClusterLayerText(ClusterLayer):
             prompt_format=prompt_format,
             prompt_template=prompt_template,
             show_progress_bar=show_progress_bar,
+            **kwargs,
         )
         self.n_keyphrases = n_keyphrases
         self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
@@ -290,6 +292,8 @@ class ClusterLayerText(ClusterLayer):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
+        prompt_format: str = None,
+        prompt_template: Optional[str] = None,
     ) -> List[str]:
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
@@ -311,8 +315,8 @@ class ClusterLayerText(ClusterLayer):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
-                prompt_format=self.prompt_format,
-                prompt_template=self.prompt_template,
+                prompt_format=self.prompt_format if prompt_format is None else prompt_format,
+                prompt_template=self.prompt_template if prompt_template is None else prompt_template,
             )
             for topic_index in tqdm(
                 range(self.centroid_vectors.shape[0]),
@@ -390,18 +394,47 @@ class ClusterLayerText(ClusterLayer):
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
-        embedding_model: SentenceTransformer,
+        embedding_model: Optional[SentenceTransformer] = None,
+        method: str = "information_weighted",
     ) -> List[List[str]]:
-        self.keyphrases = information_weighted_keyphrases(
-            self.cluster_labels,
-            object_x_keyphrase_matrix,
-            keyphrase_list,
-            keyphrase_vectors,
-            embedding_model,
-            diversify_alpha=self.keyphrase_diversify_alpha,
-            n_keyphrases=self.n_keyphrases,
-            show_progress_bar=self.show_progress_bar,
-        )
+        if method == "information_weighted":
+            self.keyphrases = information_weighted_keyphrases(
+                self.cluster_labels,
+                object_x_keyphrase_matrix,
+                keyphrase_list,
+                keyphrase_vectors,
+                embedding_model,
+                diversify_alpha=self.keyphrase_diversify_alpha,
+                n_keyphrases=self.n_keyphrases,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method == "central":
+            self.keyphrases = central_keyphrases(
+                self.cluster_labels,
+                object_x_keyphrase_matrix,
+                keyphrase_list,
+                keyphrase_vectors,
+                embedding_model,
+                diversify_alpha=self.keyphrase_diversify_alpha,
+                n_keyphrases=self.n_keyphrases,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method == "bm25":
+            self.keyphrases = bm25_keyphrases(
+                self.cluster_labels,
+                object_x_keyphrase_matrix,
+                keyphrase_list,
+                keyphrase_vectors,
+                embedding_model,
+                diversify_alpha=self.keyphrase_diversify_alpha,
+                n_keyphrases=self.n_keyphrases,
+                show_progress_bar=self.show_progress_bar,
+            )
+        else:
+            raise ValueError(
+                f"Unknown keyphrase generation method: {method}. "
+                "Use 'information_weighted', 'central', or 'bm25'."
+            )
 
         return self.keyphrases
 
@@ -411,17 +444,35 @@ class ClusterLayerText(ClusterLayer):
         topic_labels: np.ndarray,
         topic_vectors: Optional[np.ndarray] = None,
         embedding_model: Optional[SentenceTransformer] = None,
+        method: str = "central",
     ) -> List[List[str]]:
-        self.subtopics = central_subtopics(
-            cluster_label_vector=self.cluster_labels,
-            subtopics=topic_list,
-            subtopic_label_vector=topic_labels,
-            subtopic_vectors=topic_vectors,
-            diversify_alpha=self.subtopic_diversify_alpha,
-            n_subtopics=self.n_subtopics,
-            embedding_model=embedding_model,
-            show_progress_bar=self.show_progress_bar,
-        )
+        if method == "central":
+            self.subtopics = central_subtopics(
+                cluster_label_vector=self.cluster_labels,
+                subtopics=topic_list,
+                subtopic_label_vector=topic_labels,
+                subtopic_vectors=topic_vectors,
+                diversify_alpha=self.subtopic_diversify_alpha,
+                n_subtopics=self.n_subtopics,
+                embedding_model=embedding_model,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method == "information_weighted":
+            self.subtopics = information_weighted_subtopics(
+                cluster_label_vector=self.cluster_labels,
+                subtopics=topic_list,
+                subtopic_label_vector=topic_labels,
+                subtopic_vectors=topic_vectors,
+                diversify_alpha=self.subtopic_diversify_alpha,
+                n_subtopics=self.n_subtopics,
+                embedding_model=embedding_model,
+                show_progress_bar=self.show_progress_bar,
+            )
+        else:
+            raise ValueError(
+                f"Unknown subtopic generation method: {method}. "
+                "Use 'central' or 'information_weighted'."
+            )
 
         return self.subtopics
 
@@ -429,17 +480,24 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
+        method="central",
     ) -> Tuple[List[List[str]], List[List[int]]]:
-        self.exemplars, self.exemplar_indices = diverse_exemplars(
-            cluster_label_vector=self.cluster_labels,
-            objects=object_list,
-            object_vectors=object_vectors,
-            centroid_vectors=self.centroid_vectors,
-            n_exemplars=self.n_exemplars,
-            diversify_alpha=self.exemplars_diversify_alpha,
-            object_to_text_function=self.object_to_text_function,
-            show_progress_bar=self.show_progress_bar,
-        )
+        if method == "central":
+            self.exemplars, self.exemplar_indices = diverse_exemplars(
+                cluster_label_vector=self.cluster_labels,
+                objects=object_list,
+                object_vectors=object_vectors,
+                centroid_vectors=self.centroid_vectors,
+                n_exemplars=self.n_exemplars,
+                diversify_alpha=self.exemplars_diversify_alpha,
+                object_to_text_function=self.object_to_text_function,
+                show_progress_bar=self.show_progress_bar,
+            )
+        else:
+            raise ValueError(
+                f"Unknown exemplar generation method: {method}. "
+                "Use 'central'."
+            )
 
         return self.exemplars, self.exemplar_indices
 

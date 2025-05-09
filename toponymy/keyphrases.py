@@ -414,6 +414,7 @@ class KeyphraseBuilder:
         min_occurrences: int = 2,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
+        embedder: Optional[SentenceTransformer] = None,
         verbose: bool = False,
     ):
         self.object_to_text = object_to_text
@@ -424,6 +425,7 @@ class KeyphraseBuilder:
         self.min_occurrences = min_occurrences
         self.stop_words = stop_words
         self.n_jobs = n_jobs
+        self.embedder = embedder
         self.verbose = verbose
 
     def fit(self, objects: List[Any]):
@@ -448,12 +450,23 @@ class KeyphraseBuilder:
                 verbose=self.verbose,
             )
         )
+        
+        if self.verbose and self.embedder is not None:
+            print("Building keyphrase vectors ... ")
+            self.keyphrase_vectors_ = self.embedder.encode(
+                self.keyphrase_list_, show_progress_bar=self.verbose,
+            )
+        else:
+            self.keyphrase_vectors_ = None
 
         return self
 
-    def fit_transform(self, objects: List[Any]):
+    def fit_transform(self, objects: List[Any]) -> Tuple[scipy.sparse.spmatrix, List[str], Optional[np.ndarray]]:
+        """
+        Fits the KeyphraseBuilder to the objects and returns the object x keyphrase matrix, keyphrase list, and keyphrase vectors.
+        """
         self.fit(objects)
-        return self.object_x_keyphrase_matrix_, self.keyphrase_list_
+        return self.object_x_keyphrase_matrix_, self.keyphrase_list_, self.keyphrase_vectors_
 
 
 @numba.njit()
