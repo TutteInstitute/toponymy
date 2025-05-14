@@ -189,17 +189,18 @@ try:
 
     class LlamaCpp(LLMWrapper):
 
-        def __init__(self, model_path: str, **kwargs):
+        def __init__(self, model_path: str, llm_specific_instructions=None, **kwargs):
             self.model_path = model_path
             for arg, val in kwargs.items():
                 if arg == "n_ctx":
                     continue
                 setattr(self, arg, val)
             self.llm = llama_cpp.Llama(model_path=model_path, **kwargs)
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm(
-                prompt,
+                prompt + self.extra_prompting,
                 max_new_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -224,13 +225,14 @@ try:
 
     class HuggingFace(LLMWrapper):
 
-        def __init__(self, model: str, **kwargs):
+        def __init__(self, model: str, llm_specific_instructions=None, **kwargs):
             self.model = model
             self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
+            self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm(
-                [{"role": "user", "content": prompt}],
+                [{"role": "user", "content": prompt + self.extra_prompting}],
                 return_full_text=False,
                 max_new_tokens=max_tokens,
                 temperature=temperature,
@@ -243,14 +245,15 @@ try:
         def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm(
                 [{"role": "system", "content": system_prompt},
-                 {"role": "user", "content": user_prompt}],
+                 {"role": "user", "content": user_prompt + self.extra_prompting}],
                 return_full_text=False,
-                max_new_tokens=64,
+                max_new_tokens=max_tokens,
                 temperature=temperature,
                 do_sample=True,
                 pad_token_id=self.llm.tokenizer.eos_token_id,
             )
             result = response[0]["generated_text"]
+            print(result)
             return result
 
 except ImportError:
@@ -261,7 +264,7 @@ try:
 
     class Cohere(LLMWrapper):
 
-        def __init__(self, API_KEY: str, model: str = "command-r-08-2024", base_url: str = None, httpx_client: Optional[httpx.Client] = None):
+        def __init__(self, API_KEY: str, model: str = "command-r-08-2024", base_url: str = None, httpx_client: Optional[httpx.Client] = None, llm_specific_instructions=None):
             if base_url is None:
                 base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
             self.llm = cohere.ClientV2(api_key=API_KEY, base_url=base_url, httpx_client=httpx_client)
@@ -273,12 +276,13 @@ try:
                 msg = f"Model '{model}' not found, try one of {models}"
                 raise ValueError(msg)
             self.model = model
+            self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm.chat(
                 model=self.model,
                 max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
                 # This results in failures more often than useful output
                 # response_format={"type": "json_object"},
@@ -292,7 +296,7 @@ try:
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
                 ],
                 temperature=temperature,
                 # This results in failures more often than useful output
@@ -309,15 +313,16 @@ try:
 
     class Anthropic(LLMWrapper):
 
-        def __init__(self, API_KEY: str, model: str = "claude-3-haiku-20240307"):
+        def __init__(self, API_KEY: str, model: str = "claude-3-haiku-20240307", llm_specific_instructions=None):
             self.llm = anthropic.Anthropic(api_key=API_KEY)
             self.model = model
+            self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
             )
             result = response.content[0].text
@@ -329,7 +334,7 @@ try:
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
                 ],
                 temperature=temperature,
             )
@@ -348,17 +353,19 @@ try:
             API_KEY: str,
             model: str = "gpt-4o-mini",
             base_url: str = None,
+            llm_specific_instructions=None,
             verbose: bool = False,
         ):
             self.llm = openai.OpenAI(api_key=API_KEY, base_url=base_url)
             self.model = model
+            self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             self.verbose = verbose
 
         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm.chat.completions.create(
                 model=self.model,
                 max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt}],
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
                 response_format={"type": "json_object"},
             )
@@ -371,7 +378,7 @@ try:
                 max_tokens=max_tokens,
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
                 ],
                 temperature=temperature,
                 response_format={"type": "json_object"},
@@ -390,19 +397,20 @@ try:
 
     class AzureAI(LLMWrapper):
 
-        def __init__(self, API_KEY: str, endpoint: str, model: str):
+        def __init__(self, API_KEY: str, endpoint: str, model: str, llm_specific_instructions=None):
             self.endpoint = endpoint
             self.model = model
             self.llm = ChatCompletionsClient(
                 endpoint=endpoint,
                 credential=AzureKeyCredential(API_KEY),
             )
+            self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
         def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
             response = self.llm.complete(
                 model=self.model,
                 max_tokens=max_tokens,
-                messages=[UserMessage(prompt)],
+                messages=[UserMessage(prompt + self.extra_prompting)],
                 temperature=temperature,
             )
             result = response.choices[0].message.content
@@ -412,7 +420,7 @@ try:
             response = self.llm.complete(
                 model=self.model,
                 max_tokens=max_tokens,
-                messages=[SystemMessage(system_prompt), UserMessage(user_prompt)],
+                messages=[SystemMessage(system_prompt), UserMessage(user_prompt + self.extra_prompting)],
                 temperature=temperature,
             )
             result = response.choices[0].message.content
