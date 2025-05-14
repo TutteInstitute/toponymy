@@ -451,8 +451,10 @@ class KeyphraseBuilder:
             )
         )
         
-        if self.verbose and self.embedder is not None:
-            print("Building keyphrase vectors ... ")
+        if self.embedder is not None:
+            if self.verbose:
+                print("Building keyphrase vectors ... ")
+                
             self.keyphrase_vectors_ = self.embedder.encode(
                 self.keyphrase_list_, show_progress_bar=self.verbose,
             )
