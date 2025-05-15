@@ -127,7 +127,7 @@ def mock_data():
 @pytest.fixture
 def llamacpp_wrapper():
     with patch('llama_cpp.Llama'):
-        wrapper = LlamaCpp(model_path="dummy")
+        wrapper = LlamaCpp(model_path="dummy", n_ctx=4096, n_batch=512, n_threads=4)
         return wrapper
 
 def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
@@ -398,6 +398,7 @@ def test_cohere_generate_cluster_names_failure(cohere_wrapper, mock_data):
     cohere_wrapper.llm.chat = Mock(side_effect=Exception("API Error"))
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     assert result == mock_data["old_names"]
+
 
 # AzureAI Tests
 @pytest.fixture

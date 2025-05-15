@@ -165,6 +165,7 @@ def build_keyphrase_vocabulary(
     min_occurrences: int = 1,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
+    min_chunk_size: int = 20_000,
     verbose: bool = False,
 ) -> List[str]:
     """
@@ -184,6 +185,8 @@ def build_keyphrase_vocabulary(
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
     verbose : bool, optional
         Whether to print out progress information, by default False.
 
@@ -194,7 +197,7 @@ def build_keyphrase_vocabulary(
     """
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
+    chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
     n_chunks = len(objects) // chunk_size + 1
     if verbose:
         print(
@@ -236,6 +239,7 @@ def build_keyphrase_count_matrix(
     keyphrases: Dict[str, int],
     ngrammer: Ngrammer,
     n_jobs: int = -1,
+    min_chunk_size: int = 20_000,
     verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
@@ -251,7 +255,9 @@ def build_keyphrase_count_matrix(
         A function that takes a string and returns a list of n-grams.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
-    verbose : bool, optional
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
+   verbose : bool, optional
         Whether to print out progress information, by default False.
 
 
@@ -262,7 +268,7 @@ def build_keyphrase_count_matrix(
     """
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
+    chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
     n_chunks = (len(objects) // chunk_size) + 1
     if verbose:
         print(
@@ -290,6 +296,7 @@ def build_object_x_keyphrase_matrix(
     min_occurrences: int = 1,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
+    min_chunk_size: int = 20_000,
     verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
@@ -313,6 +320,8 @@ def build_object_x_keyphrase_matrix(
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
     verbose : bool, optional
         Whether to print out progress information, by default False.
 
@@ -454,7 +463,7 @@ class KeyphraseBuilder:
         if self.embedder is not None:
             if self.verbose:
                 print("Building keyphrase vectors ... ")
-                
+
             self.keyphrase_vectors_ = self.embedder.encode(
                 self.keyphrase_list_, show_progress_bar=self.verbose,
             )

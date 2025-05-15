@@ -102,6 +102,34 @@ def test_count_matrix_building(ngram_range):
         == 1
     )
 
+@pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
+@pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
+def test_count_matrix_building_in_parts(ngram_range, token_pattern):
+    ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
+    vocabulary_split = build_keyphrase_vocabulary(
+        TEST_OBJECTS, max_features=1000, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
+    )
+    vocabulary_map = {word: i for i, word in enumerate(vocabulary_split)}
+    count_matrix_split = build_keyphrase_count_matrix(
+        TEST_OBJECTS, vocabulary_map, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
+    )
+
+    vocabulary = build_keyphrase_vocabulary(
+        TEST_OBJECTS, max_features=1000, ngrammer=ngrammer, n_jobs=4
+    )
+    vocabulary_map = {word: i for i, word in enumerate(vocabulary_split)}
+    count_matrix = build_keyphrase_count_matrix(
+        TEST_OBJECTS, vocabulary_map, ngrammer=ngrammer, n_jobs=4
+    )
+    assert count_matrix_split.shape[0] == count_matrix.shape[0]
+    assert count_matrix_split.shape[1] == count_matrix.shape[1]
+    assert count_matrix_split.nnz == count_matrix.nnz
+    assert count_matrix_split.shape[0] == len(TEST_OBJECTS)
+    assert count_matrix_split.shape[1] == len(vocabulary_split)
+    assert count_matrix_split.nnz > 0
+
+    assert np.all(count_matrix_split.data == count_matrix.data)
+
 
 @pytest.mark.parametrize("ngram_range", [3, 2])
 @pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
