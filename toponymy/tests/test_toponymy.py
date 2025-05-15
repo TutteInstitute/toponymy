@@ -16,8 +16,9 @@ import umap
 
 import pytest
 
-LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
-# LLM = HuggingFace("Qwen/Qwen3.0-0.6B")
+#LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+LLM = HuggingFace("Qwen/Qwen3-0.6B", llm_specific_instructions=" /no_think")
+# LLM = HuggingFace("Qwen/Qwen3-0.6B-GPTQ-Int8", llm_specific_instructions=" /no_think")
 EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
 SUBTOPIC_OBJECTS = json.load(open(Path(__file__).parent / "subtopic_objects.json", "r"))
 ALL_SENTENCES = sum(
@@ -35,6 +36,7 @@ CLUSTERER = ToponymyClusterer(
     base_min_cluster_size=4,
     next_cluster_size_quantile=1.0,
     min_clusters=4,
+    verbose=True,
 )
 
 
@@ -43,7 +45,6 @@ def test_toponymy():
         LLM,
         EMBEDDER,
         CLUSTERER,
-        #ClusterLayerText,
         keyphrase_builder = KeyphraseBuilder(n_jobs=1),
         object_description = "sentences",
         corpus_description = "collection of sentences",
@@ -60,10 +61,40 @@ def test_toponymy():
         metric="cosine",
     )
     row_matching, col_matching = linear_sum_assignment(distance_matrix)
-    assert distance_matrix[row_matching, col_matching].sum() < 2.66
+    assert distance_matrix[row_matching, col_matching].sum() < 2.5
     assert np.all(
         pd.Series(model.cluster_layers_[1].cluster_labels)
         .map(dict(np.vstack([np.arange(5), col_matching]).T))
         .values
         == CLUSTER_LABEL_VECTOR
     )
+
+def test_toponymy_alternative_options():
+    CLUSTERER.fit(CLUSTERABLE_VECTORS, OBJECT_VECTORS, prompt_format="combined", object_to_text_function=lambda x: x)
+    model = Toponymy(
+        LLM,
+        EMBEDDER,
+        CLUSTERER,
+        keyphrase_builder = KeyphraseBuilder(n_jobs=1, verbose=True, embedder=EMBEDDER),
+        object_description = "sentences",
+        corpus_description = "collection of sentences",
+        lowest_detail_level = 0.8,
+        highest_detail_level = 1.0,
+        show_progress_bars=True,
+    )
+    topic_name_vectors = model.fit_predict(ALL_SENTENCES, OBJECT_VECTORS, CLUSTERABLE_VECTORS, keyphrase_method="bm25", subtopic_method="information_weighted")
+    embedded_topic_names = EMBEDDER.encode(model.topic_names_[1])
+    distance_matrix = pairwise_distances(
+        embedded_topic_names,
+        EMBEDDER.encode([topic["topic"] for topic in SUBTOPIC_OBJECTS]),
+        metric="cosine",
+    )
+    row_matching, col_matching = linear_sum_assignment(distance_matrix)
+    assert distance_matrix[row_matching, col_matching].sum() < 2.5
+    assert np.all(
+        pd.Series(model.cluster_layers_[1].cluster_labels)
+        .map(dict(np.vstack([np.arange(5), col_matching]).T))
+        .values
+        == CLUSTER_LABEL_VECTOR
+    )
+    assert len(str(model.topic_tree_)) > 10

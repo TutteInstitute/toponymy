@@ -102,6 +102,34 @@ def test_count_matrix_building(ngram_range):
         == 1
     )
 
+@pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
+@pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
+def test_count_matrix_building_in_parts(ngram_range, token_pattern):
+    ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
+    vocabulary_split = build_keyphrase_vocabulary(
+        TEST_OBJECTS, max_features=1000, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
+    )
+    vocabulary_map = {word: i for i, word in enumerate(vocabulary_split)}
+    count_matrix_split = build_keyphrase_count_matrix(
+        TEST_OBJECTS, vocabulary_map, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
+    )
+
+    vocabulary = build_keyphrase_vocabulary(
+        TEST_OBJECTS, max_features=1000, ngrammer=ngrammer, n_jobs=4
+    )
+    vocabulary_map = {word: i for i, word in enumerate(vocabulary_split)}
+    count_matrix = build_keyphrase_count_matrix(
+        TEST_OBJECTS, vocabulary_map, ngrammer=ngrammer, n_jobs=4
+    )
+    assert count_matrix_split.shape[0] == count_matrix.shape[0]
+    assert count_matrix_split.shape[1] == count_matrix.shape[1]
+    assert count_matrix_split.nnz == count_matrix.nnz
+    assert count_matrix_split.shape[0] == len(TEST_OBJECTS)
+    assert count_matrix_split.shape[1] == len(vocabulary_split)
+    assert count_matrix_split.nnz > 0
+
+    assert np.all(count_matrix_split.data == count_matrix.data)
+
 
 @pytest.mark.parametrize("ngram_range", [3, 2])
 @pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
@@ -170,6 +198,7 @@ def test_central_keyphrases_result_sizes(n_keyphrases, diversify_alpha):
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -186,6 +215,7 @@ def test_central_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=0.0,
         n_keyphrases=10,
     )
@@ -224,6 +254,7 @@ def test_bm25_keyphrases_result_sizes(n_keyphrases, diversify_alpha):
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -238,6 +269,7 @@ def test_bm25_keyphrases():
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=0.0,
     )
     bm25_objects = [
@@ -274,6 +306,7 @@ def test_information_weighted_keyphrases_result_sizes(n_keyphrases, diversify_al
         MATRIX,
         KEYPHRASES,
         KEYPHRASE_VECTORS,
+        EMBEDDER,
         diversify_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
@@ -286,7 +319,8 @@ def test_information_weighted_keyphrases():
         CLUSTER_LAYER,
         MATRIX,
         KEYPHRASES,
-        KEYPHRASE_VECTORS,
+        np.zeros_like(KEYPHRASE_VECTORS),
+        EMBEDDER,
         diversify_alpha=0.0,
     )
     sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(CLUSTER_LAYER, MATRIX)

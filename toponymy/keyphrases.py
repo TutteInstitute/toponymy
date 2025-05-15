@@ -9,6 +9,8 @@ from toponymy.utility_functions import diversify_max_alpha as diversify
 from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
 
+from sentence_transformers import SentenceTransformer
+
 import scipy.sparse
 import numba
 
@@ -18,15 +20,17 @@ Ngrammer = Callable[[str], List[str]]
 
 from typing import Union, overload, TypeVar, cast
 
+
 # Define a protocol for objects that behave like Tokenizers
 class TokenizerLike(Protocol):
-    def encode(self, text: str, *args: Any, **kwargs: Any) -> Any:
-        ...
-    
-    def decode(self, ids: Any, *args: Any, **kwargs: Any) -> str:
-        ...
+    def encode(self, text: str, *args: Any, **kwargs: Any) -> Any: ...
 
-def create_tokenizers_ngrammer(tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)) -> Ngrammer:
+    def decode(self, ids: Any, *args: Any, **kwargs: Any) -> str: ...
+
+
+def create_tokenizers_ngrammer(
+    tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)
+) -> Ngrammer:
     """
     Creates an ngrammer function that uses a tokenizer to tokenize the text and then generates n-grams.
 
@@ -42,25 +46,35 @@ def create_tokenizers_ngrammer(tokenizer: TokenizerLike, ngram_range: Tuple[int,
     Ngrammer
         A function that takes a string and returns a list of n-grams.
     """
+
     def ngrammer(text: str) -> List[str]:
         encoded = tokenizer.encode(text)
         if isinstance(encoded, list):
             tokens = encoded
         else:
             tokens = encoded.ids
-        return [tokenizer.decode(tokens[i : i + n]) for n in range(ngram_range[0], ngram_range[1] + 1) for i in range(len(tokens) - n)]
+        return [
+            tokenizer.decode(tokens[i : i + n])
+            for n in range(ngram_range[0], ngram_range[1] + 1)
+            for i in range(len(tokens) - n)
+        ]
 
     return ngrammer
 
 
 def count_docs_ngrams(
-    docs: List[str], ngrammer: Ngrammer, stop_words: FrozenSet[str], max_ngrams: int = 250_000
+    docs: List[str],
+    ngrammer: Ngrammer,
+    stop_words: FrozenSet[str],
+    max_ngrams: int = 250_000,
 ) -> Dict[str, int]:
     result = {}
     for doc in docs:
         for gram in ngrammer(doc):
             split_gram = gram.split()
-            if len(split_gram) > 0 and (split_gram[0] in stop_words or split_gram[-1] in stop_words):
+            if len(split_gram) > 0 and (
+                split_gram[0] in stop_words or split_gram[-1] in stop_words
+            ):
                 continue
             if gram in result:
                 result[gram] += 1
@@ -151,6 +165,7 @@ def build_keyphrase_vocabulary(
     min_occurrences: int = 1,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
+    min_chunk_size: int = 20_000,
     verbose: bool = False,
 ) -> List[str]:
     """
@@ -170,6 +185,8 @@ def build_keyphrase_vocabulary(
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
     verbose : bool, optional
         Whether to print out progress information, by default False.
 
@@ -180,14 +197,19 @@ def build_keyphrase_vocabulary(
     """
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
+    chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
     n_chunks = len(objects) // chunk_size + 1
     if verbose:
         print(
             f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification."
         )
     chunked_count_dicts = Parallel(n_jobs=n_chunks)(
-        delayed(count_docs_ngrams)(objects[i : i + chunk_size], ngrammer, stop_words, max_ngrams=max_features * 10)
+        delayed(count_docs_ngrams)(
+            objects[i : i + chunk_size],
+            ngrammer,
+            stop_words,
+            max_ngrams=max_features * 10,
+        )
         for i in range(0, len(objects), chunk_size)
     )
 
@@ -195,9 +217,15 @@ def build_keyphrase_vocabulary(
         print("Combining count dictionaries ...")
     # Combine dictionaries and count the most common ngrams
     # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
-    all_vocab_counts = tree_combine_dicts(chunked_count_dicts, max_ngrams=max_features * 10)
+    all_vocab_counts = tree_combine_dicts(
+        chunked_count_dicts, max_ngrams=max_features * 10
+    )
     vocab_counter = Counter(all_vocab_counts)
-    result = [ngram for ngram, occurrences in vocab_counter.most_common(max_features) if occurrences >= min_occurrences]
+    result = [
+        ngram
+        for ngram, occurrences in vocab_counter.most_common(max_features)
+        if occurrences >= min_occurrences
+    ]
     if len(result) == 0:
         raise ValueError(
             "No keyphrases found. Try increasing the max_features parameter or check that there are any re-occuring sections of text."
@@ -211,6 +239,7 @@ def build_keyphrase_count_matrix(
     keyphrases: Dict[str, int],
     ngrammer: Ngrammer,
     n_jobs: int = -1,
+    min_chunk_size: int = 20_000,
     verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
@@ -226,7 +255,9 @@ def build_keyphrase_count_matrix(
         A function that takes a string and returns a list of n-grams.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
-    verbose : bool, optional
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
+   verbose : bool, optional
         Whether to print out progress information, by default False.
 
 
@@ -237,7 +268,7 @@ def build_keyphrase_count_matrix(
     """
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
-    chunk_size = max((len(objects) // n_chunks) + 1, 20_000)
+    chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
     n_chunks = (len(objects) // chunk_size) + 1
     if verbose:
         print(
@@ -265,6 +296,7 @@ def build_object_x_keyphrase_matrix(
     min_occurrences: int = 1,
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
+    min_chunk_size: int = 20_000,
     verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
@@ -288,6 +320,8 @@ def build_object_x_keyphrase_matrix(
         The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
     verbose : bool, optional
         Whether to print out progress information, by default False.
 
@@ -389,6 +423,7 @@ class KeyphraseBuilder:
         min_occurrences: int = 2,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
+        embedder: Optional[SentenceTransformer] = None,
         verbose: bool = False,
     ):
         self.object_to_text = object_to_text
@@ -399,6 +434,7 @@ class KeyphraseBuilder:
         self.min_occurrences = min_occurrences
         self.stop_words = stop_words
         self.n_jobs = n_jobs
+        self.embedder = embedder
         self.verbose = verbose
 
     def fit(self, objects: List[Any]):
@@ -423,16 +459,29 @@ class KeyphraseBuilder:
                 verbose=self.verbose,
             )
         )
+        
+        if self.embedder is not None:
+            if self.verbose:
+                print("Building keyphrase vectors ... ")
+
+            self.keyphrase_vectors_ = self.embedder.encode(
+                self.keyphrase_list_, show_progress_bar=self.verbose,
+            )
+        else:
+            self.keyphrase_vectors_ = None
 
         return self
 
-    def fit_transform(self, objects: List[Any]):
+    def fit_transform(self, objects: List[Any]) -> Tuple[scipy.sparse.spmatrix, List[str], Optional[np.ndarray]]:
+        """
+        Fits the KeyphraseBuilder to the objects and returns the object x keyphrase matrix, keyphrase list, and keyphrase vectors.
+        """
         self.fit(objects)
-        return self.object_x_keyphrase_matrix_, self.keyphrase_list_
+        return self.object_x_keyphrase_matrix_, self.keyphrase_list_, self.keyphrase_vectors_
 
 
 @numba.njit()
-def longest_keyphrases(candidate_keyphrases): # pragma: no cover
+def longest_keyphrases(candidate_keyphrases):  # pragma: no cover
     """
     Builds a list of keyphrases that are not substrings of other keyphrases.
     """
@@ -472,6 +521,7 @@ def information_weighted_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
@@ -490,6 +540,8 @@ def information_weighted_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     prior_strength : float, optional
@@ -509,6 +561,7 @@ def information_weighted_keyphrases(
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
     }
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
@@ -543,6 +596,24 @@ def information_weighted_keyphrases(
         keyphrases_present = [
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in keyphrases_present
+            if keyphrase not in keyphrase_vector_mapping
+        ]
+        if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
+        # Compute the centroid of the keyphrases present in the cluster
         centroid_vector = np.average(
             [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
             weights=keyphrase_weights,
@@ -553,7 +624,9 @@ def information_weighted_keyphrases(
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
-            keyphrase_list[column_map[j]] for j in reversed(chosen_indices)
+            keyphrase_list[column_map[j]]
+            for j in reversed(chosen_indices)
+            if j in keyphrases_present_indices
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -571,6 +644,11 @@ def information_weighted_keyphrases(
 
         result.append(chosen_keyphrases)
 
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+
     return result
 
 
@@ -579,6 +657,7 @@ def central_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     diversify_alpha: float = 1.0,
     show_progress_bar: bool = False,
@@ -596,6 +675,8 @@ def central_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     diversify_alpha : float, optional
@@ -611,6 +692,7 @@ def central_keyphrases(
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
     }
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
@@ -638,6 +720,23 @@ def central_keyphrases(
         base_candidates = [
             keyphrase_list[column_map[j]] for j in base_candidate_indices
         ]
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in base_candidates
+            if keyphrase not in keyphrase_vector_mapping
+        ]
+        if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
         base_vectors = np.asarray(
             [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
         )
@@ -666,6 +765,11 @@ def central_keyphrases(
 
         result.append(chosen_keyphrases)
 
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+
     return result
 
 
@@ -674,6 +778,7 @@ def bm25_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     k1: float = 1.5,
     b: float = 0.75,
@@ -692,6 +797,8 @@ def bm25_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     k1 : float, optional
@@ -709,6 +816,7 @@ def bm25_keyphrases(
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
     }
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
@@ -767,6 +875,24 @@ def bm25_keyphrases(
         keyphrases_present = [
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in keyphrases_present
+            if keyphrase not in keyphrase_vector_mapping
+        ]
+        if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
+        # Compute the centroid of the keyphrases present in the cluster
         centroid_vector = np.average(
             [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
             weights=keyphrase_weights,
@@ -777,7 +903,9 @@ def bm25_keyphrases(
 
         # Map the indices back to the original vocabulary
         chosen_keyphrases = [
-            keyphrase_list[column_map[j]] for j in reversed(chosen_indices)
+            keyphrase_list[column_map[j]]
+            for j in reversed(chosen_indices)
+            if j in keyphrases_present_indices
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -794,5 +922,10 @@ def bm25_keyphrases(
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
         result.append(chosen_keyphrases)
+
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
 
     return result
