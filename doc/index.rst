@@ -50,6 +50,7 @@ and a tour of some of the richer functionality and uses cases.
    :maxdepth: 1
    :caption: Advanced Usage:
 
+   how_toponymy_works
    clusterers
    clustering_options
    keyphrases
