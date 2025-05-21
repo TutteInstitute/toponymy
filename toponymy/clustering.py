@@ -470,6 +470,7 @@ class KMeansClusterer(Clusterer):
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
         show_progress_bar: bool = False,
+        **layer_kwargs,
     ) -> Clusterer:
         n_clusters = self.base_n_clusters
         cluster_label_layers = []
@@ -489,6 +490,7 @@ class KMeansClusterer(Clusterer):
                 centroids_from_labels(labels, embedding_vectors),
                 layer_id=i,
                 show_progress_bar=show_progress_bar,
+                **layer_kwargs,
             )
             for i, labels in enumerate(cluster_label_layers)
         ]
