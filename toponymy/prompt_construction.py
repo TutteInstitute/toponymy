@@ -194,7 +194,7 @@ def distinguish_topic_names_prompt(
     has_any_major_subtopics = False
 
     if subtopics is not None and cluster_tree is not None:
-        tree_subtopics_per_topic = [cluster_tree[(layer_id, x)] for x in topic_indices]
+        tree_subtopics_per_topic = [cluster_tree[(layer_id, x)] for x in topic_indices if (layer_id, x) in cluster_tree]
         major_subtopics_per_topic = [
             [
                 all_topic_names[layer_id - 1][a[1]]
