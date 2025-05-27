@@ -10,3 +10,4 @@ sentence_transformers>=3.4
 dataclasses
 tqdm
 tenacity
+aiohttp
