@@ -473,6 +473,46 @@ try:
             result = response[0]["generated_text"]
             print(result)
             return result
+        
+    class AsyncHuggingFace(AsyncLLMWrapper):
+        """This class is essentially for testing purposes only, allowing testing of the Async API with local models."""
+
+        def __init__(self, model: str, llm_specific_instructions: Optional[str] = None, max_concurrent_requests: int = 10, **kwargs):
+            self.model = model
+            self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.max_concurrent_requests = max_concurrent_requests
+
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            responses = []
+            for prompt in prompts:
+                response = self.llm(
+                    [{"role": "user", "content": prompt + self.extra_prompting}],
+                    return_full_text=False,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    do_sample=True,
+                    pad_token_id=self.llm.tokenizer.eos_token_id,
+                )
+                responses.append(response[0]["generated_text"])
+            return responses
+
+        async def _call_llm_with_system_prompt_batch(
+            self, system_prompts: List[str], user_prompts: List[str], temperature: float, max_tokens: int
+        ) -> List[str]:
+            responses = []
+            for system_prompt, user_prompt in zip(system_prompts, user_prompts):
+                response = self.llm(
+                    [{"role": "system", "content": system_prompt},
+                     {"role": "user", "content": user_prompt + self.extra_prompting}],
+                    return_full_text=False,
+                    max_new_tokens=max_tokens,
+                    temperature=temperature,
+                    do_sample=True,
+                    pad_token_id=self.llm.tokenizer.eos_token_id,
+                )
+                responses.append(response[0]["generated_text"])
+            return responses
 
 except ImportError:
     pass
