@@ -73,7 +73,7 @@ stages:
             python -m pip install --upgrade pip
           displayName: 'Upgrade pip'
 
-        - script: |
+        - bash: |
             pip cache purge
             # Check if running on macOS
             if [[ "$(Agent.OS)" == "Darwin" ]]; then
@@ -85,7 +85,7 @@ stages:
           displayName: 'Install dependencies'
           condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
 
-        - script: |
+        - bash: |
             # Check if running on macOS
             if [[ "$(Agent.OS)" == "Darwin" ]]; then
               echo "##[section]Installing PyTorch from official repository for macOS"
