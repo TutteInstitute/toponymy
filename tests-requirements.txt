@@ -13,3 +13,4 @@ numpy>=1.26,<2.0
 pytest-asyncio
 transformers
 bm25s
+evoc
