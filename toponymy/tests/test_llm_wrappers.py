@@ -229,7 +229,7 @@ def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_da
 @pytest.fixture
 def anthropic_wrapper():
     with patch('anthropic.Anthropic'):
-        wrapper = Anthropic(API_KEY="dummy")
+        wrapper = Anthropic(api_key="dummy")
         return wrapper
 
 def test_anthropic_generate_topic_name_success(anthropic_wrapper, mock_data):
@@ -286,7 +286,7 @@ def test_anthropic_generate_cluster_names_failure(anthropic_wrapper, mock_data):
 @pytest.fixture
 def openai_wrapper():
     with patch('openai.OpenAI'):
-        wrapper = OpenAI(API_KEY="dummy")
+        wrapper = OpenAI(api_key="dummy")
         return wrapper
 
 def test_openai_generate_topic_name_success(openai_wrapper, mock_data):
@@ -346,7 +346,7 @@ def cohere_wrapper():
         # Mock the models.get method to prevent UnauthorizedError
         mock_client.return_value.models = Mock()
         mock_client.return_value.models.get = Mock()
-        wrapper = Cohere(API_KEY="dummy")
+        wrapper = Cohere(api_key="dummy")
         return wrapper
 
 def test_cohere_generate_topic_name_success(cohere_wrapper, mock_data):
@@ -404,7 +404,7 @@ def test_cohere_generate_cluster_names_failure(cohere_wrapper, mock_data):
 @pytest.fixture
 def azureai_wrapper():
     with patch('azure.ai.inference.ChatCompletionsClient'):
-        wrapper = AzureAI(API_KEY="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
+        wrapper = AzureAI(api_key="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
         return wrapper
     
 def test_azureai_generate_topic_name_success(azureai_wrapper, mock_data):
