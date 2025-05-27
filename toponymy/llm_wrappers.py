@@ -248,7 +248,8 @@ class AsyncLLMWrapper(ABC):
                 topic_name_info = llm_output_to_result(response, GET_TOPIC_NAME_REGEX)
                 results.append(topic_name_info["topic_name"])
             except Exception as e:
-                raise ValueError(f"Failed to generate topic name with {self.__class__.__name__}: {e}")
+                warn(f"Failed to generate topic name with {self.__class__.__name__}: {e}")
+                results.append("")  # Fallback to empty string if parsing fails
         
         return results
 
