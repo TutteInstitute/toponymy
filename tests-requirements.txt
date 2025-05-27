@@ -14,3 +14,4 @@ pytest-asyncio
 transformers
 bm25s
 evoc
+torch>=1.13
