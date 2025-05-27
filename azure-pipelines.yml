@@ -73,28 +73,38 @@ stages:
             python -m pip install --upgrade pip
           displayName: 'Upgrade pip'
 
-        - bash: |
+        # macOS-specific installation
+        - script: |
             pip cache purge
-            # Check if running on macOS
-            if [[ "$(Agent.OS)" == "Darwin" ]]; then
-              echo "##[section]Installing PyTorch from official repository for macOS"
-              pip install torch>=2.3.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-            fi
+            echo "Installing PyTorch from official repository for macOS"
+            pip install torch>=2.3.0 --index-url https://download.pytorch.org/whl/cpu
             pip install -r requirements.txt
             pip install -r tests-requirements.txt
-          displayName: 'Install dependencies'
-          condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
+          displayName: 'Install dependencies (macOS)'
+          condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', false))
 
-        - bash: |
-            # Check if running on macOS
-            if [[ "$(Agent.OS)" == "Darwin" ]]; then
-              echo "##[section]Installing PyTorch from official repository for macOS"
-              pip install --pre torch>=2.3.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
-            fi
+        # Linux and Windows installation
+        - script: |
+            pip cache purge
+            pip install -r requirements.txt
+            pip install -r tests-requirements.txt
+          displayName: 'Install dependencies (Linux/Windows)'
+          condition: and(succeeded(), ne(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', false))
+
+        # Pre-release installation for macOS
+        - script: |
+            pip install torch>=2.3.0 --pre --index-url https://download.pytorch.org/whl/cpu
             pip install --pre -r requirements.txt
             pip install --pre -r tests-requirements.txt
-          displayName: 'Install dependencies (allow pre-releases)'
-          condition: ${{ eq(parameters.includeReleaseCandidates, true) }}
+          displayName: 'Install dependencies with pre-releases (macOS)'
+          condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', true))
+
+        # Pre-release installation for Linux/Windows
+        - script: |
+            pip install --pre -r requirements.txt
+            pip install --pre -r tests-requirements.txt
+          displayName: 'Install dependencies with pre-releases (Linux/Windows)'
+          condition: and(succeeded(), ne(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', true))
 
         - script: |
             pip install -e .
