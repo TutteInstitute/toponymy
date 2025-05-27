@@ -75,12 +75,22 @@ stages:
 
         - script: |
             pip cache purge
+            # Check if running on macOS
+            if [[ "$(Agent.OS)" == "Darwin" ]]; then
+              echo "##[section]Installing PyTorch from official repository for macOS"
+              pip install torch>=2.3.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+            fi
             pip install -r requirements.txt
             pip install -r tests-requirements.txt
           displayName: 'Install dependencies'
           condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
 
         - script: |
+            # Check if running on macOS
+            if [[ "$(Agent.OS)" == "Darwin" ]]; then
+              echo "##[section]Installing PyTorch from official repository for macOS"
+              pip install --pre torch>=2.3.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+            fi
             pip install --pre -r requirements.txt
             pip install --pre -r tests-requirements.txt
           displayName: 'Install dependencies (allow pre-releases)'
