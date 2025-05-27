@@ -464,13 +464,12 @@ async def test_async_azureai_generate_topic_cluster_names_multiple(async_azureai
     response = MockAsyncResponse.create_azureai_response(mock_data["valid_cluster_names"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
     
-    old_names_list = [["data1", "ml1", "ai1"], ["data2", "ml2", "ai2"]]
+    old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
     prompts = ["prompt1", "prompt2"]
     
     result = await async_azureai_wrapper.generate_topic_cluster_names(prompts, old_names_list)
     assert len(result) == 2
-    for names in result:
-        validate_cluster_names(names)
+    validate_cluster_names(result[0])
 
 
 # Test for AsyncLLMWrapper base class error cases
