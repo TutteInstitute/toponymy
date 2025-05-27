@@ -8,7 +8,7 @@ scipy
 fast_hdbscan>=0.2.2
 torch>=2.0
 transformers>=4.45
-sentence_transformers>=4.1
+sentence-transformers>=4.1
 dataclasses
 tqdm
 tenacity

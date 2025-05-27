@@ -74,6 +74,7 @@ stages:
           displayName: 'Upgrade pip'
 
         - script: |
+            pip cache purge
             pip install -r requirements.txt
             pip install -r tests-requirements.txt
           displayName: 'Install dependencies'
