@@ -217,6 +217,17 @@ class ClusterLayer(ABC):
             )
         ]
 
+    def _update_topic_names(
+        self,
+        new_topic_names: List[str],
+        topic_indices: List[int],
+    ) -> None:
+        """
+        Update the topic names for the specified indices.
+        """
+        for i, topic_index in enumerate(topic_indices):
+            self.topic_names[topic_index] = new_topic_names[i]
+
     def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
         if isinstance(llm, LLMWrapper):
             for topic_indices, disambiguation_prompt in tqdm(
@@ -232,8 +243,7 @@ class ClusterLayer(ABC):
                 new_names = llm.generate_topic_cluster_names(
                     disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
                 )
-                for i, topic_index in enumerate(topic_indices):
-                    self.topic_names[topic_index] = new_names[i]
+                self._update_topic_names(new_names, topic_indices)
         elif isinstance(llm, AsyncLLMWrapper):
             llm_results = run_async(
                 llm.generate_topic_cluster_names(
@@ -244,8 +254,7 @@ class ClusterLayer(ABC):
             for topic_indices, new_names in zip(
                 self.dismbiguation_topic_indices, llm_results
             ):
-                for i, topic_index in enumerate(topic_indices):
-                    self.topic_names[topic_index] = new_names[i]
+                self._update_topic_names(new_names, topic_indices)
         else:
             raise ValueError(
                 "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
