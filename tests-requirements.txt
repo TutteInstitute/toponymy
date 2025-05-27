@@ -10,6 +10,7 @@ azure-ai-inference
 llama-cpp-python
 mistralai
 numpy>=1.26,<2.0
+sentence-transformers>=2.2.2,<3.0
 transformers>=4.30,<4.40
 pytest-asyncio
 bm25s
