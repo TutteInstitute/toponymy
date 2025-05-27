@@ -73,38 +73,19 @@ stages:
             python -m pip install --upgrade pip
           displayName: 'Upgrade pip'
 
-        # macOS-specific installation
-        - script: |
-            pip cache purge
-            echo "Installing PyTorch from official repository for macOS"
-            pip install torch>=2.3.0 --index-url https://download.pytorch.org/whl/cpu
-            pip install -r requirements.txt
-            pip install -r tests-requirements.txt
-          displayName: 'Install dependencies (macOS)'
-          condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', false))
-
         # Linux and Windows installation
         - script: |
             pip cache purge
             pip install -r requirements.txt
             pip install -r tests-requirements.txt
-          displayName: 'Install dependencies (Linux/Windows)'
-          condition: and(succeeded(), ne(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', false))
-
-        # Pre-release installation for macOS
-        - script: |
-            pip install torch>=2.3.0 --pre --index-url https://download.pytorch.org/whl/cpu
-            pip install --pre -r requirements.txt
-            pip install --pre -r tests-requirements.txt
-          displayName: 'Install dependencies with pre-releases (macOS)'
-          condition: and(succeeded(), eq(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', true))
+          displayName: 'Install dependencies'
 
         # Pre-release installation for Linux/Windows
         - script: |
             pip install --pre -r requirements.txt
             pip install --pre -r tests-requirements.txt
-          displayName: 'Install dependencies with pre-releases (Linux/Windows)'
-          condition: and(succeeded(), ne(variables['Agent.OS'], 'Darwin'), eq('${{ parameters.includeReleaseCandidates }}', true))
+          displayName: 'Install dependencies with pre-releases'
+          condition: and(succeeded(), eq('${{ parameters.includeReleaseCandidates }}', true))
 
         - script: |
             pip install -e .

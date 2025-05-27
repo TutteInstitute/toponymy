@@ -10,7 +10,7 @@ azure-ai-inference
 llama-cpp-python
 mistralai
 numpy>=1.26,<2.0
+transformers
 pytest-asyncio
-transformers>=4.45
 bm25s
 evoc
