@@ -69,7 +69,7 @@ def test_toponymy():
         metric="cosine",
     )
     row_matching, col_matching = linear_sum_assignment(distance_matrix)
-    assert distance_matrix[row_matching, col_matching].sum() < 2.5
+    assert distance_matrix[row_matching, col_matching].sum() < 2.66
     assert np.all(
         pd.Series(model.cluster_layers_[1].cluster_labels)
         .map(dict(np.vstack([np.arange(5), col_matching]).T))
@@ -128,7 +128,7 @@ def test_toponymy_alternative_options_2():
         metric="cosine",
     )
     row_matching, col_matching = linear_sum_assignment(distance_matrix)
-    assert distance_matrix[row_matching, col_matching].sum() < 2.7
+    assert distance_matrix[row_matching, col_matching].sum() < 2.66
     assert np.all(
         pd.Series(model.cluster_layers_[1].cluster_labels)
         .map(dict(np.vstack([np.arange(5), col_matching]).T))

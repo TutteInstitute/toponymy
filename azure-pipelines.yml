@@ -64,136 +64,42 @@ stages:
           vmImage: $(imageName)
 
         steps:
-        # Install Miniconda on Linux/macOS
-        - bash: |
-            if [[ "$AGENT_OS" == "Darwin" ]]; then
-              wget https://repo.anaconda.com/miniconda/Miniconda3-latest-MacOSX-x86_64.sh -O miniconda.sh
-            else
-              wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
-            fi
-            bash miniconda.sh -b -p $HOME/miniconda
-            echo "##vso[task.prependpath]$HOME/miniconda/bin"
-            echo "##vso[task.setvariable variable=CONDA]$HOME/miniconda"
-          condition: ne(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Install Miniconda (Linux/macOS)'
+        - task: UsePythonVersion@0
+          inputs:
+            versionSpec: '$(python.version)'
+          displayName: 'Use Python $(python.version)'
 
-        # Install Miniconda on Windows
-        - powershell: |
-            Invoke-WebRequest -Uri https://repo.anaconda.com/miniconda/Miniconda3-latest-Windows-x86_64.exe -OutFile miniconda.exe
-            Start-Process -FilePath .\miniconda.exe -ArgumentList "/S", "/D=C:\Miniconda" -Wait
-            echo "##vso[task.prependpath]C:\Miniconda"
-            echo "##vso[task.prependpath]C:\Miniconda\Scripts"
-            echo "##vso[task.setvariable variable=CONDA]C:\Miniconda"
-          condition: eq(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Install Miniconda (Windows)'
-
-        # Update conda
         - script: |
-            conda config --set always_yes yes --set changeps1 no
-            conda update -q conda
-            conda info -a
-          displayName: 'Configure conda'
-
-        # Create and activate conda environment
-        - script: |
-            conda create -n test-env python=$(python.version) -c conda-forge
-          displayName: 'Create conda environment'
-
-        # Install packages - simplified approach
-        - bash: |
-            source $CONDA/etc/profile.d/conda.sh
-            conda activate test-env
-            
-            # Install core scientific packages via conda-forge
-            conda install -c conda-forge \
-              pytorch>=2.3 \
-              numpy>=2.0 \
-              pandas>=1.0 \
-              scipy \
-              scikit-learn>=1.6 \
-              numba>=0.56 \
-              -y
-            
-            # Install all other packages via pip
             python -m pip install --upgrade pip
-            pip install transformers>=4.35 sentence-transformers>=2.2 tokenizers
-            pip install datasets vectorizers fast_hdbscan>=0.2.2 
-            pip install dataclasses tqdm tenacity aiohttp
-            
-            # Install test requirements
-            pip install black isort pylint pytest umap-learn
-            pip install anthropic cohere openai azure-ai-inference 
-            pip install llama-cpp-python mistralai pytest-asyncio bm25s evoc
-            
-            # Install package and test tools
+          displayName: 'Upgrade pip'
+
+        - script: |
+            pip install -r requirements.txt
+            pip install -r tests-requirements.txt
+          displayName: 'Install dependencies'
+          condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
+
+        - script: |
+            pip install --pre -r requirements.txt
+            pip install --pre -r tests-requirements.txt
+          displayName: 'Install dependencies (allow pre-releases)'
+          condition: ${{ eq(parameters.includeReleaseCandidates, true) }}
+
+        - script: |
             pip install -e .
-            pip install pytest-azurepipelines pytest-cov coveralls
-          condition: ne(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Install packages (Linux/macOS)'
+            pip install pytest  pytest-azurepipelines
+            pip install pytest-cov
+            pip install coveralls
+          displayName: 'Install package'
 
         - script: |
-            call C:\Miniconda\Scripts\activate.bat test-env
-            
-            REM Install core scientific packages via conda-forge
-            conda install -c conda-forge pytorch>=2.3 numpy>=2.0 pandas>=1.0 scipy scikit-learn>=1.6 numba>=0.56 -y
-            
-            REM Install all other packages via pip
-            python -m pip install --upgrade pip
-            pip install transformers>=4.35 sentence-transformers>=2.2 tokenizers
-            pip install datasets vectorizers fast_hdbscan>=0.2.2 
-            pip install dataclasses tqdm tenacity aiohttp
-            
-            REM Install test requirements
-            pip install black isort pylint pytest umap-learn
-            pip install anthropic cohere openai azure-ai-inference 
-            pip install llama-cpp-python mistralai pytest-asyncio bm25s evoc
-            
-            REM Install package and test tools
-            pip install -e .
-            pip install pytest-azurepipelines pytest-cov coveralls
-          condition: eq(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Install packages (Windows)'
-
-        # Verify installations
-        - bash: |
-            source $CONDA/etc/profile.d/conda.sh
-            conda activate test-env
-            python -c "import torch; print(f'PyTorch: {torch.__version__}')"
-            python -c "import numpy; print(f'NumPy: {numpy.__version__}')"
-            python -c "import transformers; print(f'Transformers: {transformers.__version__}')"
-            python -c "import sentence_transformers; print(f'Sentence Transformers: {sentence_transformers.__version__}')"
-          condition: ne(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Verify packages (Linux/macOS)'
-
-        - script: |
-            call C:\Miniconda\Scripts\activate.bat test-env
-            python -c "import torch; print('PyTorch: ' + torch.__version__)"
-            python -c "import numpy; print('NumPy: ' + numpy.__version__)"
-            python -c "import transformers; print('Transformers: ' + transformers.__version__)"
-            python -c "import sentence_transformers; print('Sentence Transformers: ' + sentence_transformers.__version__)"
-          condition: eq(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Verify packages (Windows)'
-
-        # Run tests
-        - bash: |
-            source $CONDA/etc/profile.d/conda.sh
-            conda activate test-env
             pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
-          condition: ne(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Run tests (Linux/macOS)'
-
-        - script: |
-            call C:\Miniconda\Scripts\activate.bat test-env
-            pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
-          condition: eq(variables['Agent.OS'], 'Windows_NT')
-          displayName: 'Run tests (Windows)'
+          displayName: 'Run tests'
 
         - bash: |
-            source $CONDA/etc/profile.d/conda.sh
-            conda activate test-env
             coveralls
           displayName: 'Publish to coveralls'
-          condition: and(succeeded(), eq(variables.triggeredByPullRequest, false), ne(variables['Agent.OS'], 'Windows_NT'))
+          condition: and(succeeded(), eq(variables.triggeredByPullRequest, false)) # Don't run this for PRs because they can't access pipeline secrets
           env:
             COVERALLS_REPO_TOKEN: $(COVERALLS_TOKEN)
 
