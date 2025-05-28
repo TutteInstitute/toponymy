@@ -6,7 +6,7 @@ scikit-learn>=1.6
 vectorizers
 scipy
 fast_hdbscan>=0.2.2
-sentence_transformers>=3.4
+sentence_transformers>=2.2
 dataclasses
 tqdm
 tenacity
