@@ -80,7 +80,7 @@ def test_toponymy():
 def test_toponymy_alternative_options():
     CLUSTERER.fit(CLUSTERABLE_VECTORS, OBJECT_VECTORS, prompt_format="combined", object_to_text_function=lambda x: x)
     model = Toponymy(
-        ASYNC_LLM,
+        LLM,
         EMBEDDER,
         CLUSTERER,
         keyphrase_builder = KeyphraseBuilder(n_jobs=1, verbose=True, embedder=EMBEDDER),
