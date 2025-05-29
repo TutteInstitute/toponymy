@@ -305,7 +305,7 @@ def test_cluster_topic_names_for_renaming_with_embeddings():
 
 def test_cluster_topic_names_for_renaming_without_embeddings():
     topic_names = ["Topic A", "Topic B", "Topic C", "Topic D"]
-    embedding_model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+    embedding_model = SentenceTransformer("paraphrase-MiniLM-L3-v2")
 
     clusters_for_renaming, labels = cluster_topic_names_for_renaming(
         topic_names, embedding_model=embedding_model
@@ -313,6 +313,7 @@ def test_cluster_topic_names_for_renaming_without_embeddings():
 
     assert len(clusters_for_renaming) > 0
     assert len(labels) == len(topic_names)
+    del embedding_model  # Clean up to avoid memory issues in tests
 
 
 def test_cluster_topic_names_for_renaming_no_clusters():

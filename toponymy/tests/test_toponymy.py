@@ -27,7 +27,7 @@ import pytest
 #     llm_specific_instructions=" /no_think",
 #     max_concurrent_requests=4,
 # )
-EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
+
 SUBTOPIC_OBJECTS = json.load(open(Path(__file__).parent / "subtopic_objects.json", "r"))
 ALL_SENTENCES = sum(
     [x["sentences"] for subtopics in SUBTOPIC_OBJECTS for x in subtopics["subtopics"]],
@@ -50,6 +50,7 @@ CLUSTERER = ToponymyClusterer(
 
 def test_toponymy():
     LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+    EMBEDDER = SentenceTransformer("paraphrase-MiniLM-L3-v2")
     model = Toponymy(
         LLM,
         EMBEDDER,
@@ -81,6 +82,7 @@ def test_toponymy():
 def test_toponymy_alternative_options():
     LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
     CLUSTERER.fit(CLUSTERABLE_VECTORS, OBJECT_VECTORS, prompt_format="combined", object_to_text_function=lambda x: x)
+    EMBEDDER = SentenceTransformer("paraphrase-MiniLM-L3-v2")
     model = Toponymy(
         LLM,
         EMBEDDER,
