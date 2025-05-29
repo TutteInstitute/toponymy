@@ -16,7 +16,7 @@ import umap
 
 import pytest
 
-LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+
 # LLM = HuggingFace("Qwen/Qwen3-0.6B", llm_specific_instructions=" /no_think")
 # ASYNC_LLM = AsyncHuggingFace(
 #     "Qwen/Qwen2.5-0.5B-Instruct",
@@ -49,6 +49,7 @@ CLUSTERER = ToponymyClusterer(
 
 
 def test_toponymy():
+    LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
     model = Toponymy(
         LLM,
         EMBEDDER,
@@ -78,6 +79,7 @@ def test_toponymy():
     )
 
 def test_toponymy_alternative_options():
+    LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
     CLUSTERER.fit(CLUSTERABLE_VECTORS, OBJECT_VECTORS, prompt_format="combined", object_to_text_function=lambda x: x)
     model = Toponymy(
         LLM,
