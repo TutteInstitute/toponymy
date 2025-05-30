@@ -15,3 +15,5 @@ transformers
 pytest-asyncio
 bm25s
 evoc
+autoawq
+intel_extension_for_pytorch

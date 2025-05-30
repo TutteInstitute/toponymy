@@ -49,7 +49,7 @@ CLUSTERER = ToponymyClusterer(
 
 
 def test_toponymy():
-    LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+    LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct-AWQ")
     model = Toponymy(
         LLM,
         EMBEDDER,
@@ -79,7 +79,7 @@ def test_toponymy():
     )
 
 def test_toponymy_alternative_options():
-    LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+    LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct-AWQ")
     CLUSTERER.fit(CLUSTERABLE_VECTORS, OBJECT_VECTORS, prompt_format="combined", object_to_text_function=lambda x: x)
     model = Toponymy(
         LLM,
