@@ -94,7 +94,24 @@ stages:
 
         - script: |
             pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
-          displayName: 'Run tests'
+          condition: ne(variables['Agent.OS'], 'Windows_NT')
+          displayName: 'Run tests (non-Windows)'
+
+        - script: |
+            REM Set custom cache directories to use temp drive with more space
+            set HF_HOME=D:\huggingface
+            set TRANSFORMERS_CACHE=D:\huggingface\transformers
+            set HF_DATASETS_CACHE=D:\huggingface\datasets
+            set SENTENCE_TRANSFORMERS_HOME=D:\huggingface\sentence_transformers
+            
+            REM Create directories
+            mkdir D:\huggingface\transformers 2>nul
+            mkdir D:\huggingface\datasets 2>nul
+            mkdir D:\huggingface\sentence_transformers 2>nul
+            
+            pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
+          condition: eq(variables['Agent.OS'], 'Windows_NT')
+          displayName: 'Run tests (Windows)'
 
         - bash: |
             coveralls
