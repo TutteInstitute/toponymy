@@ -27,7 +27,7 @@ import pytest
 #     llm_specific_instructions=" /no_think",
 #     max_concurrent_requests=4,
 # )
-EMBEDDER = SentenceTransformer("paraphrase-MiniLM-L3-v2")
+EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
 SUBTOPIC_OBJECTS = json.load(open(Path(__file__).parent / "subtopic_objects.json", "r"))
 ALL_SENTENCES = sum(
     [x["sentences"] for subtopics in SUBTOPIC_OBJECTS for x in subtopics["subtopics"]],
