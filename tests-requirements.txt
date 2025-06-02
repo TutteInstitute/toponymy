@@ -10,5 +10,8 @@ azure-ai-inference
 llama-cpp-python
 mistralai
 numpy>=1.26,<2.0
+sentence-transformers<=3.1; sys_platform == "darwin"
 transformers
+pytest-asyncio
 bm25s
+evoc
