@@ -716,6 +716,8 @@ def central_keyphrases(
             > 0
         )[0]
 
+        null_topic = np.mean(keyphrase_vectors, axis=0)
+
         # Map the indices back to the original vocabulary
         base_candidates = [
             keyphrase_list[column_map[j]] for j in base_candidate_indices
@@ -739,8 +741,9 @@ def central_keyphrases(
 
         base_vectors = np.asarray(
             [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
-        )
-        centroid = np.average(base_vectors, axis=0)
+        ) -  null_topic
+        base_weights = np.squeeze(np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0)))[base_candidate_indices]
+        centroid = np.average(base_vectors, axis=0, weights=base_weights)
 
         # Select the central keyphrases as the closest samples to the centroid
         base_distances = pairwise_distances(
