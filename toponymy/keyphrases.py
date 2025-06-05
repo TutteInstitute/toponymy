@@ -741,7 +741,7 @@ def central_keyphrases(
 
         base_vectors = np.asarray(
             [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
-        ) -  null_topic
+        ) - null_topic
         base_weights = np.squeeze(np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0)))[base_candidate_indices]
         centroid = np.average(base_vectors, axis=0, weights=base_weights)
 
