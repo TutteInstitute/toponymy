@@ -9,26 +9,6 @@ from sklearn.utils.validation import NotFittedError
 
 import pytest
 
-LLM = HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
-EMBEDDER = SentenceTransformer("all-MiniLM-L6-v2")
-CLUSTERER = ToponymyClusterer(
-    min_samples=5,
-    base_min_cluster_size=4,
-    next_cluster_size_quantile=1.0,
-    min_clusters=4,
-)
-MODEL = Toponymy(
-    LLM,
-    EMBEDDER,
-    CLUSTERER,
-    keyphrase_builder = KeyphraseBuilder(n_jobs=1),
-    object_description = "sentences",
-    corpus_description = "collection of sentences",
-    lowest_detail_level = 0.8,
-    highest_detail_level = 1.0,
-    show_progress_bars=True,
-)
-
 def test_topic_tree_string():
     tree_dict = {
         (3, 0): [(2, 0), (2,1)],
@@ -792,6 +772,17 @@ def test_topic_tree_class():
     assert str(tree_instance) == expected_string
     assert tree_instance._repr_html_() == topic_tree_html(tree_dict, topics, topic_sizes, n_objects)
 
-def test_unfitted_toponymy_fails():
+def test_unfitted_toponymy_fails(null_llm, embedder, clusterer):
+    model = Toponymy(
+        null_llm,
+        embedder,
+        clusterer,
+        keyphrase_builder = KeyphraseBuilder(n_jobs=1),
+        object_description = "sentences",
+        corpus_description = "collection of sentences",
+        lowest_detail_level = 0.8,
+        highest_detail_level = 1.0,
+        show_progress_bars=True,
+    )
     with pytest.raises(NotFittedError, match="This Toponymy instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator."):
-        MODEL.topic_tree_
+        model.topic_tree_
