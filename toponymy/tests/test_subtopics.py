@@ -5,31 +5,11 @@ from toponymy.subtopics import (
 )
 from toponymy.clustering import centroids_from_labels
 
-
 from pathlib import Path
-
 import numpy as np
-
 import pytest
 import json
 import sentence_transformers
-
-EMBEDDER = sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")
-
-SUBTOPIC_OBJECTS = json.load(open(Path(__file__).parent / "subtopic_objects.json", "r"))
-ALL_SENTENCES = sum(
-    [x["sentences"] for subtopics in SUBTOPIC_OBJECTS for x in subtopics["subtopics"]],
-    [],
-)
-CLUSTER_LABEL_VECTOR = np.arange(5).repeat(25)
-SUBTOPIC_LABEL_VECTOR = np.arange(25).repeat(5)
-OBJECT_VECTORS = EMBEDDER.encode(ALL_SENTENCES)
-CLUSTER_CENTROID_VECTORS = centroids_from_labels(CLUSTER_LABEL_VECTOR, OBJECT_VECTORS)
-SUBTOPIC_CENTROID_VECTORS = centroids_from_labels(SUBTOPIC_LABEL_VECTOR, OBJECT_VECTORS)
-SUBTOPICS = [[x["subtopic"] for x in topic["subtopics"]] for topic in SUBTOPIC_OBJECTS]
-ALL_SUBTOPICS = sum(SUBTOPICS, [])
-SUBTOPIC_VECTORS = EMBEDDER.encode(ALL_SUBTOPICS)
-# META_CLUSTER_LAYER = np.arange(5).repeat(5)
 
 
 def cosine_similarity(a, b):
@@ -38,16 +18,19 @@ def cosine_similarity(a, b):
 
 @pytest.mark.parametrize("n_subtopics", [2, 4])
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
-def test_central_subtopics_result_sizes(n_subtopics, diversify_alpha):
+def test_central_subtopics_result_sizes(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    subtopic_centroid_vectors, n_subtopics, diversify_alpha
+):
     central_subtopics_results = central_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        SUBTOPIC_CENTROID_VECTORS,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_centroid_vectors,
         diversify_alpha=diversify_alpha,
         n_subtopics=n_subtopics,
     )
-    assert len(central_subtopics_results) == len(np.unique(CLUSTER_LABEL_VECTOR))
+    assert len(central_subtopics_results) == len(np.unique(cluster_label_vector))
     if diversify_alpha == 1.0:
         print(central_subtopics_results)
     assert (
@@ -57,44 +40,47 @@ def test_central_subtopics_result_sizes(n_subtopics, diversify_alpha):
     assert all([len(set(x)) == n_subtopics for x in central_subtopics_results])
 
 
-def test_central_subtopics():
+def test_central_subtopics(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    subtopic_centroid_vectors, cluster_centroid_vectors, subtopics
+):
     central_results = central_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        SUBTOPIC_CENTROID_VECTORS,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_centroid_vectors,
         diversify_alpha=0.0,
         n_subtopics=3,
     )
-    for cluster_num, subtopics in enumerate(central_results):
-        assert subtopics == sorted(
-            subtopics,
+    for cluster_num, subtopics_result in enumerate(central_results):
+        assert subtopics_result == sorted(
+            subtopics_result,
             key=lambda x: 1.0
             - (
                 cosine_similarity(
-                    SUBTOPIC_CENTROID_VECTORS[ALL_SUBTOPICS.index(x)],
-                    CLUSTER_CENTROID_VECTORS[cluster_num],
+                    subtopic_centroid_vectors[all_subtopics.index(x)],
+                    cluster_centroid_vectors[cluster_num],
                 )
             ),
         )
-        subtopics_in_cluster = SUBTOPICS[cluster_num]
+        subtopics_in_cluster = subtopics[cluster_num]
         worst_subtopic_match_similarity = min(
             [
                 cosine_similarity(
-                    SUBTOPIC_CENTROID_VECTORS[ALL_SUBTOPICS.index(x)],
-                    CLUSTER_CENTROID_VECTORS[cluster_num],
+                    subtopic_centroid_vectors[all_subtopics.index(x)],
+                    cluster_centroid_vectors[cluster_num],
                 )
-                for x in subtopics
+                for x in subtopics_result
             ]
         )
         assert worst_subtopic_match_similarity >= max(
             [
                 cosine_similarity(
-                    SUBTOPIC_CENTROID_VECTORS[ALL_SUBTOPICS.index(other_topic)],
-                    CLUSTER_CENTROID_VECTORS[cluster_num],
+                    subtopic_centroid_vectors[all_subtopics.index(other_topic)],
+                    cluster_centroid_vectors[cluster_num],
                 )
                 for other_topic in subtopics_in_cluster
-                if other_topic not in subtopics
+                if other_topic not in subtopics_result
             ]
         )
 
@@ -102,17 +88,18 @@ def test_central_subtopics():
 @pytest.mark.parametrize("n_subtopics", [2, 4])
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
 def test_central_subtopics_from_all_subtopics_result_sizes(
-    n_subtopics, diversify_alpha
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    subtopic_vectors, n_subtopics, diversify_alpha
 ):
     central_subtopics_results = central_subtopics_from_all_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        SUBTOPIC_VECTORS,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_vectors,
         diversify_alpha=diversify_alpha,
         n_subtopics=n_subtopics,
     )
-    assert len(central_subtopics_results) == len(np.unique(CLUSTER_LABEL_VECTOR))
+    assert len(central_subtopics_results) == len(np.unique(cluster_label_vector))
     if diversify_alpha == 1.0:
         print(central_subtopics_results)
     assert (
@@ -122,91 +109,99 @@ def test_central_subtopics_from_all_subtopics_result_sizes(
     assert all([len(set(x)) == n_subtopics for x in central_subtopics_results])
 
 
-def test_central_subtopics_from_all_subtopics():
+def test_central_subtopics_from_all_subtopics(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    subtopic_vectors, subtopics
+):
     central_results = central_subtopics_from_all_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        SUBTOPIC_VECTORS,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_vectors,
         diversify_alpha=0.0,
         n_subtopics=3,
     )
-    for cluster_num, subtopics in enumerate(central_results):
-        subtopics_in_cluster = SUBTOPICS[cluster_num]
+    for cluster_num, subtopics_result in enumerate(central_results):
+        subtopics_in_cluster = subtopics[cluster_num]
         subtopic_centroid = np.mean(
-            SUBTOPIC_VECTORS[[ALL_SUBTOPICS.index(subtopic) for subtopic in subtopics_in_cluster]], axis=0
+            subtopic_vectors[[all_subtopics.index(subtopic) for subtopic in subtopics_in_cluster]], axis=0
         )
-        assert subtopics == sorted(
-            subtopics,
+        assert subtopics_result == sorted(
+            subtopics_result,
             key=lambda x: 1.0
             - (
-                SUBTOPIC_VECTORS[ALL_SUBTOPICS.index(x)]
+                subtopic_vectors[all_subtopics.index(x)]
                 @ subtopic_centroid
             ),
         )
         worst_keyphrase_match_similarity = min(
             [
-                SUBTOPIC_VECTORS[ALL_SUBTOPICS.index(x)]
+                subtopic_vectors[all_subtopics.index(x)]
                 @ subtopic_centroid
-                for x in subtopics
+                for x in subtopics_result
             ]
         )
         assert worst_keyphrase_match_similarity >= max(
             [
-                SUBTOPIC_VECTORS[ALL_SUBTOPICS.index(other_topic)]
+                subtopic_vectors[all_subtopics.index(other_topic)]
                 @ subtopic_centroid
                 for other_topic in subtopics_in_cluster
-                if other_topic not in subtopics
+                if other_topic not in subtopics_result
             ]
         )
 
 
-def test_central_subtopics_from_all_subtopics_w_embeddder():
+def test_central_subtopics_from_all_subtopics_w_embeddder(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    embedder, subtopic_vectors, subtopics
+):
     central_results = central_subtopics_from_all_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        embedding_model=EMBEDDER,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        embedding_model=embedder,
         diversify_alpha=0.0,
         n_subtopics=3,
     )
-    for cluster_num, subtopics in enumerate(central_results):
-        subtopics_in_cluster = SUBTOPICS[cluster_num]
+    for cluster_num, subtopics_result in enumerate(central_results):
+        subtopics_in_cluster = subtopics[cluster_num]
         subtopic_centroid = np.mean(
-            SUBTOPIC_VECTORS[[ALL_SUBTOPICS.index(subtopic) for subtopic in subtopics_in_cluster]], axis=0
+            subtopic_vectors[[all_subtopics.index(subtopic) for subtopic in subtopics_in_cluster]], axis=0
         )
-        assert subtopics == sorted(
-            subtopics,
+        assert subtopics_result == sorted(
+            subtopics_result,
             key=lambda x: 1.0
             - (
-                SUBTOPIC_VECTORS[ALL_SUBTOPICS.index(x)]
+                subtopic_vectors[all_subtopics.index(x)]
                 @ subtopic_centroid
             ),
         )
 
         worst_keyphrase_match_similarity = min(
             [
-                SUBTOPIC_VECTORS[ALL_SUBTOPICS.index(x)]
+                subtopic_vectors[all_subtopics.index(x)]
                 @ subtopic_centroid
-                for x in subtopics
+                for x in subtopics_result
             ]
         )
         assert worst_keyphrase_match_similarity >= max(
             [
-                SUBTOPIC_VECTORS[ALL_SUBTOPICS.index(other_topic)]
+                subtopic_vectors[all_subtopics.index(other_topic)]
                 @ subtopic_centroid
                 for other_topic in subtopics_in_cluster
-                if other_topic not in subtopics
+                if other_topic not in subtopics_result
             ]
         )
 
 
-def test_central_subtopics_from_all_subtopics_bad_params():
+def test_central_subtopics_from_all_subtopics_bad_params(
+    cluster_label_vector, all_subtopics, subtopic_label_vector
+):
     with pytest.raises(ValueError):
         central_subtopics_from_all_subtopics(
-            CLUSTER_LABEL_VECTOR,
-            ALL_SUBTOPICS,
-            SUBTOPIC_LABEL_VECTOR,
+            cluster_label_vector,
+            all_subtopics,
+            subtopic_label_vector,
             diversify_alpha=0.0,
             n_subtopics=3,
         )
@@ -214,12 +209,15 @@ def test_central_subtopics_from_all_subtopics_bad_params():
 
 @pytest.mark.parametrize("n_subtopics", [1, 3])
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
-def test_information_weighted_subtopics_result_sizes(n_subtopics, diversify_alpha):
+def test_information_weighted_subtopics_result_sizes(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    subtopic_vectors, n_subtopics, diversify_alpha
+):
     iwt_results = information_weighted_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        SUBTOPIC_VECTORS,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_vectors,
         diversify_alpha=diversify_alpha,
         n_subtopics=n_subtopics,
         n_dictionary_vectors=5,
@@ -227,17 +225,20 @@ def test_information_weighted_subtopics_result_sizes(n_subtopics, diversify_alph
         n_jobs=None,
     )
     print(iwt_results)
-    assert len(iwt_results) == len(np.unique(CLUSTER_LABEL_VECTOR))
+    assert len(iwt_results) == len(np.unique(cluster_label_vector))
     assert all([len(x) == n_subtopics for x in iwt_results])
     assert all([len(set(x)) == n_subtopics for x in iwt_results])
 
 
-def test_information_weighted_subtopics():
+def test_information_weighted_subtopics(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    subtopic_vectors
+):
     iwt_results = information_weighted_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        SUBTOPIC_VECTORS,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_vectors,
         diversify_alpha=0.0,
         n_subtopics=3,
         n_dictionary_vectors=16,
@@ -248,12 +249,15 @@ def test_information_weighted_subtopics():
     pass
 
 
-def test_information_weighted_subtopics_embedder():
+def test_information_weighted_subtopics_embedder(
+    cluster_label_vector, all_subtopics, subtopic_label_vector, 
+    embedder
+):
     iwt_results = information_weighted_subtopics(
-        CLUSTER_LABEL_VECTOR,
-        ALL_SUBTOPICS,
-        SUBTOPIC_LABEL_VECTOR,
-        embedding_model=EMBEDDER,
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        embedding_model=embedder,
         diversify_alpha=0.0,
         n_subtopics=3,
         n_dictionary_vectors=16,
@@ -264,10 +268,12 @@ def test_information_weighted_subtopics_embedder():
     pass
 
 
-def test_information_weighted_subtopics_bad_params():
+def test_information_weighted_subtopics_bad_params(
+    cluster_label_vector, all_subtopics, subtopic_label_vector
+):
     with pytest.raises(ValueError):
         information_weighted_subtopics(
-            CLUSTER_LABEL_VECTOR,
-            ALL_SUBTOPICS,
-            SUBTOPIC_LABEL_VECTOR,
+            cluster_label_vector,
+            all_subtopics,
+            subtopic_label_vector,
         )
