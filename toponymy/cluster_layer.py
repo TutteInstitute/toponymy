@@ -7,6 +7,7 @@ from toponymy.keyphrases import central_keyphrases, information_weighted_keyphra
 from toponymy.exemplar_texts import diverse_exemplars
 from toponymy.subtopics import central_subtopics, information_weighted_subtopics
 from toponymy.templates import SUMMARY_KINDS
+from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
 from toponymy.prompt_construction import (
     topic_name_prompt,
     cluster_topic_names_for_renaming,
@@ -14,6 +15,29 @@ from toponymy.prompt_construction import (
 )
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
+import asyncio
+
+def run_async(coro):
+    """
+    Run an async coroutine in both Jupyter and regular Python environments.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop - regular Python
+        return asyncio.run(coro)
+    else:
+        # Running loop exists - likely Jupyter
+        try:
+            import nest_asyncio
+            nest_asyncio.apply()
+            return loop.run_until_complete(coro)
+        except ImportError:
+            # Fallback to thread-based approach
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, coro)
+                return future.result()
 
 
 class ClusterLayer(ABC):
@@ -193,23 +217,49 @@ class ClusterLayer(ABC):
             )
         ]
 
-    def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
-        for topic_indices, disambiguation_prompt in tqdm(
-            zip(self.dismbiguation_topic_indices, self.disambiguation_prompts),
-            desc=f"Generating new disambiguated topics names for layer {self.layer_id}",
-            disable=not self.show_progress_bar
-            or len(self.dismbiguation_topic_indices) == 0,
-            total=len(self.dismbiguation_topic_indices),
-            unit="topic-cluster",
-            leave=False,
-            position=1,
-        ):
-            new_names = llm.generate_topic_cluster_names(
-                disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
-            )
-            for i, topic_index in enumerate(topic_indices):
-                self.topic_names[topic_index] = new_names[i]
+    def _update_topic_names(
+        self,
+        new_topic_names: List[str],
+        topic_indices: List[int],
+    ) -> None:
+        """
+        Update the topic names for the specified indices.
+        """
+        for i, topic_index in enumerate(topic_indices):
+            self.topic_names[topic_index] = new_topic_names[i]
 
+    def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
+        if isinstance(llm, LLMWrapper):
+            for topic_indices, disambiguation_prompt in tqdm(
+                zip(self.dismbiguation_topic_indices, self.disambiguation_prompts),
+                desc=f"Generating new disambiguated topics names for layer {self.layer_id}",
+                disable=not self.show_progress_bar
+                or len(self.dismbiguation_topic_indices) == 0,
+                total=len(self.dismbiguation_topic_indices),
+                unit="topic-cluster",
+                leave=False,
+                position=1,
+            ):
+                new_names = llm.generate_topic_cluster_names(
+                    disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
+                )
+                self._update_topic_names(new_names, topic_indices)
+        elif isinstance(llm, AsyncLLMWrapper):
+            llm_results = run_async(
+                llm.generate_topic_cluster_names(
+                    self.disambiguation_prompts,
+                    [[self.topic_names[i] for i in topic_indices] for topic_indices in self.dismbiguation_topic_indices],
+                )
+            )
+            for topic_indices, new_names in zip(
+                self.dismbiguation_topic_indices, llm_results
+            ):
+                self._update_topic_names(new_names, topic_indices)
+        else:
+            raise ValueError(
+                "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
+            )
+        
     # pragma: no cover
     def disambiguate_topics(
         self,
@@ -341,21 +391,38 @@ class ClusterLayerText(ClusterLayer):
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[SentenceTransformer] = None,
     ) -> List[str]:
-        self.topic_names = [
-            (
-                llm.generate_topic_name(prompt)
-                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
-                else prompt.removeprefix("[!SKIP!]: ")
-            )
-            for prompt in tqdm(
-                self.prompts,
-                desc=f"Generating topic names for layer {self.layer_id}",
-                disable=not self.show_progress_bar,
-                unit="topic",
-                leave=False,
-                position=1,
-            )
-        ]
+        if isinstance(llm, LLMWrapper):
+            self.topic_names = [
+                (
+                    llm.generate_topic_name(prompt)
+                    if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
+                    else prompt.removeprefix("[!SKIP!]: ")
+                )
+                for prompt in tqdm(
+                    self.prompts,
+                    desc=f"Generating topic names for layer {self.layer_id}",
+                    disable=not self.show_progress_bar,
+                    unit="topic",
+                    leave=False,
+                    position=1,
+                )
+            ]
+        elif isinstance(llm, AsyncLLMWrapper):
+            # Filter out prompts that are marked to be skipped
+            prompts_for_llm = [
+                (index, prompt) for index, prompt in enumerate(self.prompts) if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
+            ]
+            llm_results = run_async(llm.generate_topic_names([prompt for _, prompt in prompts_for_llm]))
+            llm_result_index = 0
+            self.topic_names = []
+            for index, prompt in enumerate(self.prompts):
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
+                    self.topic_names.append(llm_results[llm_result_index])
+                    llm_result_index += 1
+                else:
+                    # If the prompt is marked to be skipped, use the original prompt text
+                    self.topic_names.append(prompt.removeprefix("[!SKIP!]: "))
+
         all_topic_names[self.layer_id] = self.topic_names
         self.disambiguate_topics(
             llm=llm,
@@ -380,12 +447,28 @@ class ClusterLayerText(ClusterLayer):
 
         # Try to fix any failures to generate a name
         if any([name == "" for name in self.topic_names]):
-            self.topic_names = [
-                llm.generate_topic_name(prompt)
-                if name == ""
-                else name
-                for name, prompt in zip(self.topic_names, self.prompts)
-            ]
+            if isinstance(llm, LLMWrapper):
+                self.topic_names = [
+                    llm.generate_topic_name(prompt)
+                    if name == ""
+                    else name
+                    for name, prompt in zip(self.topic_names, self.prompts)
+                ]
+            elif isinstance(llm, AsyncLLMWrapper):
+                selected_prompts = [
+                    prompt for name, prompt in zip(self.topic_names, self.prompts) if name == ""
+                ]
+                llm_results = run_async(
+                    llm.generate_topic_names(selected_prompts)
+                )
+                for i in range(len(self.topic_names)):
+                    if self.topic_names[i] == "":
+                        self.topic_names[i] = llm_results.pop(0)
+            else:
+                raise ValueError(
+                    "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
+                )
+
 
         return self.topic_names
 

@@ -19,3 +19,7 @@ toponymy/__pycache__/*.nbc
 toponymy/__pycache__/*.nbi
 .mypy_cache/*
 .coverage*
+build/*
+dist/*
+*.egg-info
+*.egg
