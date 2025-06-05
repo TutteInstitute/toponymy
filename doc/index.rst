@@ -48,12 +48,13 @@ and a tour of some of the richer functionality and uses cases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Advanced Usage:
+   :caption: Getting More out of Toponymy:
 
    how_toponymy_works
    clusterers
    clustering_options
    keyphrases
+   exemplars
    llm_wrappers
    embedding_wrappers
    cluster_layers
