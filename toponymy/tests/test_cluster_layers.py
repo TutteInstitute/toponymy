@@ -13,23 +13,6 @@ from dataclasses import dataclass
 from abc import ABCMeta
 from scipy.sparse import csr_matrix
 
-# EMBEDDER = sentence_transformers.SentenceTransformer("all-MiniLM-L6-v2")
-
-# SUBTOPIC_OBJECTS = json.load(open(Path(__file__).parent / "subtopic_objects.json", "r"))
-# ALL_SENTENCES = sum(
-#     [x["sentences"] for subtopics in SUBTOPIC_OBJECTS for x in subtopics["subtopics"]],
-#     [],
-# )
-# CLUSTER_LABEL_VECTOR = np.arange(5).repeat(25)
-# SUBTOPIC_LABEL_VECTOR = np.arange(25).repeat(5)
-# OBJECT_VECTORS = EMBEDDER.encode(ALL_SENTENCES)
-# CLUSTER_CENTROID_VECTORS = centroids_from_labels(CLUSTER_LABEL_VECTOR, OBJECT_VECTORS)
-# SUBTOPIC_CENTROID_VECTORS = centroids_from_labels(SUBTOPIC_LABEL_VECTOR, OBJECT_VECTORS)
-# SUBTOPICS = [[x["subtopic"] for x in topic["subtopics"]] for topic in SUBTOPIC_OBJECTS]
-# ALL_SUBTOPICS = sum(SUBTOPICS, [])
-# SUBTOPIC_VECTORS = EMBEDDER.encode(ALL_SUBTOPICS)
-# CLUSTER_TREE = {(1, i): [(0, i * 5 + j) for j in range(5)] for i in range(5)}
-
 
 def test_abstract_cluster_layer(
     all_sentences,
