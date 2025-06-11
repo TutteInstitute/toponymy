@@ -1,0 +1,3 @@
+.node-label:hover {
+  fill: var(--hover-fill, red);
+}
