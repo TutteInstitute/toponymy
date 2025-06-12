@@ -4,7 +4,7 @@ import scipy.sparse
 import numpy as np
 import pandas as pd
 from toponymy.keyphrases import central_keyphrases, information_weighted_keyphrases, bm25_keyphrases
-from toponymy.exemplar_texts import diverse_exemplars
+from toponymy.exemplar_texts import diverse_exemplars, submodular_selection_exemplars, random_exemplars
 from toponymy.subtopics import central_subtopics, information_weighted_subtopics
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
@@ -563,7 +563,7 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-        method="central",
+        method="facility_location",
     ) -> Tuple[List[List[str]], List[List[int]]]:
         if method == "central":
             self.exemplars, self.exemplar_indices = diverse_exemplars(
@@ -573,6 +573,24 @@ class ClusterLayerText(ClusterLayer):
                 centroid_vectors=self.centroid_vectors,
                 n_exemplars=self.n_exemplars,
                 diversify_alpha=self.exemplars_diversify_alpha,
+                object_to_text_function=self.object_to_text_function,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method == "facility_location" or method == "saturated_coverage":
+            self.exemplars, self.exemplar_indices = submodular_selection_exemplars(
+                cluster_label_vector=self.cluster_labels,
+                objects=object_list,
+                object_vectors=object_vectors,
+                n_exemplars=self.n_exemplars,
+                object_to_text_function=self.object_to_text_function,
+                submodular_function=method,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method == "random":
+            self.exemplars, self.exemplar_indices = random_exemplars(
+                cluster_label_vector=self.cluster_labels,
+                objects=object_list,
+                n_exemplars=self.n_exemplars,
                 object_to_text_function=self.object_to_text_function,
                 show_progress_bar=self.show_progress_bar,
             )
