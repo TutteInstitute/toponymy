@@ -34,32 +34,6 @@ def calculate_gains_(X, gains, current_values, idxs):
         gains[i] = np.maximum(X[idx], current_values).sum()
 
 
-# @numba.njit(sieve_dtypes, parallel=True, fastmath=True, cache=True)
-# def calculate_gains_sieve_(
-#     X, k, current_values, selections, gains, total_gains, max_values, n_selected, idxs
-# ):
-#     n, d = X.shape
-#     t = max_values.shape[0]
-
-#     for j in numba.prange(t):
-#         for i in range(n):
-#             if n_selected[j] == k:
-#                 break
-
-#             idx = idxs[i]
-#             threshold = (max_values[j] / 2.0 - total_gains[j]) / (k - n_selected[j])
-#             maximum = np.maximum(X[i][:d], current_values[j][:d])
-#             gain = maximum.mean() - total_gains[j]
-
-#             if gain > threshold:
-#                 current_values[j][:d] = maximum
-#                 total_gains[j] = maximum.mean()
-
-#                 selections[j, n_selected[j]] = idx
-#                 gains[j, n_selected[j]] = gain
-#                 n_selected[j] += 1
-
-
 class FacilityLocationSelection(BaseGraphSelection):
     """A selector based off a facility location submodular function.
 
@@ -358,7 +332,7 @@ def submodular_selection_exemplars(
 
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
-        desc="Selecting central exemplars",
+        desc=f"Selecting {submodular_function} exemplars",
         disable=not show_progress_bar,
         unit="cluster",
         leave=False,
