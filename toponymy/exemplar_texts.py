@@ -3,6 +3,7 @@ import numpy as np
 import numba
 from typing import List, Tuple, FrozenSet, Dict, Callable, Any
 from sklearn.metrics import pairwise_distances
+from sklearn.neighbors import KNeighborsTransformer
 from toponymy.utility_functions import diversify_max_alpha as diversify
 
 from tqdm.auto import tqdm
@@ -33,6 +34,17 @@ def calculate_gains_(X, gains, current_values, idxs):
         idx = idxs[i]
         gains[i] = np.maximum(X[idx], current_values).sum()
 
+@numba.njit(sdtypes, fastmath=True, cache=True)
+def calculate_gains_sparse_(X_data, X_indices, X_indptr, gains, current_values, idxs):
+    for i in range(idxs.shape[0]):
+        idx = idxs[i]
+
+        start = X_indptr[idx]
+        end = X_indptr[idx+1]
+
+        for j in range(start, end):
+            k = X_indices[j]
+            gains[i] += max(X_data[j], current_values[k]) - current_values[k]
 
 class FacilityLocationSelection(BaseGraphSelection):
     """A selector based off a facility location submodular function.
@@ -241,22 +253,40 @@ class FacilityLocationSelection(BaseGraphSelection):
         self : FacilityLocationSelection
                 The fit step returns this selector object.
         """
-
-        return super(FacilityLocationSelection, self).fit(
-            X, y=y, sample_weight=sample_weight, sample_cost=sample_cost
-        )
+        if X.shape[0] > 4096:
+            X_pairwise = KNeighborsTransformer(
+                n_neighbors=1024, metric=self.metric
+            ).fit_transform(X)
+            original_metric = self.metric
+            self.metric = "precomputed"
+            result = super(FacilityLocationSelection, self).fit(
+                X_pairwise, y=y, sample_weight=sample_weight, sample_cost=sample_cost
+            )
+            self.metric = original_metric
+            return result
+        else:
+           return super(FacilityLocationSelection, self).fit(
+                X, y=y, sample_weight=sample_weight, sample_cost=sample_cost
+            )
 
     def _initialize(self, X_pairwise):
         super(FacilityLocationSelection, self)._initialize(X_pairwise)
 
         self.current_values_sum = self.current_values.sum()
 
-        self.calculate_gains_ = calculate_gains_
+        if self.sparse:
+            self.calculate_gains_ = calculate_gains_sparse_
+        else:
+            self.calculate_gains_ = calculate_gains_
 
     def _calculate_gains(self, X_pairwise, idxs=None):
         idxs = idxs if idxs is not None else self.idxs
         gains = np.zeros(idxs.shape[0], dtype="float64")
-        self.calculate_gains_(X_pairwise, gains, self.current_values, idxs)
+        if self.sparse:
+            self.calculate_gains_(X_pairwise.data, X_pairwise.indices, 
+				X_pairwise.indptr, gains, self.current_values, idxs)
+        else:
+            self.calculate_gains_(X_pairwise, gains, self.current_values, idxs)
         gains -= self.current_values_sum
 
         return gains
