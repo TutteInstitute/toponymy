@@ -563,7 +563,7 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-        method="facility_location",
+        method="central",
     ) -> Tuple[List[List[str]], List[List[int]]]:
         if method == "central":
             self.exemplars, self.exemplar_indices = diverse_exemplars(
