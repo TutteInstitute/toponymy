@@ -324,7 +324,7 @@ def test_information_weighted_keyphrases_result_sizes(cluster_layer, matrix, key
         keyphrases,
         keyphrase_vectors,
         embedder,
-        diversify_alpha=diversify_alpha,
+        max_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
     assert len(bm25_keyphrases_results) == len(np.unique(cluster_layer)) - 1
@@ -338,7 +338,7 @@ def test_information_weighted_keyphrases(cluster_layer, matrix, keyphrases, keyp
         keyphrases,
         np.zeros_like(keyphrase_vectors),
         embedder,
-        diversify_alpha=0.0,
+        max_alpha=0.0,
     )
     sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(cluster_layer, matrix)
     iwt_transformer = InformationWeightTransformer(weight_power=2.0, prior_strength=0.1)

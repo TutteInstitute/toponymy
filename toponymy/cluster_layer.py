@@ -3,8 +3,17 @@ from typing import List, Callable, Any, Optional, Tuple
 import scipy.sparse
 import numpy as np
 import pandas as pd
-from toponymy.keyphrases import central_keyphrases, information_weighted_keyphrases, bm25_keyphrases
-from toponymy.exemplar_texts import diverse_exemplars, submodular_selection_exemplars, random_exemplars
+from toponymy.keyphrases import (
+    central_keyphrases,
+    information_weighted_keyphrases,
+    bm25_keyphrases,
+    submodular_selection_information_keyphrases,
+)
+from toponymy.exemplar_texts import (
+    diverse_exemplars,
+    submodular_selection_exemplars,
+    random_exemplars,
+)
 from toponymy.subtopics import central_subtopics, information_weighted_subtopics
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
@@ -16,6 +25,7 @@ from toponymy.prompt_construction import (
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 import asyncio
+
 
 def run_async(coro):
     """
@@ -30,11 +40,13 @@ def run_async(coro):
         # Running loop exists - likely Jupyter
         try:
             import nest_asyncio
+
             nest_asyncio.apply()
             return loop.run_until_complete(coro)
         except ImportError:
             # Fallback to thread-based approach
             from concurrent.futures import ThreadPoolExecutor
+
             with ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(asyncio.run, coro)
                 return future.result()
@@ -65,7 +77,7 @@ class ClusterLayer(ABC):
         n_exemplars: int = 16,
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
-        exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
+        exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
         prompt_template: Optional[str] = None,
         show_progress_bar: bool = False,
@@ -248,7 +260,10 @@ class ClusterLayer(ABC):
             llm_results = run_async(
                 llm.generate_topic_cluster_names(
                     self.disambiguation_prompts,
-                    [[self.topic_names[i] for i in topic_indices] for topic_indices in self.dismbiguation_topic_indices],
+                    [
+                        [self.topic_names[i] for i in topic_indices]
+                        for topic_indices in self.dismbiguation_topic_indices
+                    ],
                 )
             )
             for topic_indices, new_names in zip(
@@ -259,7 +274,7 @@ class ClusterLayer(ABC):
             raise ValueError(
                 "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
             )
-        
+
     # pragma: no cover
     def disambiguate_topics(
         self,
@@ -309,7 +324,7 @@ class ClusterLayerText(ClusterLayer):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
-        exemplar_delimiters: List[str] = ["    * \"", "\"\n"],
+        exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
         prompt_template: Optional[str] = None,
         show_progress_bar: bool = False,
@@ -365,8 +380,12 @@ class ClusterLayerText(ClusterLayer):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
-                prompt_format=self.prompt_format if prompt_format is None else prompt_format,
-                prompt_template=self.prompt_template if prompt_template is None else prompt_template,
+                prompt_format=(
+                    self.prompt_format if prompt_format is None else prompt_format
+                ),
+                prompt_template=(
+                    self.prompt_template if prompt_template is None else prompt_template
+                ),
             )
             for topic_index in tqdm(
                 range(self.centroid_vectors.shape[0]),
@@ -410,9 +429,13 @@ class ClusterLayerText(ClusterLayer):
         elif isinstance(llm, AsyncLLMWrapper):
             # Filter out prompts that are marked to be skipped
             prompts_for_llm = [
-                (index, prompt) for index, prompt in enumerate(self.prompts) if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
+                (index, prompt)
+                for index, prompt in enumerate(self.prompts)
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
             ]
-            llm_results = run_async(llm.generate_topic_names([prompt for _, prompt in prompts_for_llm]))
+            llm_results = run_async(
+                llm.generate_topic_names([prompt for _, prompt in prompts_for_llm])
+            )
             llm_result_index = 0
             self.topic_names = []
             for index, prompt in enumerate(self.prompts):
@@ -449,18 +472,16 @@ class ClusterLayerText(ClusterLayer):
         if any([name == "" for name in self.topic_names]):
             if isinstance(llm, LLMWrapper):
                 self.topic_names = [
-                    llm.generate_topic_name(prompt)
-                    if name == ""
-                    else name
+                    llm.generate_topic_name(prompt) if name == "" else name
                     for name, prompt in zip(self.topic_names, self.prompts)
                 ]
             elif isinstance(llm, AsyncLLMWrapper):
                 selected_prompts = [
-                    prompt for name, prompt in zip(self.topic_names, self.prompts) if name == ""
+                    prompt
+                    for name, prompt in zip(self.topic_names, self.prompts)
+                    if name == ""
                 ]
-                llm_results = run_async(
-                    llm.generate_topic_names(selected_prompts)
-                )
+                llm_results = run_async(llm.generate_topic_names(selected_prompts))
                 for i in range(len(self.topic_names)):
                     if self.topic_names[i] == "":
                         self.topic_names[i] = llm_results.pop(0)
@@ -468,7 +489,6 @@ class ClusterLayerText(ClusterLayer):
                 raise ValueError(
                     "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
                 )
-
 
         return self.topic_names
 
@@ -487,7 +507,7 @@ class ClusterLayerText(ClusterLayer):
                 keyphrase_list,
                 keyphrase_vectors,
                 embedding_model,
-                diversify_alpha=self.keyphrase_diversify_alpha,
+                max_alpha=self.keyphrase_diversify_alpha,
                 n_keyphrases=self.n_keyphrases,
                 show_progress_bar=self.show_progress_bar,
             )
@@ -511,6 +531,17 @@ class ClusterLayerText(ClusterLayer):
                 embedding_model,
                 diversify_alpha=self.keyphrase_diversify_alpha,
                 n_keyphrases=self.n_keyphrases,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method in ("saturated_coverage", "facility_location", "graph_cut"):
+            self.keyphrases = submodular_selection_information_keyphrases(
+                self.cluster_labels,
+                object_x_keyphrase_matrix,
+                keyphrase_list,
+                keyphrase_vectors,
+                embedding_model,
+                n_keyphrases=self.n_keyphrases,
+                submodular_function=method,
                 show_progress_bar=self.show_progress_bar,
             )
         else:
@@ -563,7 +594,7 @@ class ClusterLayerText(ClusterLayer):
         self,
         object_list: List[str],
         object_vectors: np.ndarray,
-        method="central",
+        method="facility_location",
     ) -> Tuple[List[List[str]], List[List[int]]]:
         if method == "central":
             self.exemplars, self.exemplar_indices = diverse_exemplars(
@@ -596,14 +627,15 @@ class ClusterLayerText(ClusterLayer):
             )
         else:
             raise ValueError(
-                f"Unknown exemplar generation method: {method}. "
-                "Use 'central'."
+                f"Unknown exemplar generation method: {method}. " "Use 'central'."
             )
 
         return self.exemplars, self.exemplar_indices
 
     def make_topic_name_vector(self) -> np.ndarray:
-        self.topic_name_vector = np.full(self.cluster_labels.shape[0], "Unlabelled", dtype=object)
+        self.topic_name_vector = np.full(
+            self.cluster_labels.shape[0], "Unlabelled", dtype=object
+        )
         for i, name in enumerate(self.topic_names):
             self.topic_name_vector[self.cluster_labels == i] = name
 

@@ -8,6 +8,8 @@ from collections import Counter
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
+from apricot import SaturatedCoverageSelection, GraphCutSelection
+from toponymy.exemplar_texts import FacilityLocationSelection
 
 from sentence_transformers import SentenceTransformer
 
@@ -243,28 +245,28 @@ def build_keyphrase_count_matrix(
     verbose: bool = False,
 ) -> scipy.sparse.spmatrix:
     """
-    Builds a count matrix of keyphrases in a list of objects.
+     Builds a count matrix of keyphrases in a list of objects.
 
-    Parameters
-    ----------
-    objects : List[str]
-        A list of objects; for use in building a count matrix this should be string representations of the objects.
-    keyphrases : Dict[str, int]
-        A dictionary where keys are keyphrases to count in the objects and values are their respective indices.
-    ngrammer : Ngrammer
-        A function that takes a string and returns a list of n-grams.
-    n_jobs : int, optional
-        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
-    min_chunk_size : int, optional
-        The minimum chunk size for parallel processing, by default 20_000.
-   verbose : bool, optional
-        Whether to print out progress information, by default False.
+     Parameters
+     ----------
+     objects : List[str]
+         A list of objects; for use in building a count matrix this should be string representations of the objects.
+     keyphrases : Dict[str, int]
+         A dictionary where keys are keyphrases to count in the objects and values are their respective indices.
+     ngrammer : Ngrammer
+         A function that takes a string and returns a list of n-grams.
+     n_jobs : int, optional
+         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+     min_chunk_size : int, optional
+         The minimum chunk size for parallel processing, by default 20_000.
+    verbose : bool, optional
+         Whether to print out progress information, by default False.
 
 
-    Returns
-    -------
-    scipy.sparse.spmatrix
-        A sparse count matrix of keyphrases in the objects.
+     Returns
+     -------
+     scipy.sparse.spmatrix
+         A sparse count matrix of keyphrases in the objects.
     """
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
@@ -459,25 +461,32 @@ class KeyphraseBuilder:
                 verbose=self.verbose,
             )
         )
-        
+
         if self.embedder is not None:
             if self.verbose:
                 print("Building keyphrase vectors ... ")
 
             self.keyphrase_vectors_ = self.embedder.encode(
-                self.keyphrase_list_, show_progress_bar=self.verbose,
+                self.keyphrase_list_,
+                show_progress_bar=self.verbose,
             )
         else:
             self.keyphrase_vectors_ = None
 
         return self
 
-    def fit_transform(self, objects: List[Any]) -> Tuple[scipy.sparse.spmatrix, List[str], Optional[np.ndarray]]:
+    def fit_transform(
+        self, objects: List[Any]
+    ) -> Tuple[scipy.sparse.spmatrix, List[str], Optional[np.ndarray]]:
         """
         Fits the KeyphraseBuilder to the objects and returns the object x keyphrase matrix, keyphrase list, and keyphrase vectors.
         """
         self.fit(objects)
-        return self.object_x_keyphrase_matrix_, self.keyphrase_list_, self.keyphrase_vectors_
+        return (
+            self.object_x_keyphrase_matrix_,
+            self.keyphrase_list_,
+            self.keyphrase_vectors_,
+        )
 
 
 @numba.njit()
@@ -525,7 +534,9 @@ def information_weighted_keyphrases(
     n_keyphrases: int = 16,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
-    diversify_alpha: float = 1.0,
+    max_alpha: float = 1.0,
+    min_alpha: float = 0.5,
+    alpha_tolerance: float = 0.1,
     show_progress_bar: bool = False,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer.
@@ -548,8 +559,12 @@ def information_weighted_keyphrases(
         The strength of the prior for the information weighting, by default 0.1.
     weight_power : float, optional
         The power to raise the information weights to, by default 2.0.
-    diversify_alpha : float, optional
+    max_alpha : float, optional
         The alpha parameter for diversifying the keyphrase selection, by default 1.0.
+    min_alpha : float, optional
+        The minimum alpha parameter for diversifying the keyphrase selection, by default 0.5.
+    alpha_tolerance : float, optional
+        The tolerance for the alpha parameter when diversifying keyphrases, by default 0.1.
     show_progress_bar : bool, optional
         Whether to show a progress bar for the computation, by default False.
 
@@ -638,7 +653,9 @@ def information_weighted_keyphrases(
             centroid_vector,
             chosen_vectors,
             n_keyphrases,
-            max_alpha=diversify_alpha,
+            max_alpha=max_alpha,
+            min_alpha=min_alpha,
+            tolerance=alpha_tolerance,
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
 
@@ -739,10 +756,13 @@ def central_keyphrases(
             for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
                 keyphrase_vector_mapping[keyphrase] = vector
 
-        base_vectors = np.asarray(
-            [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
-        ) - null_topic
-        base_weights = np.squeeze(np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0)))[base_candidate_indices]
+        base_vectors = (
+            np.asarray([keyphrase_vector_mapping[phrase] for phrase in base_candidates])
+            - null_topic
+        )
+        base_weights = np.squeeze(
+            np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
+        )[base_candidate_indices]
         centroid = np.average(base_vectors, axis=0, weights=base_weights)
 
         # Select the central keyphrases as the closest samples to the centroid
@@ -923,6 +943,137 @@ def bm25_keyphrases(
             max_alpha=diversify_alpha,
         )[:n_keyphrases]
         chosen_keyphrases = [chosen_keyphrases[j] for j in chosen_indices]
+
+        result.append(chosen_keyphrases)
+
+    # Update keyphrase vectors with vectors from the mapping
+    for i, keyphrase in enumerate(keyphrase_list):
+        if keyphrase in keyphrase_vector_mapping:
+            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+
+    return result
+
+
+def submodular_selection_information_keyphrases(
+    cluster_label_vector: np.ndarray,
+    object_x_keyphrase_matrix: scipy.sparse.spmatrix,
+    keyphrase_list: List[str],
+    keyphrase_vectors: np.ndarray,
+    embedding_model: SentenceTransformer,
+    n_keyphrases: int = 16,
+    prior_strength: float = 0.1,
+    weight_power: float = 2.0,
+    submodular_function: str = "saturated_coverage",
+    show_progress_bar: bool = False,
+) -> List[List[str]]:
+    """Generates a list of keyphrases for each cluster in a cluster layer using saturated coverage information.
+
+    Parameters
+    ----------
+    cluster_label_vector : np.ndarray
+        A vector of cluster labels for each object.
+    object_x_keyphrase_matrix : scipy.sparse.spmatrix
+        A sparse matrix of keyphrase counts for each object.
+    keyphrase_list : List[str]
+        A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+    keyphrase_vectors : np.ndarray
+        An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+    embedding_model : SentenceTransformer
+        A SentenceTransformer model for embedding keyphrases.
+    n_keyphrases : int, optional
+        The number of keyphrases to generate for each cluster, by default 16.
+    prior_strength : float, optional
+        The strength of the prior for the information weighting, by default 0.1.
+    weight_power : float, optional
+        The power to raise the information weights to, by default 2.0.
+    submodular_function : str, optional
+        The submodular function to use for keyphrase selection, by default "saturated_coverage".
+        Can be one of "facility_location", "saturated_coverage", or "graph_cut".
+    show_progress_bar : bool, optional
+        Whether to show a progress bar for the computation, by default False.
+
+    Returns
+    -------
+    keyphrases : List[List[str]]
+        A list of lists of keyphrases for each cluster.
+    """
+    keyphrase_vector_mapping = {
+        keyphrase: vector
+        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
+        if not np.all(vector == 0.0)
+    }
+    count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        cluster_label_vector, object_x_keyphrase_matrix
+    )
+
+    iwt = InformationWeightTransformer(
+        prior_strength=prior_strength, weight_power=weight_power
+    ).fit(count_matrix, class_labels)
+    count_matrix.data = np.log(count_matrix.data + 1)
+    count_matrix.eliminate_zeros()
+    weighted_matrix = iwt.transform(count_matrix)
+    if submodular_function == "facility_location":
+        selector = FacilityLocationSelection(
+            n_keyphrases, metric="cosine", optimizer="lazy"
+        )
+    elif submodular_function == "graph_cut":
+        selector = GraphCutSelection(n_keyphrases, metric="cosine", optimizer="lazy")
+    elif submodular_function == "saturated_coverage":
+        selector = SaturatedCoverageSelection(
+            n_keyphrases, metric="cosine", optimizer="lazy"
+        )
+    else:
+        raise ValueError(
+            f"Unknown submodular function {submodular_function}. Must be one of 'facility_location', 'saturated_coverage', or 'graph_cut'."
+        )
+
+    result = []
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Generating saturated coverage keyphrases",
+        disable=not show_progress_bar,
+        leave=False,
+        unit="cluster",
+        position=1,
+    ):
+        # Sum over the cluster; get the top scoring indices
+        contrastive_scores = np.squeeze(
+            np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
+        )
+        if sum(contrastive_scores) == 0:
+            result.append(["No notable keyphrases"])
+            continue
+
+        keyphrases_present_indices = np.where(contrastive_scores > 0)[0]
+        keyphrase_weights = contrastive_scores[keyphrases_present_indices]
+        candidate_keyphrases = np.asarray(
+            [keyphrase_list[column_map[j]] for j in keyphrases_present_indices]
+        )
+        # Update keyphrase mapping with present keyphrases it is missing
+        missing_keyphrases = [
+            keyphrase
+            for keyphrase in candidate_keyphrases
+            if keyphrase not in keyphrase_vector_mapping
+        ]
+        if len(missing_keyphrases) > 0:
+            if embedding_model is None:
+                raise ValueError(
+                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
+                )
+            missing_keyphrase_vectors = embedding_model.encode(
+                missing_keyphrases, show_progress_bar=False
+            )
+            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
+                keyphrase_vector_mapping[keyphrase] = vector
+
+        keyphrase_costs = 1.0 - (keyphrase_weights / keyphrase_weights.sum())
+        candidate_vectors = np.asarray(
+            [keyphrase_vector_mapping[phrase] for phrase in candidate_keyphrases]
+        )
+
+        _, chosen_keyphrases, _ = selector.fit_transform(
+            X=candidate_vectors, y=candidate_keyphrases, sample_cost=keyphrase_costs
+        )
 
         result.append(chosen_keyphrases)
 
