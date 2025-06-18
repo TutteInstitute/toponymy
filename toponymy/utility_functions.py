@@ -45,10 +45,9 @@ def diversify_fixed_alpha(query_vector, candidate_neighbor_vectors, alpha=1.0):
 
 @numba.njit(cache=True)
 def diversify_max_alpha(
-    query_vector, candidate_neighbor_vectors, n_results, max_alpha=1.0, tolerance=0.01
+    query_vector, candidate_neighbor_vectors, n_results, max_alpha=1.0, min_alpha=0.0, tolerance=0.01
 ):
-    min_alpha = 0.0
-    mid_alpha = max_alpha / 2.0
+    mid_alpha = (max_alpha + min_alpha) / 2.0
 
     while abs(max_alpha - min_alpha) > tolerance:
         results = diversify_fixed_alpha(
