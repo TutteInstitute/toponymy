@@ -1076,6 +1076,7 @@ def submodular_selection_information_keyphrases(
             _, chosen_keyphrases = selector.fit_transform(
                 X=candidate_vectors, y=candidate_keyphrases, sample_cost=keyphrase_costs
             )
+            chosen_keyphrases = chosen_keyphrases[:n_keyphrases]
         else:
             # If there are not enough keyphrases, just take the top n_keyphrases
             chosen_indices = np.argsort(contrastive_scores[contrastive_scores > 0])
