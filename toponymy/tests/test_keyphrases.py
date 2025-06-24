@@ -339,6 +339,7 @@ def test_information_weighted_keyphrases(cluster_layer, matrix, keyphrases, keyp
         keyphrases,
         np.zeros_like(keyphrase_vectors),
         embedder,
+        min_alpha=0.0,
         max_alpha=0.0,
     )
     sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(cluster_layer, matrix)
