@@ -961,7 +961,7 @@ def submodular_selection_information_keyphrases(
     keyphrase_vectors: np.ndarray,
     embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
-    prior_strength: float = 0.1,
+    prior_strength: float = 0.01,
     weight_power: float = 2.0,
     submodular_function: str = "saturated_coverage",
     show_progress_bar: bool = False,
@@ -1005,6 +1005,7 @@ def submodular_selection_information_keyphrases(
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
     )
+    central_vector = keyphrase_vectors.mean(axis=0)
 
     iwt = InformationWeightTransformer(
         prior_strength=prior_strength, weight_power=weight_power
@@ -1066,14 +1067,21 @@ def submodular_selection_information_keyphrases(
             for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
                 keyphrase_vector_mapping[keyphrase] = vector
 
-        keyphrase_costs = 1.0 - (keyphrase_weights / keyphrase_weights.sum())
-        candidate_vectors = np.asarray(
-            [keyphrase_vector_mapping[phrase] for phrase in candidate_keyphrases]
-        )
+        if len(candidate_keyphrases) >= n_keyphrases:
+            keyphrase_costs = 1.0 - (keyphrase_weights / (0.01 + keyphrase_weights.max()))
+            candidate_vectors = np.asarray(
+                [keyphrase_vector_mapping[phrase] for phrase in candidate_keyphrases]
+            ) - central_vector
 
-        _, chosen_keyphrases, _ = selector.fit_transform(
-            X=candidate_vectors, y=candidate_keyphrases, sample_cost=keyphrase_costs
-        )
+            _, chosen_keyphrases = selector.fit_transform(
+                X=candidate_vectors, y=candidate_keyphrases, sample_cost=keyphrase_costs
+            )
+        else:
+            # If there are not enough keyphrases, just take the top n_keyphrases
+            chosen_indices = np.argsort(contrastive_scores[contrastive_scores > 0])
+            chosen_keyphrases = [
+                candidate_keyphrases[j] for j in reversed(chosen_indices)
+            ]
 
         result.append(chosen_keyphrases)
 
