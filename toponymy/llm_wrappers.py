@@ -1447,6 +1447,7 @@ try:
                         messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        response_format={"type": "json_object"},
                     )
                     return response.choices[0].message.content
             except Exception as e:
@@ -1467,6 +1468,7 @@ try:
                         ],
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        response_format={"type": "json_object"},
                     )
                     return response.choices[0].message.content
             except Exception as e:
