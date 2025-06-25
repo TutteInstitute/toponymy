@@ -45,7 +45,7 @@ try:
         def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
             result = []
             for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
-                response = self.client.embeddings.create(texts=texts[i:i+96], model=self.model, encoding_format="float")
+                response = self.client.embeddings.create(input=texts[i:i+96], model=self.model, encoding_format="float")
                 result.append(np.asarray([item.embedding for item in response.data]))       
 
             return np.vstack(result)
