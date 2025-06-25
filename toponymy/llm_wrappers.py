@@ -636,8 +636,6 @@ try:
 
             return [output.outputs[0].text for output in outputs]
 
-
-
 except ImportError:
     pass
 
