@@ -522,9 +522,9 @@ try:
 
     class VLLM(LLMWrapper):
         """
-        Provides access to Huggingface models from Huggingface Hub with the Toponymy framework. 
-        For more information on Huggingface, see https://huggingface.co/docs/transformers/index.
-        You will need the transformers library installed to make use of this wrapper, and you will need a model
+        Provides access to Huggingface models from Huggingface Hub ran via vLLM, with the Toponymy framework. 
+        For more information on vLLM, see https://docs.vllm.ai/en/latest/.
+        You will need the vllm library installed to make use of this wrapper, and you will need a model
         available on Huggingface Hub. This wrapper allows you to use models hosted on Huggingface Hub,
         rather than requiring a service API key. However, this does require you to have access to the model
         and suitable hardware to run it.
@@ -538,7 +538,7 @@ try:
             Additional instructions specific to the LLM, appended to the prompt.
 
         **kwargs: dict, optional
-            Additional keyword arguments passed to the Huggingface model initialization.
+            Additional keyword arguments passed to the vLLM model initialization.
 
         Attributes:
         -----------
@@ -546,7 +546,7 @@ try:
             The name of the Huggingface model to use.
 
         llm: transformers.pipeline
-            The Huggingface model instance.
+            The vLLM model instance.
 
         extra_prompting: str
             Additional instructions specific to the LLM, appended to the prompt.
