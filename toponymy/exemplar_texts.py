@@ -293,7 +293,12 @@ class FacilityLocationSelection(BaseGraphSelection):
 
     def _select_next(self, X_pairwise, gain, idx):
         """This function will add the given item to the selected set."""
-        self.current_values = np.maximum(X_pairwise, self.current_values)
+        if self.sparse:
+            self.current_values = np.maximum(
+                np.squeeze(X_pairwise.toarray()), self.current_values
+            )
+        else:
+            self.current_values = np.maximum(X_pairwise, self.current_values)
         self.current_values_sum = self.current_values.sum()
 
         super(FacilityLocationSelection, self)._select_next(X_pairwise, gain, idx)
