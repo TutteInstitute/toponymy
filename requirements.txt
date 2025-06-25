@@ -11,3 +11,4 @@ dataclasses
 tqdm
 tenacity
 aiohttp
+apricot-select

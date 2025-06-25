@@ -6,6 +6,7 @@ from toponymy.keyphrases import (
     information_weighted_keyphrases,
     central_keyphrases,
     bm25_keyphrases,
+    submodular_selection_information_keyphrases,
     subset_matrix_and_class_labels,
 )
 from toponymy.clustering import (
@@ -324,7 +325,7 @@ def test_information_weighted_keyphrases_result_sizes(cluster_layer, matrix, key
         keyphrases,
         keyphrase_vectors,
         embedder,
-        diversify_alpha=diversify_alpha,
+        max_alpha=diversify_alpha,
         n_keyphrases=n_keyphrases,
     )
     assert len(bm25_keyphrases_results) == len(np.unique(cluster_layer)) - 1
@@ -338,7 +339,8 @@ def test_information_weighted_keyphrases(cluster_layer, matrix, keyphrases, keyp
         keyphrases,
         np.zeros_like(keyphrase_vectors),
         embedder,
-        diversify_alpha=0.0,
+        min_alpha=0.0,
+        max_alpha=0.0,
     )
     sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(cluster_layer, matrix)
     iwt_transformer = InformationWeightTransformer(weight_power=2.0, prior_strength=0.1)
@@ -363,3 +365,19 @@ def test_information_weighted_keyphrases(cluster_layer, matrix, keyphrases, keyp
                     if iwt_results[j][n] not in iwt_results[i]
                 ]
             )
+
+@pytest.mark.parametrize("n_keyphrases", [3, 5])
+@pytest.mark.parametrize("submodular_function", ["saturated_coverage", "facility_location", "graph_cut"])
+def test_submodular_keyphrases_result_sizes(cluster_layer, matrix, keyphrases, keyphrase_vectors, embedder, n_keyphrases, submodular_function):
+    submodular_keyphrases_results = submodular_selection_information_keyphrases(
+        cluster_layer,
+        matrix,
+        keyphrases,
+        keyphrase_vectors,
+        embedder,
+        submodular_function=submodular_function,
+        n_keyphrases=n_keyphrases,
+    )
+    assert len(submodular_keyphrases_results) == len(np.unique(cluster_layer)) - 1
+    assert all([len(x) == n_keyphrases for x in submodular_keyphrases_results]) and submodular_keyphrases_results
+    assert all([len(set(x)) == n_keyphrases for x in submodular_keyphrases_results])
