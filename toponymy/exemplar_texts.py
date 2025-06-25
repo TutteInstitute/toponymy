@@ -277,7 +277,7 @@ def submodular_selection_exemplars(
     objects: List[str],
     object_vectors: np.ndarray,
     n_exemplars: int = 4,
-    object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
+    object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
     submodular_function: str = "facility_location",
     show_progress_bar: bool = False,
 ) -> Tuple[List[List[str]], List[List[int]]]:
@@ -299,7 +299,7 @@ def submodular_selection_exemplars(
         The number of exemplars to sample for each cluster, by default 4.
     diversify_alpha : float, optional
         The alpha parameter for diversifying the keyphrase selection, by default 1.0.
-    object_to_text_function: Callable[[Any], List[str]]
+    object_to_text_function: Callable[List[Any], List[str]]
         A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
     submodular_function : str, optional
         The sampling method for selecting exemplars 'facility_location' or 'saturated_coverage', by default it is 'facility_location'.
@@ -361,9 +361,7 @@ def submodular_selection_exemplars(
         if object_to_text_function is None:
             chosen_exemplars = [cluster_objects[i] for i in candidate_indices]
         else:
-            chosen_exemplars = [
-                object_to_text_function(cluster_objects[i]) for i in candidate_indices
-            ]
+            chosen_exemplars = object_to_text_function([cluster_objects[i] for i in candidate_indices])
 
         # Map chosen indices back to original object list indices
         chosen_original_indices = [original_indices[i] for i in candidate_indices]
@@ -378,7 +376,7 @@ def random_exemplars(
     cluster_label_vector: np.ndarray,
     objects: List[str],
     n_exemplars: int = 4,
-    object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
+    object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
     show_progress_bar: bool = False,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar texts for each cluster in a cluster layer.
@@ -393,7 +391,7 @@ def random_exemplars(
         A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
     n_samples : int, optional
         The number of exemplars to sample for each cluster, by default 4.
-    object_to_text_function: Callable[[Any], List[str]]
+    object_to_text_function: Callable[List[Any], List[str]]
         A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
     show_progress_bar : bool, optional
         Whether to show a progress bar, by default False.
@@ -433,9 +431,7 @@ def random_exemplars(
         if object_to_text_function is None:
             chosen_exemplars = cluster_objects[exemplar_order].tolist()
         else:
-            chosen_exemplars = [
-                object_to_text_function(cluster_objects[i]) for i in exemplar_order
-            ]
+            chosen_exemplars = object_to_text_function([cluster_objects[i] for i in exemplar_order])
 
         # Map chosen indices back to original object list indices
         chosen_original_indices = [original_indices[i] for i in exemplar_order]
@@ -453,7 +449,7 @@ def diverse_exemplars(
     centroid_vectors: np.ndarray,
     n_exemplars: int = 4,
     diversify_alpha: float = 1.0,
-    object_to_text_function: Callable[[Any], List[str]] = lambda x: x,
+    object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
     method: str = "centroid",
     show_progress_bar: bool = False,
 ) -> Tuple[List[List[str]], List[List[int]]]:
@@ -475,7 +471,7 @@ def diverse_exemplars(
         The number of exemplars to sample for each cluster, by default 4.
     diversify_alpha : float, optional
         The alpha parameter for diversifying the keyphrase selection, by default 1.0.
-    object_to_text_function: Callable[[Any], List[str]]
+    object_to_text_function: Callable[List[Any], List[str]]
         A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
     method : str, optional
         The sampling method for selecting exemplars 'centroid' or 'random', by default it is 'centroid'.
@@ -547,9 +543,7 @@ def diverse_exemplars(
         if object_to_text_function is None:
             chosen_exemplars = [exemplar_candidates[i] for i in chosen_indices]
         else:
-            chosen_exemplars = [
-                object_to_text_function(exemplar_candidates[i]) for i in chosen_indices
-            ]
+            chosen_exemplars = object_to_text_function([exemplar_candidates[i] for i in chosen_indices])
 
         # Map chosen indices back to original object list indices
         chosen_original_indices = [

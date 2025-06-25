@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Callable, Any, Optional, Tuple
+from typing import List, Callable, Any, Optional, Tuple, Union
 import scipy.sparse
 import numpy as np
 import pandas as pd
@@ -61,7 +61,7 @@ class ClusterLayer(ABC):
         centroid_vectors: np.ndarray,
         layer_id: int,
         text_embedding_model: Optional[SentenceTransformer] = None,
-        object_to_text_function: Optional[Callable[[Any], List[str]]] = None,
+        object_to_text_function: Optional[Callable[List[Any], List[str]]] = None,
         n_exemplars: int = 16,
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
