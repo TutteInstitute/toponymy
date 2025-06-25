@@ -513,6 +513,130 @@ try:
                 )
                 responses.append(response[0]["generated_text"])
             return responses
+except:
+    pass
+
+try:
+    import vllm
+    import vllm.v1.engine.exceptions
+
+    class VLLM(LLMWrapper):
+        """
+        Provides access to Huggingface models from Huggingface Hub with the Toponymy framework. 
+        For more information on Huggingface, see https://huggingface.co/docs/transformers/index.
+        You will need the transformers library installed to make use of this wrapper, and you will need a model
+        available on Huggingface Hub. This wrapper allows you to use models hosted on Huggingface Hub,
+        rather than requiring a service API key. However, this does require you to have access to the model
+        and suitable hardware to run it.
+
+        Parameters:
+        -----------
+        model: str
+            The name of the Huggingface model to use, e.g. "mistralai/Mistral-7B-Instruct-v0.3", "google/gemma-3-1b-it", etc.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        **kwargs: dict, optional
+            Additional keyword arguments passed to the Huggingface model initialization.
+
+        Attributes:
+        -----------
+        model: str
+            The name of the Huggingface model to use.
+
+        llm: transformers.pipeline
+            The Huggingface model instance.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Huggingface, this is always True.
+        """
+
+
+        def __init__(self, model: str, llm_specific_instructions=None, **kwargs):
+            self.model = model
+            self.kwargs = kwargs
+            self._start_engine()
+            self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+
+        def _start_engine(self):
+            """
+            Start the VLLM engine. This is necessary to initialize the model.
+            """
+            self.llm = vllm.LLM(model=self.model, **self.kwargs)
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+            message =  [{"role": "user", "content": prompt + self.extra_prompting}]
+            try:
+                outputs = self.llm.chat(message, sampling_params=sampling_params)
+            except vllm.v1.engine.exceptions.EngineDeadError:
+                self._start_engine()
+                # Retry after restarting the engine
+                outputs = self.llm.chat(message, sampling_params=sampling_params)
+            result = outputs[0].outputs[0].text
+            return result
+        
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+            messages = [{"role": "system", "content": system_prompt},
+                 {"role": "user", "content": user_prompt + self.extra_prompting}]
+            
+            try:
+                outputs = self.llm.chat(messages, sampling_params=sampling_params)
+            except vllm.v1.engine.exceptions.EngineDeadError:
+                self._start_engine()
+                outputs = self.llm.chat(messages, sampling_params=sampling_params)
+            
+            result = outputs[0].outputs[0].text
+            return result
+        
+    class AsyncVLLM(AsyncLLMWrapper):
+        """This class is essentially for testing purposes only, allowing testing of the Async API with local models."""
+
+        def __init__(self, model: str, llm_specific_instructions: Optional[str] = None, max_concurrent_requests: int = 10, **kwargs):
+            self.model = model
+            self.kwargs = kwargs
+            self._start_engine()
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.max_concurrent_requests = max_concurrent_requests
+
+        def _start_engine(self):
+            self.llm = vllm.LLM(model=self.model, **self.kwargs)
+
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            messages = [[{"role": "user", "content": prompt + self.extra_prompting}] for prompt in prompts]
+            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+                
+            try:
+                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
+            except vllm.v1.engine.exceptions.EngineDeadError:
+                self._start_engine()  # Restart the engine if it fails
+                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
+            
+            return [output.outputs[0].text for output in outputs]
+
+        async def _call_llm_with_system_prompt_batch(
+            self, system_prompts: List[str], user_prompts: List[str], temperature: float, max_tokens: int
+        ) -> List[str]:
+            messages = []
+            for system_prompt, user_prompt in zip(system_prompts, user_prompts):
+                messages.append([{"role": "system", "content": system_prompt},
+                     {"role": "user", "content": user_prompt + self.extra_prompting}])
+            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+            
+            try:
+                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
+            except vllm.v1.engine.exceptions.EngineDeadError:
+                self._start_engine()  # Restart the engine if it fails
+                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
+
+            return [output.outputs[0].text for output in outputs]
+
+
 
 except ImportError:
     pass
