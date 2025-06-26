@@ -150,7 +150,7 @@ def build_raw_cluster_layers(
 
     if n_clusters_in_layer < min_clusters:
         raise ValueError(
-            f"Not enough clusters found in the first layer: {n_clusters_in_layer} < {min_clusters}. "
+            f"Not enough clusters found in the first layer: n_clusters_in_layer: {n_clusters_in_layer} < min_clusters: {min_clusters}. "
             "Try reducing base_min_cluster_size."
         )
 
