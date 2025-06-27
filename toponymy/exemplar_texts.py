@@ -20,8 +20,14 @@ from apricot.optimizers import LazyGreedy
 from apricot.optimizers import ApproximateLazyGreedy
 from apricot.optimizers import SieveGreedy
 
-dtypes = "void(float64[:,:], float64[:], float64[:], int64[:])"
-sdtypes = "void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])"
+dtypes = [
+	"void(float64[:,:], float64[:], float64[:], int64[:])",
+	"void(float32[:,:], float64[:], float64[:], int64[:])",
+]
+sdtypes = [
+	"void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
+	"void(float32[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
+]
 sieve_dtypes = (
     "void(float64[:,:], int64, float64[:,:], int64[:,:],"
     "float64[:,:], float64[:], float64[:], int64[:], int64[:])"
