@@ -98,6 +98,7 @@ def build_raw_cluster_layers(
     base_min_cluster_size: int = 10,
     base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
+    max_layers: Optional[int] = None,
     verbose=False,
 ) -> List[np.ndarray]:
     """
@@ -118,6 +119,8 @@ def build_raw_cluster_layers(
         If not None, this value will override base_min_cluster_size.
     next_cluster_size_quantile : float, optional
         The quantile to determine the next minimum cluster size, by default 0.8.
+    max_layers : Optional[int], optional
+        The maximum number of layers to create, by default None. If None, no limit is imposed.
 
     Returns
     -------
@@ -155,6 +158,8 @@ def build_raw_cluster_layers(
         )
 
     while n_clusters_in_layer >= min_clusters:
+        if max_layers is not None and len(cluster_layers) >= max_layers:
+            break
         if verbose:
             print(f"Layer {len(cluster_layers)} found {n_clusters_in_layer} clusters")
         cluster_layers.append(clusters)
@@ -261,6 +266,7 @@ def create_cluster_layers(
     base_min_cluster_size: int = 10,
     base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
+    max_layers: Optional[int] = None,
     show_progress_bar: bool = False,
     verbose: bool = False,
     **layer_kwargs,
@@ -287,6 +293,8 @@ def create_cluster_layers(
         If None then base_min_cluster_size is used; otherwise this value will override base_min_cluster_size.
     next_cluster_size_quantile : float, optional
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
+    max_layers : Optional[int], optional
+        The maximum number of layers to create (default is None). If None, no limit is imposed.
     show_progress_bar : bool, optional
         Whether to show a progress bar (default is False).
     verbose : bool, optional
@@ -306,6 +314,7 @@ def create_cluster_layers(
         base_min_cluster_size=base_min_cluster_size,
         base_n_clusters=base_n_clusters,
         next_cluster_size_quantile=next_cluster_size_quantile,
+        max_layers=max_layers,
         verbose=verbose,
     )
     cluster_tree = build_cluster_tree(cluster_labels)
@@ -365,6 +374,8 @@ class ToponymyClusterer(Clusterer):
         If None then base_min_cluster_size is used; otherwise this value will override base_min_cluster_size.
     next_cluster_size_quantile : float, optional
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
+    max_layers : Optional[int], optional
+        The maximum number of layers to create (default is None). If None, no limit is imposed.
     verbose : bool, optional
         Whether to show verbose output (default is False).
 
@@ -384,6 +395,7 @@ class ToponymyClusterer(Clusterer):
         base_min_cluster_size: Optional[int] = 10,
         base_n_clusters: Optional[int] = None,
         next_cluster_size_quantile: float = 0.85,
+        max_layers: Optional[int] = None,
         verbose=False,
     ):
         super().__init__()
@@ -392,6 +404,7 @@ class ToponymyClusterer(Clusterer):
         self.base_min_cluster_size = base_min_cluster_size
         self.base_n_clusters = base_n_clusters
         self.next_cluster_size_quantile = next_cluster_size_quantile
+        self.max_layers = max_layers
         self.verbose = verbose
 
         if self.base_min_cluster_size is None and self.base_n_clusters is None:
@@ -416,6 +429,7 @@ class ToponymyClusterer(Clusterer):
             base_min_cluster_size=self.base_min_cluster_size,
             base_n_clusters=self.base_n_clusters,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
+            max_layers=self.max_layers,
             show_progress_bar=show_progress_bar,
             verbose=self.verbose,
             **layer_kwargs,
