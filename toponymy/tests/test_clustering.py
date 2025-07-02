@@ -270,3 +270,68 @@ def test_evoc_clusterer_class():
         class_cluster_layers[-1].cluster_labels[class_cluster_layers[-1].cluster_labels >= 0],
         cluster_labels[class_cluster_layers[-1].cluster_labels >= 0]
     ) >= 0.75
+
+
+def test_max_layers_limit():
+    """Test that max_layers parameter correctly limits the number of hierarchy levels."""
+    # Create test data with many potential clusters
+    np.random.seed(42)
+    clusterable_data, _ = make_blobs(
+        n_samples=2000,
+        n_features=10,
+        centers=50,
+        center_box=(0.0, 1.0),
+        cluster_std=0.05,
+        random_state=42,
+    )
+    embedding_vectors = np.random.random_sample((2000, 256))
+    
+    # Test with max_layers=2
+    clusterer_with_limit = ToponymyClusterer(
+        min_clusters=4,
+        min_samples=5,
+        base_min_cluster_size=10,
+        max_layers=2,  # Limit to 2 layers
+    )
+    
+    layers_limited, _ = clusterer_with_limit.fit_predict(
+        clusterable_vectors=clusterable_data,
+        embedding_vectors=embedding_vectors,
+        layer_class=ClusterLayerText,
+    )
+    
+    assert len(layers_limited) == 2, f"Expected exactly 2 layers, got {len(layers_limited)}"
+    
+    # Test with max_layers=None (no limit)
+    clusterer_no_limit = ToponymyClusterer(
+        min_clusters=4,
+        min_samples=5,
+        base_min_cluster_size=10,
+        max_layers=None,  # No limit
+    )
+    
+    layers_unlimited, _ = clusterer_no_limit.fit_predict(
+        clusterable_vectors=clusterable_data,
+        embedding_vectors=embedding_vectors,
+        layer_class=ClusterLayerText,
+    )
+    
+    # Should create more than 2 layers when not limited
+    assert len(layers_unlimited) >= 2, f"Expected at least 2 layers, got {len(layers_unlimited)}"
+    
+    # Test with different max_layers values
+    for max_layers in [1, 3, 4]:
+        clusterer = ToponymyClusterer(
+            min_clusters=4,
+            min_samples=5,
+            base_min_cluster_size=10,
+            max_layers=max_layers,
+        )
+        
+        layers, _ = clusterer.fit_predict(
+            clusterable_vectors=clusterable_data,
+            embedding_vectors=embedding_vectors,
+            layer_class=ClusterLayerText,
+        )
+        
+        assert len(layers) <= max_layers, f"Expected at most {max_layers} layers, got {len(layers)}"
