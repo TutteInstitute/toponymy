@@ -9,6 +9,7 @@ from sklearn.decomposition import DictionaryLearning
 from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
+from toponymy.exemplar_texts import FacilityLocationSelection, SaturatedCoverageSelection
 
 from tqdm.auto import tqdm
 
@@ -36,6 +37,8 @@ def central_subtopics(
             )
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
+    central_vector = np.mean(subtopic_vectors, axis=0)
+
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
@@ -55,7 +58,7 @@ def central_subtopics(
                 for subtopic_index in cluster_subtopic_indices
                 if subtopic_index != -1
             ]
-        )
+        ) - central_vector
         candidate_subtopics = np.asarray(
             [
                 subtopics[subtopic_index]
@@ -86,6 +89,75 @@ def central_subtopics(
         chosen_subtopics = [
             sorted_candidate_subtopics[j] for j in chosen_subtopic_indices
         ]
+
+        result.append(chosen_subtopics)
+
+    return result
+
+
+def submodular_subtopics(
+    cluster_label_vector: np.ndarray,
+    subtopics: List[str],
+    subtopic_label_vector: np.ndarray,
+    subtopic_vectors: Optional[np.ndarray] = None,
+    embedding_model: Optional[SentenceTransformer] = None,
+    n_subtopics: int = 64,
+    submodular_function: str = "facility_location",
+    show_progress_bar: bool = False,
+) -> List[List[str]]:
+    if subtopic_vectors is None:
+        if embedding_model is None:
+            raise ValueError(
+                "Either subtopic_embeddings or embedding_model must be provided"
+            )
+        subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
+
+    null_topic_vector = np.mean(subtopic_vectors, axis=0)
+    if submodular_function == "facility_location":
+        selector = FacilityLocationSelection(
+            n_subtopics, metric="cosine", optimizer="lazy"
+        )
+    elif submodular_function == "saturated_coverage":
+        selector = SaturatedCoverageSelection(
+            n_subtopics, metric="cosine", optimizer="lazy"
+        )
+    else:
+        raise ValueError(
+            f"selection_function={submodular_function} is not a valid selection. Please choose one of (facility_location,saturated_coverage)"
+        )
+
+    result = []
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Selecting central subtopics",
+        disable=not show_progress_bar,
+        leave=False,
+        unit="cluster",
+        position=1,
+    ):
+        subtopic_label_vector_for_cluster = subtopic_label_vector[
+            cluster_label_vector == cluster_num
+        ]
+        cluster_subtopic_indices = np.unique(subtopic_label_vector_for_cluster)
+        candidate_subtopic_centroids = np.asarray(
+            [
+                subtopic_vectors[subtopic_index]
+                for subtopic_index in cluster_subtopic_indices
+                if subtopic_index != -1
+            ]
+        ) - null_topic_vector
+        candidate_subtopics = np.asarray(
+            [
+                subtopics[subtopic_index]
+                for subtopic_index in cluster_subtopic_indices
+                if subtopic_index != -1
+            ]
+        )
+
+        if candidate_subtopic_centroids.shape[0] >= n_subtopics:
+            _, chosen_subtopics = selector.fit_transform(candidate_subtopic_centroids, y=candidate_subtopics)
+        else:
+            chosen_subtopics = candidate_subtopics
 
         result.append(chosen_subtopics)
 

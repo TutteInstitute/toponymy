@@ -14,7 +14,7 @@ from toponymy.exemplar_texts import (
     submodular_selection_exemplars,
     random_exemplars,
 )
-from toponymy.subtopics import central_subtopics, information_weighted_subtopics
+from toponymy.subtopics import central_subtopics, information_weighted_subtopics, submodular_subtopics
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
 from toponymy.prompt_construction import (
@@ -547,7 +547,7 @@ class ClusterLayerText(ClusterLayer):
         else:
             raise ValueError(
                 f"Unknown keyphrase generation method: {method}. "
-                "Use 'information_weighted', 'central', or 'bm25'."
+                "Use 'information_weighted', 'central', 'saturated_coverage', 'facility_location, 'graph_cut', or 'bm25'."
             )
 
         return self.keyphrases
@@ -558,7 +558,7 @@ class ClusterLayerText(ClusterLayer):
         topic_labels: np.ndarray,
         topic_vectors: Optional[np.ndarray] = None,
         embedding_model: Optional[SentenceTransformer] = None,
-        method: str = "central",
+        method: str = "facility_location",
     ) -> List[List[str]]:
         if method == "central":
             self.subtopics = central_subtopics(
@@ -580,6 +580,17 @@ class ClusterLayerText(ClusterLayer):
                 diversify_alpha=self.subtopic_diversify_alpha,
                 n_subtopics=self.n_subtopics,
                 embedding_model=embedding_model,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method in ("saturated_coverage", "facility_location"):
+            self.subtopics = submodular_subtopics(
+                cluster_label_vector=self.cluster_labels,
+                subtopics=topic_list,
+                subtopic_label_vector=topic_labels,
+                subtopic_vectors=topic_vectors,
+                n_subtopics=self.n_subtopics,
+                embedding_model=embedding_model,
+                submodular_function=method,
                 show_progress_bar=self.show_progress_bar,
             )
         else:

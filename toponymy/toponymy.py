@@ -121,7 +121,7 @@ class Toponymy:
         clusterable_vectors: np.array,
         exemplar_method: str = "facility_location",
         keyphrase_method: str = "information_weighted",
-        subtopic_method: str = "central",
+        subtopic_method: str = "facility_location",
     ):
         """
         Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
