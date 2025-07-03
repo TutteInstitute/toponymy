@@ -1,0 +1,15 @@
+{
+  "name": "mywidget-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs --prod"
+  },
+  "devDependencies": {
+    "d3": "^7.9.0",
+    "esbuild": "^0.25.5",
+    "tippy.js": "^6.2.5",
+    "@catppuccin/palette":"^1.7.1"
+  }
+}

@@ -45,7 +45,7 @@ try:
         def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
             result = []
             for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
-                response = self.client.embeddings.create(texts=texts[i:i+96], model=self.model, encoding_format="float")
+                response = self.client.embeddings.create(input=texts[i:i+96], model=self.model, encoding_format="float")
                 result.append(np.asarray([item.embedding for item in response.data]))       
 
             return np.vstack(result)
@@ -173,5 +173,20 @@ try:
                 result.append(np.array([item["embedding"] for item in data["data"]]))
 
             return np.vstack(result)
+except ImportError:
+    pass
+
+try:
+    import vllm
+
+    class VLLMEmbedder:
+        def __init__(self, model: str = "all-MiniLM-L6-v2", kwargs: dict = {}):
+            self.llm = vllm.LLM(model=model, task='embed', **kwargs)
+
+        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
+            outputs = self.llm.embed(texts, use_tqdm=show_progress_bar)
+            embeddings = np.vstack([o.outputs.embedding for o in outputs])
+            return embeddings
+        
 except ImportError:
     pass
