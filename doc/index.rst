@@ -45,6 +45,7 @@ and a tour of some of the richer functionality and uses cases.
    intro
    installation
    basic_usage
+   params_and_options
 
 .. toctree::
    :maxdepth: 1
