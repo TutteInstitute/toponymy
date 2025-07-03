@@ -129,7 +129,7 @@ def submodular_subtopics(
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
-        desc="Selecting central subtopics",
+        desc=f"Selecting {submodular_function} subtopics",
         disable=not show_progress_bar,
         leave=False,
         unit="cluster",
