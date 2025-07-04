@@ -261,7 +261,7 @@ class FacilityLocationSelection(BaseGraphSelection):
         """
         if X.shape[0] > 4096:
             X_pairwise = KNeighborsTransformer(
-                n_neighbors=1024, metric=self.metric
+                n_neighbors=512, metric=self.metric
             ).fit_transform(X)
             original_metric = self.metric
             self.metric = "precomputed"
