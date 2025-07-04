@@ -159,7 +159,7 @@ def submodular_subtopics(
         else:
             chosen_subtopics = candidate_subtopics
 
-        result.append(chosen_subtopics)
+        result.append(chosen_subtopics.tolist())
 
     return result
 
