@@ -381,6 +381,13 @@ def submodular_selection_exemplars(
     ):
         # Get mask for current cluster
         cluster_mask = cluster_label_vector == cluster_num
+        # subsample if it is too large
+        if np.sum(cluster_mask) > 16384:
+            cluster_mask = np.random.choice(
+                np.where(cluster_mask)[0], size=16384, replace=False
+            )
+            cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
+        # Get the objects in this cluster
         cluster_objects = np.array(objects)[cluster_mask]
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
