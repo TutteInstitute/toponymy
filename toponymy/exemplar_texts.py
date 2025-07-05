@@ -261,7 +261,7 @@ class FacilityLocationSelection(BaseGraphSelection):
         """
         if X.shape[0] > 4096:
             X_pairwise = KNeighborsTransformer(
-                n_neighbors=1024, metric=self.metric
+                n_neighbors=512, metric=self.metric
             ).fit_transform(X)
             original_metric = self.metric
             self.metric = "precomputed"
@@ -381,6 +381,13 @@ def submodular_selection_exemplars(
     ):
         # Get mask for current cluster
         cluster_mask = cluster_label_vector == cluster_num
+        # subsample if it is too large
+        if np.sum(cluster_mask) > 16384:
+            cluster_mask = np.random.choice(
+                np.where(cluster_mask)[0], size=16384, replace=False
+            )
+            cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
+        # Get the objects in this cluster
         cluster_objects = np.array(objects)[cluster_mask]
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
@@ -528,6 +535,7 @@ def diverse_exemplars(
     """
     results = []
     indices = []
+    null_topic = np.mean(object_vectors, axis=0)
 
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
@@ -549,12 +557,12 @@ def diverse_exemplars(
             indices.append([])
             continue
 
-        cluster_object_vectors = object_vectors[cluster_mask]
+        cluster_object_vectors = object_vectors[cluster_mask] - null_topic
 
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
             exemplar_distances = pairwise_distances(
-                centroid_vectors[cluster_num].reshape(1, -1),
+                centroid_vectors[cluster_num].reshape(1, -1) - null_topic,
                 cluster_object_vectors,
                 metric="cosine",
             )
@@ -575,7 +583,7 @@ def diverse_exemplars(
             [cluster_object_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
         )
         chosen_indices = diversify(
-            centroid_vectors[cluster_num],
+            centroid_vectors[cluster_num] - null_topic,
             candidate_vectors,
             n_exemplars,
             max_alpha=diversify_alpha,
