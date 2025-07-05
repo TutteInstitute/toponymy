@@ -52,14 +52,15 @@ def test_central_subtopics(
         diversify_alpha=0.0,
         n_subtopics=3,
     )
+    null_topic = np.mean(subtopic_centroid_vectors, axis=0)
     for cluster_num, subtopics_result in enumerate(central_results):
         assert subtopics_result == sorted(
             subtopics_result,
             key=lambda x: 1.0
             - (
                 cosine_similarity(
-                    subtopic_centroid_vectors[all_subtopics.index(x)],
-                    cluster_centroid_vectors[cluster_num],
+                    subtopic_centroid_vectors[all_subtopics.index(x)] - null_topic,
+                    cluster_centroid_vectors[cluster_num] - null_topic,
                 )
             ),
         )
@@ -67,8 +68,8 @@ def test_central_subtopics(
         worst_subtopic_match_similarity = min(
             [
                 cosine_similarity(
-                    subtopic_centroid_vectors[all_subtopics.index(x)],
-                    cluster_centroid_vectors[cluster_num],
+                    subtopic_centroid_vectors[all_subtopics.index(x)] - null_topic,
+                    cluster_centroid_vectors[cluster_num] - null_topic,
                 )
                 for x in subtopics_result
             ]
@@ -76,8 +77,8 @@ def test_central_subtopics(
         assert worst_subtopic_match_similarity >= max(
             [
                 cosine_similarity(
-                    subtopic_centroid_vectors[all_subtopics.index(other_topic)],
-                    cluster_centroid_vectors[cluster_num],
+                    subtopic_centroid_vectors[all_subtopics.index(other_topic)] - null_topic,
+                    cluster_centroid_vectors[cluster_num] - null_topic,
                 )
                 for other_topic in subtopics_in_cluster
                 if other_topic not in subtopics_result
