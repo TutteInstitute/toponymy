@@ -4,7 +4,7 @@ from warnings import warn
 import tokenizers
 import transformers
 
-from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX, TopicNameResponse, get_topic_cluster_json_schema
+from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX, TopicNameResponse, get_topic_cluster_json_schema, get_specific_topic_cluster_json_schema
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -72,6 +72,42 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
 
     return result
 
+def _parse_cluster_response(response: str, old_names: List[str]) -> List[str]:
+    """Parse a single cluster response."""
+    try:
+        topic_name_info = llm_output_to_result(response, GET_TOPIC_CLUSTER_NAMES_REGEX)
+        mapping = topic_name_info["new_topic_name_mapping"]
+        
+        if len(mapping) > 0 and isinstance(mapping, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
+            result = []
+            for i, old_name_val in enumerate(old_names, start=1):
+                key_with_val = f"{i}. {old_name_val}"
+                key_just_index = f"{i}."
+                if key_with_val in mapping:
+                    result.append(mapping[key_with_val])
+                elif key_just_index in mapping:
+                    result.append(mapping[key_just_index])
+                elif old_name_val in mapping:
+                    result.append(mapping[old_name_val])
+                else:
+                    result.append(old_name_val)
+            return result
+        else:
+            # Fallback parsing
+            mapping_str = re.findall(
+                r'"new_topic_name_mapping":\s*\{(.*?)\}',
+                response,
+                re.DOTALL,
+            )[0]
+            new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping_str, re.DOTALL)
+            if len(new_names) == len(old_names):
+                return new_names
+            else:
+                raise ValueError(f"Failed to generate enough names; got {mapping}")
+    except Exception as e:
+        warn(f"Failed to parse cluster names: {e}")
+        return old_names
+
 
 class LLMWrapper(ABC):
 
@@ -91,6 +127,29 @@ class LLMWrapper(ABC):
         """
         pass
 
+    @abstractmethod
+    def _call_llm_with_json_schema(self, prompt: str, temperature: float, max_tokens: int, json_schema: str) -> str:
+        """
+        Call the LLM with a prompt, temperature, and JSON schema.
+        This method should be implemented by subclasses.
+        """
+        pass
+
+    @abstractmethod
+    def _call_llm_with_system_prompt_and_json_schema(
+        self, 
+        system_prompt: str, 
+        user_prompt: str, 
+        temperature: float, 
+        max_tokens: int, 
+        json_schema: str
+    ) -> str:
+        """
+        Call the LLM with a system prompt, user prompt, temperature, and JSON schema.
+        This method should be implemented by subclasses.
+        """
+        pass
+
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
@@ -101,13 +160,25 @@ class LLMWrapper(ABC):
     def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.4) -> str:
         try:
             if isinstance(prompt, str):
-                topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=128)
+                if self.supports_json_schema:
+                    topic_name_info_raw = self._call_llm_with_json_schema(prompt, temperature, max_tokens=128, json_schema=TopicNameResponse.model_json_schema())
+                else:
+                    topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=128)
             elif isinstance(prompt, dict) and self.supports_system_prompts:
-                topic_name_info_raw = self._call_llm_with_system_prompt(
-                    system_prompt=prompt["system"],
-                    user_prompt=prompt["user"],
-                    temperature=temperature,
-                    max_tokens=128,
+                if self.supports_json_schema:
+                    topic_name_info_raw = self._call_llm_with_system_prompt_and_json_schema(
+                        system_prompt=prompt["system"],
+                        user_prompt=prompt["user"],
+                        temperature=temperature,
+                        max_tokens=128,
+                        json_schema=TopicNameResponse.model_json_schema(),
+                    )
+                else:
+                    topic_name_info_raw = self._call_llm_with_system_prompt(
+                        system_prompt=prompt["system"],
+                        user_prompt=prompt["user"],
+                        temperature=temperature,
+                        max_tokens=128,
                 )
             else:
                 raise InvalidLLMInputError(
@@ -132,49 +203,33 @@ class LLMWrapper(ABC):
     ) -> List[str]:
         try:
             if isinstance(prompt, str):
-                topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=1024)
+                if self.supports_json_schema:
+                    topic_name_info_raw = self._call_llm_with_json_schema(prompt, temperature, max_tokens=1024, json_schema=get_specific_topic_cluster_json_schema(old_names))
+                else:
+                    topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=1024)
             elif isinstance(prompt, dict) and self.supports_system_prompts:
-                topic_name_info_raw = self._call_llm_with_system_prompt(
-                    system_prompt=prompt["system"],
-                    user_prompt=prompt["user"],
-                    temperature=temperature,
-                    max_tokens=1024,
-                )
+                if self.supports_json_schema:
+                    topic_name_info_raw = self._call_llm_with_system_prompt_and_json_schema(
+                        system_prompt=prompt["system"],
+                        user_prompt=prompt["user"],
+                        temperature=temperature,
+                        max_tokens=1024,
+                        json_schema=get_specific_topic_cluster_json_schema(old_names),
+                    )
+                else:
+                    topic_name_info_raw = self._call_llm_with_system_prompt(
+                        system_prompt=prompt["system"],
+                        user_prompt=prompt["user"],
+                        temperature=temperature,
+                        max_tokens=1024,
+                    )
             else:
                 raise InvalidLLMInputError(f"Prompt must be a string or a dictionary, got {type(prompt)}")
             
-            topic_name_info = llm_output_to_result(
-                topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
-            )
+            return _parse_cluster_response(topic_name_info_raw, old_names)
         except Exception as e:
             warn(f"Failed to generate topic cluster names with {self.__class__.__name__}: {e}")
             return old_names
-
-        mapping = topic_name_info["new_topic_name_mapping"]
-        if len(mapping) == len(old_names):
-            result = []
-            for i, old_name_val in enumerate(old_names, start=1):
-                key_with_val = f"{i}. {old_name_val}"
-                key_just_index = f"{i}."
-                if key_with_val in mapping:
-                    result.append(mapping[key_with_val])
-                elif key_just_index in mapping: # This was `mapping.get(f"{n}.", name)` which is ambiguous
-                    result.append(mapping[key_just_index])
-                else:
-                    result.append(old_name_val) # Fallback to old name to maintain length
-            return result
-        else:
-            # Fallback to just parsing the string as best we can
-            mapping = re.findall(
-                r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                topic_name_info_raw,
-                re.DOTALL,
-            )[0]
-            new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-            if len(new_names) == len(old_names):
-                return new_names
-            else:
-                raise ValueError(f"Failed to generate enough names when fixing {old_names}; got {mapping}")
 
     @property
     def supports_system_prompts(self) -> bool:
@@ -183,6 +238,14 @@ class LLMWrapper(ABC):
         By default, it does. Override in subclasses if not supported.
         """
         return True
+
+    @property
+    def supports_json_schema(self) -> bool:
+        """
+        Check if the LLM wrapper supports JSON schema.
+        By default, it does not. Override in subclasses if not supported.
+        """
+        return False
 
 
 class AsyncLLMWrapper(ABC):
@@ -256,7 +319,7 @@ class AsyncLLMWrapper(ABC):
             user_prompts = [p["user"] for p in prompts]
             if self.supports_json_schema:
                 responses = await self._call_llm_with_system_prompt_batch_and_json_schema(
-                    system_prompts, user_prompts, temperature, max_tokens=128, json_schema=""
+                    system_prompts, user_prompts, temperature, max_tokens=128, json_schema=TopicNameResponse.model_json_schema()
                 )
             else:
                 responses = await self._call_llm_with_system_prompt_batch(
@@ -332,45 +395,9 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response, old_names in zip(responses, old_names_list):
-            results.append(self._parse_cluster_response(response, old_names))
+            results.append(_parse_cluster_response(response, old_names))
         
         return results
-
-    def _parse_cluster_response(self, response: str, old_names: List[str]) -> List[str]:
-        """Parse a single cluster response."""
-        try:
-            topic_name_info = llm_output_to_result(response, GET_TOPIC_CLUSTER_NAMES_REGEX)
-            mapping = topic_name_info["new_topic_name_mapping"]
-            
-            if len(mapping) > 0 and isinstance(mapping, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
-                result = []
-                for i, old_name_val in enumerate(old_names, start=1):
-                    key_with_val = f"{i}. {old_name_val}"
-                    key_just_index = f"{i}."
-                    if key_with_val in mapping:
-                        result.append(mapping[key_with_val])
-                    elif key_just_index in mapping:
-                        result.append(mapping[key_just_index])
-                    elif old_name_val in mapping:
-                        result.append(mapping[old_name_val])
-                    else:
-                        result.append(old_name_val)
-                return result
-            else:
-                # Fallback parsing
-                mapping_str = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    response,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping_str, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names; got {mapping}")
-        except Exception as e:
-            warn(f"Failed to parse cluster names: {e}")
-            return old_names
 
     @property
     def supports_system_prompts(self) -> bool:
