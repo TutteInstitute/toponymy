@@ -1,10 +1,10 @@
-import string
+import datetime
 from warnings import warn
 
 import tokenizers
 import transformers
 
-from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
+from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX, TopicNameResponse, get_topic_cluster_json_schema
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -209,6 +209,29 @@ class AsyncLLMWrapper(ABC):
         """
         pass
 
+    @abstractmethod
+    async def _call_llm_batch_with_json_schema(self, prompts: List[str], temperature: float, max_tokens: int, json_schema: str) -> List[str]:
+        """
+        Call the LLM with a batch of prompts and temperature.
+        This method should be implemented by subclasses.
+        """
+        pass
+
+    @abstractmethod
+    async def _call_llm_with_system_prompt_batch_and_json_schema(
+        self, 
+        system_prompts: List[str], 
+        user_prompts: List[str], 
+        temperature: float, 
+        max_tokens: int,
+        json_schema: str
+    ) -> List[str]:
+        """
+        Call the LLM with batches of system prompts and user prompts.
+        This method should be implemented by subclasses.
+        """
+        pass
+
 
     async def generate_topic_names(
         self, 
@@ -224,13 +247,21 @@ class AsyncLLMWrapper(ABC):
         
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
-            responses = await self._call_llm_batch(prompts, temperature, max_tokens=128)
+            if self.supports_json_schema:
+                responses = await self._call_llm_batch_with_json_schema(prompts, temperature, max_tokens=128, json_schema=TopicNameResponse.model_json_schema())
+            else:
+                responses = await self._call_llm_batch(prompts, temperature, max_tokens=128)
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [p["system"] for p in prompts]
             user_prompts = [p["user"] for p in prompts]
-            responses = await self._call_llm_with_system_prompt_batch(
-                system_prompts, user_prompts, temperature, max_tokens=128
-            )
+            if self.supports_json_schema:
+                responses = await self._call_llm_with_system_prompt_batch_and_json_schema(
+                    system_prompts, user_prompts, temperature, max_tokens=128, json_schema=""
+                )
+            else:
+                responses = await self._call_llm_with_system_prompt_batch(
+                    system_prompts, user_prompts, temperature, max_tokens=128
+                )
         else:
             raise InvalidLLMInputError(
                 f"Prompts must be strings or dictionaries, got {type(prompts[0])}"
@@ -269,16 +300,30 @@ class AsyncLLMWrapper(ABC):
         
         if not prompts:
             return []
+
+        if self.supports_json_schema:
+            max_mapping_len = max([len(l) for l in old_names_list])
+            json_schema = get_topic_cluster_json_schema(max_mapping_len)
+        else:
+            json_schema = None
         
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
-            responses = await self._call_llm_batch(prompts, temperature, max_tokens=1024)
+            if self.supports_json_schema:
+                responses = await self._call_llm_batch_with_json_schema(prompts, temperature, max_tokens=1024, json_schema=json_schema)
+            else:
+                responses = await self._call_llm_batch(prompts, temperature, max_tokens=1024)
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [prompt["system"] for prompt in prompts]
             user_prompts = [prompt["user"] for prompt in prompts]
-            responses = await self._call_llm_with_system_prompt_batch(
-                system_prompts, user_prompts, temperature, max_tokens=1024
-            )
+            if self.supports_json_schema:
+                responses = await self._call_llm_with_system_prompt_batch_and_json_schema(
+                    system_prompts, user_prompts, temperature, max_tokens=1024, json_schema=json_schema
+                )
+            else:
+                responses = await self._call_llm_with_system_prompt_batch(
+                    system_prompts, user_prompts, temperature, max_tokens=1024
+                )
         else:
             raise InvalidLLMInputError(
                 f"Prompts must be strings or dictionaries, got {type(prompts[0])}"
@@ -297,7 +342,7 @@ class AsyncLLMWrapper(ABC):
             topic_name_info = llm_output_to_result(response, GET_TOPIC_CLUSTER_NAMES_REGEX)
             mapping = topic_name_info["new_topic_name_mapping"]
             
-            if len(mapping) == len(old_names):
+            if len(mapping) > 0 and isinstance(mapping, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
                 result = []
                 for i, old_name_val in enumerate(old_names, start=1):
                     key_with_val = f"{i}. {old_name_val}"
@@ -306,6 +351,8 @@ class AsyncLLMWrapper(ABC):
                         result.append(mapping[key_with_val])
                     elif key_just_index in mapping:
                         result.append(mapping[key_just_index])
+                    elif old_name_val in mapping:
+                        result.append(mapping[old_name_val])
                     else:
                         result.append(old_name_val)
                 return result
@@ -332,6 +379,14 @@ class AsyncLLMWrapper(ABC):
         By default, it does. Override in subclasses if not supported.
         """
         return True
+
+    @property
+    def supports_json_schema(self) -> bool:
+        """
+        Check if the LLM wrapper supports JSON schema.
+        By default, it does not. Override in subclasses if not supported.
+        """
+        return False
 
 try:
     import llama_cpp
@@ -518,6 +573,7 @@ except:
 
 try:
     import vllm
+    import vllm.sampling_params
     import vllm.v1.engine.exceptions
 
     class VLLM(LLMWrapper):
@@ -562,29 +618,50 @@ try:
             self._start_engine()
             self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
+        @property
+        def supports_json_schema(self) -> bool:
+            return True
+
         def _start_engine(self):
             """
             Start the VLLM engine. This is necessary to initialize the model.
             """
             self.llm = vllm.LLM(model=self.model, **self.kwargs)
 
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+        async def _call_llm_with_json_schema(
+            self, prompts: List[str], temperature: float, max_tokens: int, json_schema: str
+        ) -> List[str]:
+            return await self._call_llm(prompts, temperature, max_tokens, json_schema=json_schema)
+
+        async def _call_llm_with_system_prompt_and_json_schema(
+            self, system_prompts: List[str], user_prompts: List[str], temperature: float, max_tokens: int, json_schema: str
+        ) -> List[str]:
+            return await self._call_llm_with_system_prompt(system_prompts, user_prompts, temperature, max_tokens, json_schema=json_schema)
+
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
             message =  [{"role": "user", "content": prompt + self.extra_prompting}]
-            try:
-                outputs = self.llm.chat(message, sampling_params=sampling_params)
-            except vllm.v1.engine.exceptions.EngineDeadError:
-                self._start_engine()
-                # Retry after restarting the engine
-                outputs = self.llm.chat(message, sampling_params=sampling_params)
-            result = outputs[0].outputs[0].text
-            return result
+            return self._call_llm_with_messages(message, temperature, max_tokens, json_schema=json_schema)
         
-        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
-            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
+            
             messages = [{"role": "system", "content": system_prompt},
                  {"role": "user", "content": user_prompt + self.extra_prompting}]
-            
+            return self._call_llm_with_messages(messages, temperature, max_tokens, json_schema=json_schema)
+
+        def _call_llm_with_messages(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
+            if json_schema:
+                guided_decoding_params = vllm.sampling_params.GuidedDecodingParams(json=json_schema)
+            else:
+                guided_decoding_params = None
+
+            sampling_params = vllm.SamplingParams(
+                temperature=temperature, 
+                max_tokens=max_tokens, 
+                repetition_penalty=1.2,
+                guided_decoding=guided_decoding_params
+            )
+
             try:
                 outputs = self.llm.chat(messages, sampling_params=sampling_params)
             except vllm.v1.engine.exceptions.EngineDeadError:
@@ -597,42 +674,67 @@ try:
     class AsyncVLLM(AsyncLLMWrapper):
         """This class is essentially for testing purposes only, allowing testing of the Async API with local models."""
 
-        def __init__(self, model: str, llm_specific_instructions: Optional[str] = None, max_concurrent_requests: int = 10, **kwargs):
+        def __init__(self, model: str, llm_specific_instructions: Optional[str] = None, **kwargs):
             self.model = model
             self.kwargs = kwargs
             self._start_engine()
             self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            self.max_concurrent_requests = max_concurrent_requests
+
+        @property
+        def supports_json_schema(self) -> bool:
+            return True
 
         def _start_engine(self):
             self.llm = vllm.LLM(model=self.model, **self.kwargs)
 
-        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+        async def _call_llm_batch_with_json_schema(
+            self, prompts: List[str], temperature: float, max_tokens: int, json_schema: str
+        ) -> List[str]:
+            return await self._call_llm_batch(prompts, temperature, max_tokens, json_schema=json_schema)
+
+        async def _call_llm_with_system_prompt_batch_and_json_schema(
+            self, system_prompts: List[str], user_prompts: List[str], temperature: float, max_tokens: int, json_schema: str
+        ) -> List[str]:
+            return await self._call_llm_with_system_prompt_batch(system_prompts, user_prompts, temperature, max_tokens, json_schema=json_schema)
+
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> List[str]:
             messages = [[{"role": "user", "content": prompt + self.extra_prompting}] for prompt in prompts]
-            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
-                
-            try:
-                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
-            except vllm.v1.engine.exceptions.EngineDeadError:
-                self._start_engine()  # Restart the engine if it fails
-                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
-            
-            return [output.outputs[0].text for output in outputs]
+            return await self._call_llm_with_messages(messages, temperature, max_tokens, json_schema=json_schema)
 
         async def _call_llm_with_system_prompt_batch(
-            self, system_prompts: List[str], user_prompts: List[str], temperature: float, max_tokens: int
+            self, system_prompts: List[str], user_prompts: List[str], temperature: float, max_tokens: int, json_schema: Optional[str] = None
         ) -> List[str]:
             messages = []
             for system_prompt, user_prompt in zip(system_prompts, user_prompts):
                 messages.append([{"role": "system", "content": system_prompt},
                      {"role": "user", "content": user_prompt + self.extra_prompting}])
-            sampling_params = vllm.SamplingParams(temperature=temperature, max_tokens=max_tokens)
+            return await self._call_llm_with_messages(messages, temperature, max_tokens, json_schema=json_schema)
+
+        async def _call_llm_with_messages(
+                self, messages: List[List[dict[str, str]]], temperature: float, max_tokens: int, json_schema: Optional[str] = None
+        ) -> List[str]:
+            if json_schema:
+                guided_decoding_params = vllm.sampling_params.GuidedDecodingParams(json=json_schema)
+            else:
+                guided_decoding_params = None
+
+            sampling_params = vllm.SamplingParams(
+                temperature=temperature, 
+                max_tokens=max_tokens, 
+                repetition_penalty=1.2,
+                guided_decoding=guided_decoding_params
+            )
             
+            chat_kwargs = {
+                'messages': messages,
+                'sampling_params': sampling_params
+            }
+
             try:
-                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
+                outputs = self.llm.chat(**chat_kwargs)
             except vllm.v1.engine.exceptions.EngineDeadError:
                 self._start_engine()  # Restart the engine if it fails
-                outputs = self.llm.chat(messages=messages, sampling_params=sampling_params)
+                outputs = self.llm.chat(**chat_kwargs)
 
             return [output.outputs[0].text for output in outputs]
 
@@ -1349,27 +1451,50 @@ try:
             self.model = model
             self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        @property
+        def supports_json_schema(self) -> bool:
+            # Compatible models	gpt-4o-mini, gpt-4o-2024-08-06, and later	
+            # not supported: gpt-3.5-turbo, gpt-4-* and gpt-4o-* models
+            if self.model == 'gpt-3.5-turbo':
+                return False
+            elif self.model.startswith('gpt-4-'):
+                return False
+            elif self.model.startswith('gpt-4o-'):
+                date_str = self.model.replace('gpt-4o-', '')
+                date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+                return date_obj >= datetime.datetime(2024, 8, 6)
+            else:
+                return True
+
+        def _call_llm_with_json_schema(self, prompt: str, temperature: float, max_tokens: int, json_schema: str) -> str:
+            return self._call_llm(prompt, temperature, max_tokens, json_schema=json_schema)
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
+            messages=[{"role": "user", "content": prompt + self.extra_prompting}]
+            return self._call_llm_with_messages(messages, temperature, max_tokens, json_schema=json_schema)
+
+        def _call_llm_with_system_prompt_and_json_schema(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int, json_schema: str) -> str:
+            return self._call_llm_with_system_prompt(system_prompt, user_prompt, temperature, max_tokens, json_schema=json_schema)
+
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt + self.extra_prompting},
+            ]
+            return self._call_llm_with_messages(messages, temperature, max_tokens, json_schema=json_schema)
+
+        def _call_llm_with_messages(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
+            if self.supports_json_schema:
+                response_format = { "type": "json_schema", "strict": True, "schema": json_schema }
+            else:
+                response_format = {"type": "json_object"}
+            
             response = self.llm.chat.completions.create(
                 model=self.model,
                 max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+                messages=messages,
                 temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            result = response.choices[0].message.content
-            return result
-        
-        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
+                response_format=response_format,
             )
             result = response.choices[0].message.content
             return result
