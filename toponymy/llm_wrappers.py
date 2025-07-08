@@ -127,15 +127,13 @@ class LLMWrapper(ABC):
         """
         pass
 
-    @abstractmethod
     def _call_llm_with_json_schema(self, prompt: str, temperature: float, max_tokens: int, json_schema: str) -> str:
         """
         Call the LLM with a prompt, temperature, and JSON schema.
         This method should be implemented by subclasses.
         """
-        pass
+        raise NotImplementedError()
 
-    @abstractmethod
     def _call_llm_with_system_prompt_and_json_schema(
         self, 
         system_prompt: str, 
@@ -148,7 +146,7 @@ class LLMWrapper(ABC):
         Call the LLM with a system prompt, user prompt, temperature, and JSON schema.
         This method should be implemented by subclasses.
         """
-        pass
+        raise NotImplementedError()
 
     # @abstractmethod
     @retry(
@@ -160,12 +158,12 @@ class LLMWrapper(ABC):
     def generate_topic_name(self, prompt: Union[str, Dict[str, str]], temperature: float = 0.4) -> str:
         try:
             if isinstance(prompt, str):
-                if self.supports_json_schema:
+                try:
                     topic_name_info_raw = self._call_llm_with_json_schema(prompt, temperature, max_tokens=128, json_schema=TopicNameResponse.model_json_schema())
-                else:
+                except NotImplementedError:
                     topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=128)
             elif isinstance(prompt, dict) and self.supports_system_prompts:
-                if self.supports_json_schema:
+                try:
                     topic_name_info_raw = self._call_llm_with_system_prompt_and_json_schema(
                         system_prompt=prompt["system"],
                         user_prompt=prompt["user"],
@@ -173,7 +171,7 @@ class LLMWrapper(ABC):
                         max_tokens=128,
                         json_schema=TopicNameResponse.model_json_schema(),
                     )
-                else:
+                except NotImplementedError:
                     topic_name_info_raw = self._call_llm_with_system_prompt(
                         system_prompt=prompt["system"],
                         user_prompt=prompt["user"],
@@ -203,12 +201,12 @@ class LLMWrapper(ABC):
     ) -> List[str]:
         try:
             if isinstance(prompt, str):
-                if self.supports_json_schema:
+                try:
                     topic_name_info_raw = self._call_llm_with_json_schema(prompt, temperature, max_tokens=1024, json_schema=get_specific_topic_cluster_json_schema(old_names))
-                else:
+                except NotImplementedError:
                     topic_name_info_raw = self._call_llm(prompt, temperature, max_tokens=1024)
             elif isinstance(prompt, dict) and self.supports_system_prompts:
-                if self.supports_json_schema:
+                try:
                     topic_name_info_raw = self._call_llm_with_system_prompt_and_json_schema(
                         system_prompt=prompt["system"],
                         user_prompt=prompt["user"],
@@ -216,7 +214,7 @@ class LLMWrapper(ABC):
                         max_tokens=1024,
                         json_schema=get_specific_topic_cluster_json_schema(old_names),
                     )
-                else:
+                except NotImplementedError:
                     topic_name_info_raw = self._call_llm_with_system_prompt(
                         system_prompt=prompt["system"],
                         user_prompt=prompt["user"],
@@ -238,14 +236,6 @@ class LLMWrapper(ABC):
         By default, it does. Override in subclasses if not supported.
         """
         return True
-
-    @property
-    def supports_json_schema(self) -> bool:
-        """
-        Check if the LLM wrapper supports JSON schema.
-        By default, it does not. Override in subclasses if not supported.
-        """
-        return False
 
 
 class AsyncLLMWrapper(ABC):
@@ -272,15 +262,13 @@ class AsyncLLMWrapper(ABC):
         """
         pass
 
-    @abstractmethod
     async def _call_llm_batch_with_json_schema(self, prompts: List[str], temperature: float, max_tokens: int, json_schema: str) -> List[str]:
         """
         Call the LLM with a batch of prompts and temperature.
         This method should be implemented by subclasses.
         """
-        pass
+        raise NotImplementedError()
 
-    @abstractmethod
     async def _call_llm_with_system_prompt_batch_and_json_schema(
         self, 
         system_prompts: List[str], 
@@ -293,7 +281,7 @@ class AsyncLLMWrapper(ABC):
         Call the LLM with batches of system prompts and user prompts.
         This method should be implemented by subclasses.
         """
-        pass
+        raise NotImplementedError()
 
 
     async def generate_topic_names(
@@ -310,18 +298,18 @@ class AsyncLLMWrapper(ABC):
         
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
-            if self.supports_json_schema:
+            try:
                 responses = await self._call_llm_batch_with_json_schema(prompts, temperature, max_tokens=128, json_schema=TopicNameResponse.model_json_schema())
-            else:
+            except NotImplementedError:
                 responses = await self._call_llm_batch(prompts, temperature, max_tokens=128)
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [p["system"] for p in prompts]
             user_prompts = [p["user"] for p in prompts]
-            if self.supports_json_schema:
+            try:
                 responses = await self._call_llm_with_system_prompt_batch_and_json_schema(
                     system_prompts, user_prompts, temperature, max_tokens=128, json_schema=TopicNameResponse.model_json_schema()
                 )
-            else:
+            except NotImplementedError:
                 responses = await self._call_llm_with_system_prompt_batch(
                     system_prompts, user_prompts, temperature, max_tokens=128
                 )
@@ -372,18 +360,18 @@ class AsyncLLMWrapper(ABC):
         
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
-            if self.supports_json_schema:
+            try:
                 responses = await self._call_llm_batch_with_json_schema(prompts, temperature, max_tokens=1024, json_schema=json_schema)
-            else:
+            except NotImplementedError:
                 responses = await self._call_llm_batch(prompts, temperature, max_tokens=1024)
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [prompt["system"] for prompt in prompts]
             user_prompts = [prompt["user"] for prompt in prompts]
-            if self.supports_json_schema:
+            try:
                 responses = await self._call_llm_with_system_prompt_batch_and_json_schema(
                     system_prompts, user_prompts, temperature, max_tokens=1024, json_schema=json_schema
                 )
-            else:
+            except NotImplementedError:
                 responses = await self._call_llm_with_system_prompt_batch(
                     system_prompts, user_prompts, temperature, max_tokens=1024
                 )
@@ -406,14 +394,6 @@ class AsyncLLMWrapper(ABC):
         By default, it does. Override in subclasses if not supported.
         """
         return True
-
-    @property
-    def supports_json_schema(self) -> bool:
-        """
-        Check if the LLM wrapper supports JSON schema.
-        By default, it does not. Override in subclasses if not supported.
-        """
-        return False
 
 try:
     import llama_cpp
@@ -645,10 +625,6 @@ try:
             self._start_engine()
             self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
-        @property
-        def supports_json_schema(self) -> bool:
-            return True
-
         def _start_engine(self):
             """
             Start the VLLM engine. This is necessary to initialize the model.
@@ -706,10 +682,6 @@ try:
             self.kwargs = kwargs
             self._start_engine()
             self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-
-        @property
-        def supports_json_schema(self) -> bool:
-            return True
 
         def _start_engine(self):
             self.llm = vllm.LLM(model=self.model, **self.kwargs)
@@ -1478,8 +1450,7 @@ try:
             self.model = model
             self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 
-        @property
-        def supports_json_schema(self) -> bool:
+        def _can_support_json_schema(self) -> bool:
             # Compatible models	gpt-4o-mini, gpt-4o-2024-08-06, and later	
             # not supported: gpt-3.5-turbo, gpt-4-* and gpt-4o-* models
             if self.model == 'gpt-3.5-turbo':
@@ -1511,7 +1482,7 @@ try:
             return self._call_llm_with_messages(messages, temperature, max_tokens, json_schema=json_schema)
 
         def _call_llm_with_messages(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, json_schema: Optional[str] = None) -> str:
-            if self.supports_json_schema:
+            if json_schema and self._can_support_json_schema():
                 response_format = { "type": "json_schema", "strict": True, "schema": json_schema }
             else:
                 response_format = {"type": "json_object"}
