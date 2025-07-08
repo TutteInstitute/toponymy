@@ -335,6 +335,10 @@ class AsyncLLMWrapper(ABC):
         
         return results
 
+    def _get_specific_json_schema(self, old_names_list: List[List[str]]) -> str:
+        max_mapping_len = max([len(l) for l in old_names_list])
+        return get_topic_cluster_json_schema(max_mapping_len)
+
 
     async def generate_topic_cluster_names(
         self,
@@ -351,17 +355,11 @@ class AsyncLLMWrapper(ABC):
         
         if not prompts:
             return []
-
-        if self.supports_json_schema:
-            max_mapping_len = max([len(l) for l in old_names_list])
-            json_schema = get_topic_cluster_json_schema(max_mapping_len)
-        else:
-            json_schema = None
         
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
             try:
-                responses = await self._call_llm_batch_with_json_schema(prompts, temperature, max_tokens=1024, json_schema=json_schema)
+                responses = await self._call_llm_batch_with_json_schema(prompts, temperature, max_tokens=1024, json_schema=self._get_specific_json_schema(old_names_list))
             except NotImplementedError:
                 responses = await self._call_llm_batch(prompts, temperature, max_tokens=1024)
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
@@ -369,7 +367,7 @@ class AsyncLLMWrapper(ABC):
             user_prompts = [prompt["user"] for prompt in prompts]
             try:
                 responses = await self._call_llm_with_system_prompt_batch_and_json_schema(
-                    system_prompts, user_prompts, temperature, max_tokens=1024, json_schema=json_schema
+                    system_prompts, user_prompts, temperature, max_tokens=1024, json_schema=self._get_specific_json_schema(old_names_list)
                 )
             except NotImplementedError:
                 responses = await self._call_llm_with_system_prompt_batch(
