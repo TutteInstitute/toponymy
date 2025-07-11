@@ -173,6 +173,7 @@ class Toponymy:
                 clusterable_vectors,
                 embedding_vectors,
                 self.layer_class,
+                verbosity=self.verbosity,
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
                 prompt_format=(
