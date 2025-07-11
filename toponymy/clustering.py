@@ -469,7 +469,7 @@ class ToponymyClusterer(Clusterer):
             max_layers=self.max_layers,
             verbosity=verbosity if verbosity is not None else self.verbosity,
             show_progress_bar=show_progress_bar,
-            verbose=self.verbose,
+            verbose=verbosity if verbosity is not None else self.verbose,
             **layer_kwargs,
         )
         return self
