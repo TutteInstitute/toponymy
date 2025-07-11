@@ -5,7 +5,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
 
 
 from typing import Optional, List
-from toponymy._utils import handle_verbosity_params
+from toponymy._utils import handle_verbose_params
 
 # Cohere
 try:
@@ -20,12 +20,12 @@ try:
             self.input_type="search_query" # We will be embedding keyphrases and subtopic names to match against documents
             self.embedding_types=['float']
 
-        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             result = []
@@ -50,12 +50,12 @@ try:
             self.base_url = base_url
             self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
-        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             result = []
@@ -79,12 +79,12 @@ try:
             self.base_url = base_url
             self.httpx_client = httpx_client
 
-        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             result = []
@@ -130,12 +130,12 @@ try:
             assert len(embeddings) == len(texts)
             return np.array(embeddings)
 
-        def encode(self, texts: list, verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: list, verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             result = []
@@ -158,12 +158,12 @@ try:
             self.client = mistralai.client.MistralClient(api_key=api_key)
             self.model = model
 
-        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             result = []
@@ -192,12 +192,12 @@ try:
                 "Content-Type": "application/json"
             }
 
-        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             result = []
@@ -226,12 +226,12 @@ try:
         def __init__(self, model: str = "all-MiniLM-L6-v2", kwargs: dict = {}):
             self.llm = vllm.LLM(model=model, task='embed', **kwargs)
 
-        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
-            # Handle verbosity parameters
-            show_progress_bar_val, _ = handle_verbosity_params(
-                verbosity=verbosity,
+        def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbose parameters
+            show_progress_bar_val, _ = handle_verbose_params(
+                verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbosity=False
+                default_verbose=False
             )
             
             outputs = self.llm.embed(texts, use_tqdm=show_progress_bar_val)

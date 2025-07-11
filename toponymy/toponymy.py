@@ -3,7 +3,7 @@ from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
-from toponymy._utils import handle_verbosity_params
+from toponymy._utils import handle_verbose_params
 
 from sentence_transformers import SentenceTransformer
 from sklearn.utils.validation import check_is_fitted
@@ -40,10 +40,10 @@ class Toponymy:
         The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
     exemplar_delimiters: List[str]
         A list of strings that represent the delimiters for the exemplar texts. Default is ["    *\"", "\"\n"].
-    verbosity: bool
+    verbose: bool
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bars: bool, deprecated
-        Deprecated. Use verbosity instead.
+        Deprecated. Use verbose instead.
 
     Attributes:
     -----------
@@ -67,7 +67,7 @@ class Toponymy:
         The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
     exemplar_delimiters: List[str]
         A list of strings that represent the delimiters for the exemplar texts.
-    verbosity: bool
+    verbose: bool
         Whether to show progress bars and verbose output.
     clusterable_vectors_: np.array
         A numpy array of shape=(number_of_objects, clustering_dimension) used for clustering.
@@ -103,7 +103,7 @@ class Toponymy:
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
-        verbosity: bool = None,
+        verbose: bool = None,
         show_progress_bars: bool = None,
     ):
         self.llm_wrapper = llm_wrapper
@@ -117,13 +117,12 @@ class Toponymy:
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
         
-        # Handle verbosity parameters
-        self.show_progress_bars, self.verbose = handle_verbosity_params(
-            verbosity=verbosity,
+        # Handle verbose parameters
+        self.show_progress_bars, self.verbose = handle_verbose_params(
+            verbose=verbose,
             show_progress_bars=show_progress_bars,
-            default_verbosity=True
+            default_verbose=True
         )
-        self.verbosity = self.show_progress_bars  # Store unified parameter
 
     def fit(
         self,
@@ -173,7 +172,7 @@ class Toponymy:
                 clusterable_vectors,
                 embedding_vectors,
                 self.layer_class,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
                 prompt_format=(

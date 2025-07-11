@@ -25,7 +25,7 @@ from toponymy.prompt_construction import (
 from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 import asyncio
-from toponymy._utils import handle_verbosity_params
+from toponymy._utils import handle_verbose_params
 
 
 def run_async(coro):
@@ -81,7 +81,7 @@ class ClusterLayer(ABC):
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
         prompt_template: Optional[str] = None,
-        verbosity: bool = None,
+        verbose: bool = None,
         show_progress_bar: bool = None,
     ):
         self.cluster_labels = cluster_labels
@@ -96,13 +96,12 @@ class ClusterLayer(ABC):
         self.prompt_format = prompt_format
         self.prompt_template = prompt_template
         
-        # Handle verbosity parameters
-        self.show_progress_bar, self.verbose = handle_verbosity_params(
-            verbosity=verbosity,
+        # Handle verbose parameters
+        self.show_progress_bar, self.verbose = handle_verbose_params(
+            verbose=verbose,
             show_progress_bar=show_progress_bar,
-            default_verbosity=False
+            default_verbose=False
         )
-        self.verbosity = self.show_progress_bar
 
         # Initialize empty lists for the cluster layer's attributes
         self.topic_names = []
@@ -336,7 +335,7 @@ class ClusterLayerText(ClusterLayer):
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
         prompt_template: Optional[str] = None,
-        verbosity: bool = None,
+        verbose: bool = None,
         show_progress_bar: bool = None,
         **kwargs: Any,
     ):
@@ -348,7 +347,7 @@ class ClusterLayerText(ClusterLayer):
             exemplar_delimiters=exemplar_delimiters,
             prompt_format=prompt_format,
             prompt_template=prompt_template,
-            verbosity=verbosity,
+            verbose=verbose,
             show_progress_bar=show_progress_bar,
             **kwargs,
         )
@@ -520,7 +519,7 @@ class ClusterLayerText(ClusterLayer):
                 embedding_model,
                 max_alpha=self.keyphrase_diversify_alpha,
                 n_keyphrases=self.n_keyphrases,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method == "central":
@@ -532,7 +531,7 @@ class ClusterLayerText(ClusterLayer):
                 embedding_model,
                 diversify_alpha=self.keyphrase_diversify_alpha,
                 n_keyphrases=self.n_keyphrases,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method == "bm25":
@@ -544,7 +543,7 @@ class ClusterLayerText(ClusterLayer):
                 embedding_model,
                 diversify_alpha=self.keyphrase_diversify_alpha,
                 n_keyphrases=self.n_keyphrases,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method in ("saturated_coverage", "facility_location", "graph_cut"):
@@ -556,7 +555,7 @@ class ClusterLayerText(ClusterLayer):
                 embedding_model,
                 n_keyphrases=self.n_keyphrases,
                 submodular_function=method,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         else:
@@ -584,7 +583,7 @@ class ClusterLayerText(ClusterLayer):
                 diversify_alpha=self.subtopic_diversify_alpha,
                 n_subtopics=self.n_subtopics,
                 embedding_model=embedding_model,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method == "information_weighted":
@@ -596,7 +595,7 @@ class ClusterLayerText(ClusterLayer):
                 diversify_alpha=self.subtopic_diversify_alpha,
                 n_subtopics=self.n_subtopics,
                 embedding_model=embedding_model,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method in ("saturated_coverage", "facility_location"):
@@ -608,7 +607,7 @@ class ClusterLayerText(ClusterLayer):
                 n_subtopics=self.n_subtopics,
                 embedding_model=embedding_model,
                 submodular_function=method,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         else:
@@ -634,7 +633,7 @@ class ClusterLayerText(ClusterLayer):
                 n_exemplars=self.n_exemplars,
                 diversify_alpha=self.exemplars_diversify_alpha,
                 object_to_text_function=self.object_to_text_function,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method == "facility_location" or method == "saturated_coverage":
@@ -645,7 +644,7 @@ class ClusterLayerText(ClusterLayer):
                 n_exemplars=self.n_exemplars,
                 object_to_text_function=self.object_to_text_function,
                 submodular_function=method,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         elif method == "random":
@@ -654,7 +653,7 @@ class ClusterLayerText(ClusterLayer):
                 objects=object_list,
                 n_exemplars=self.n_exemplars,
                 object_to_text_function=self.object_to_text_function,
-                verbosity=self.verbosity,
+                verbose=self.verbose,
                 show_progress_bar=self.show_progress_bar,
             )
         else:

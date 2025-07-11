@@ -81,7 +81,7 @@ your data ahead of time via:
 .. code-block:: python
 
     from toponymy import ToponymyClusterer
-    clusterer = ToponymyClusterer(min_clusters=4, verbosity=True)
+    clusterer = ToponymyClusterer(min_clusters=4, verbose=True)
     clusterer.fit(clusterable_vectors=document_map, embedding_vectors=document_vectors)
     for i, layer in enumerate(clusterer.cluster_layers_):
         print(f'{len(np.unique(layer.cluster_labels))-1} clusters in layer {i}')
@@ -111,7 +111,7 @@ for the documents in the data set using an ``embedding_model``, ``document_vecto
         object_description="newsgroup posts",
         corpus_description="20-newsgroups dataset",
         exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"],
-        verbosity=True,  # Show progress bars and informative messages
+        verbose=True,  # Show progress bars and informative messages
     )
     topic_model.fit(text, document_vectors, document_map)
 
@@ -211,27 +211,27 @@ Here is an example of using ``datamapplot`` to visualize your data:
 This will launch an interactive map in your browser or notebook environment, showing document clusters and their associated topic names across all hierarchical layers. You can zoom in to explore fine-grained topics and zoom out to see broader themes, enabling intuitive navigation of the information space.
 
 -----------------------------------
-Controlling Output Verbosity
+Controlling Verbose Output
 -----------------------------------
 
-Toponymy provides a unified ``verbosity`` parameter to control progress bars and informative messages across all components:
+Toponymy provides a unified ``verbose`` parameter to control progress bars and informative messages across all components:
 
 .. code-block:: python
 
     # Show all progress bars and messages
-    clusterer = ToponymyClusterer(min_clusters=4, verbosity=True)
+    clusterer = ToponymyClusterer(min_clusters=4, verbose=True)
     
     # Suppress all output for silent operation
-    clusterer = ToponymyClusterer(min_clusters=4, verbosity=False)
+    clusterer = ToponymyClusterer(min_clusters=4, verbose=False)
     
     # The same parameter works for all components
     topic_model = Toponymy(
         llm_wrapper=llm,
         text_embedding_model=embedding_model,
-        verbosity=True  # Shows progress for all operations
+        verbose=True  # Shows progress for all operations
     )
 
-The ``verbosity`` parameter replaces the older ``verbose`` and ``show_progress_bar`` parameters, providing a simpler and more consistent interface. Legacy parameters are still supported for backward compatibility but will show deprecation warnings.
+The ``verbose`` parameter unifies the older separate ``verbose`` and ``show_progress_bar`` parameters, providing a simpler and more consistent interface. Legacy parameters are still supported for backward compatibility but will show deprecation warnings.
 
 -------------------
 Vector Construction

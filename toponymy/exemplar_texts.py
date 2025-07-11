@@ -5,7 +5,7 @@ from typing import List, Tuple, FrozenSet, Dict, Callable, Any
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
 from toponymy.utility_functions import diversify_max_alpha as diversify
-from toponymy._utils import handle_verbosity_params
+from toponymy._utils import handle_verbose_params
 
 from tqdm.auto import tqdm
 
@@ -321,7 +321,7 @@ def submodular_selection_exemplars(
     n_exemplars: int = 4,
     object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
     submodular_function: str = "facility_location",
-    verbosity: bool = None,
+    verbose: bool = None,
     show_progress_bar: bool = None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
@@ -373,11 +373,11 @@ def submodular_selection_exemplars(
             f"selection_function={submodular_function} is not a valid selection. Please choose one of (facility_location,saturated_coverage)"
         )
 
-    # Handle verbosity parameters
-    show_progress_bar_val, _ = handle_verbosity_params(
-        verbosity=verbosity,
+    # Handle verbose parameters
+    show_progress_bar_val, _ = handle_verbose_params(
+        verbose=verbose,
         show_progress_bar=show_progress_bar,
-        default_verbosity=False
+        default_verbose=False
     )
 
     for cluster_num in tqdm(
@@ -434,7 +434,7 @@ def random_exemplars(
     objects: List[str],
     n_exemplars: int = 4,
     object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
-    verbosity: bool = None,
+    verbose: bool = None,
     show_progress_bar: bool = None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar texts for each cluster in a cluster layer.
@@ -461,11 +461,11 @@ def random_exemplars(
         - A list of lists of exemplar texts for each cluster
         - A list of lists of indices indicating the position of each exemplar in the original object list
     """
-    # Handle verbosity parameters
-    show_progress_bar_val, _ = handle_verbosity_params(
-        verbosity=verbosity,
+    # Handle verbose parameters
+    show_progress_bar_val, _ = handle_verbose_params(
+        verbose=verbose,
         show_progress_bar=show_progress_bar,
-        default_verbosity=False
+        default_verbose=False
     )
 
     results = []
@@ -515,7 +515,7 @@ def diverse_exemplars(
     diversify_alpha: float = 1.0,
     object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
     method: str = "centroid",
-    verbosity: bool = None,
+    verbose: bool = None,
     show_progress_bar: bool = None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
@@ -550,11 +550,11 @@ def diverse_exemplars(
         - A list of lists of exemplar texts for each cluster
         - A list of lists of indices indicating the position of each exemplar in the original object list
     """
-    # Handle verbosity parameters
-    show_progress_bar_val, _ = handle_verbosity_params(
-        verbosity=verbosity,
+    # Handle verbose parameters
+    show_progress_bar_val, _ = handle_verbose_params(
+        verbose=verbose,
         show_progress_bar=show_progress_bar,
-        default_verbosity=False
+        default_verbose=False
     )
     
     results = []
