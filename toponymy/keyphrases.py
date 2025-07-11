@@ -10,6 +10,7 @@ from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
 from apricot import SaturatedCoverageSelection, GraphCutSelection
 from toponymy.exemplar_texts import FacilityLocationSelection
+from toponymy._utils import handle_verbosity_params
 
 from sentence_transformers import SentenceTransformer
 
@@ -168,7 +169,8 @@ def build_keyphrase_vocabulary(
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
     min_chunk_size: int = 20_000,
-    verbose: bool = False,
+    verbosity: bool = None,
+    verbose: bool = None,
 ) -> List[str]:
     """
     Builds a keyphrase vocabulary from a list of objects.
@@ -189,8 +191,10 @@ def build_keyphrase_vocabulary(
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
     min_chunk_size : int, optional
         The minimum chunk size for parallel processing, by default 20_000.
-    verbose : bool, optional
-        Whether to print out progress information, by default False.
+    verbosity : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    verbose : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
 
     Returns
     -------
@@ -242,7 +246,8 @@ def build_keyphrase_count_matrix(
     ngrammer: Ngrammer,
     n_jobs: int = -1,
     min_chunk_size: int = 20_000,
-    verbose: bool = False,
+    verbosity: bool = None,
+    verbose: bool = None,
 ) -> scipy.sparse.spmatrix:
     """
      Builds a count matrix of keyphrases in a list of objects.
@@ -259,8 +264,10 @@ def build_keyphrase_count_matrix(
          The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
      min_chunk_size : int, optional
          The minimum chunk size for parallel processing, by default 20_000.
-    verbose : bool, optional
-         Whether to print out progress information, by default False.
+     verbosity : bool, optional
+         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+     verbose : bool, optional, deprecated
+         Deprecated. Use verbosity instead.
 
 
      Returns
@@ -268,11 +275,18 @@ def build_keyphrase_count_matrix(
      scipy.sparse.spmatrix
          A sparse count matrix of keyphrases in the objects.
     """
+    # Handle verbosity parameters
+    _, verbose_output = handle_verbosity_params(
+        verbosity=verbosity,
+        verbose=verbose,
+        default_verbosity=False
+    )
+    
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
     chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
     n_chunks = (len(objects) // chunk_size) + 1
-    if verbose:
+    if verbose_output:
         print(
             f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase count construction."
         )
@@ -280,7 +294,7 @@ def build_keyphrase_count_matrix(
         delayed(build_count_matrix)(objects[i : i + chunk_size], keyphrases, ngrammer)
         for i in range(0, len(objects), chunk_size)
     )
-    if verbose:
+    if verbose_output:
         print("Combining count matrix chunks ...")
 
     # stack the count matrices
@@ -299,7 +313,8 @@ def build_object_x_keyphrase_matrix(
     stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
     n_jobs: int = -1,
     min_chunk_size: int = 20_000,
-    verbose: bool = False,
+    verbosity: bool = None,
+    verbose: bool = None,
 ) -> scipy.sparse.spmatrix:
     """
     Builds a count matrix of keyphrases in a list of objects.
@@ -324,8 +339,10 @@ def build_object_x_keyphrase_matrix(
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
     min_chunk_size : int, optional
         The minimum chunk size for parallel processing, by default 20_000.
-    verbose : bool, optional
-        Whether to print out progress information, by default False.
+    verbosity : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    verbose : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
 
     Returns
     -------
@@ -361,6 +378,7 @@ def build_object_x_keyphrase_matrix(
         keyphrase_dict,
         ngrammer=ngrammer,
         n_jobs=n_jobs,
+        verbosity=verbosity,
         verbose=verbose,
     )
 
@@ -403,6 +421,15 @@ class KeyphraseBuilder:
 
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    
+    embedder : Optional[SentenceTransformer], optional
+        An optional embedder to generate keyphrase vectors, by default None.
+    
+    verbosity : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    
+    verbose : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
 
     Attributes
     ----------
@@ -426,7 +453,8 @@ class KeyphraseBuilder:
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
         embedder: Optional[SentenceTransformer] = None,
-        verbose: bool = False,
+        verbosity: bool = None,
+        verbose: bool = None,
     ):
         self.object_to_text = object_to_text
         self.ngram_range = ngram_range
@@ -437,7 +465,14 @@ class KeyphraseBuilder:
         self.stop_words = stop_words
         self.n_jobs = n_jobs
         self.embedder = embedder
-        self.verbose = verbose
+        
+        # Handle verbosity parameters
+        _, self.verbose = handle_verbosity_params(
+            verbosity=verbosity,
+            verbose=verbose,
+            default_verbosity=False
+        )
+        self.verbosity = self.verbose
 
     def fit(self, objects: List[Any]):
         if self.object_to_text is None:
@@ -537,7 +572,9 @@ def information_weighted_keyphrases(
     max_alpha: float = 1.0,
     min_alpha: float = 0.5,
     alpha_tolerance: float = 0.1,
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
+    verbose: bool = None,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer.
 
@@ -573,6 +610,14 @@ def information_weighted_keyphrases(
     keyphrases List[List[str]]
         A list of lists of keyphrases for each cluster.
     """
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        verbose=verbose,
+        default_verbosity=False
+    )
+    
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -593,7 +638,7 @@ def information_weighted_keyphrases(
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Generating informative keyphrases",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
         leave=False,
         unit="cluster",
         position=1,
@@ -677,7 +722,9 @@ def central_keyphrases(
     embedding_model: SentenceTransformer,
     n_keyphrases: int = 16,
     diversify_alpha: float = 1.0,
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
+    verbose: bool = None,
 ):
     """
     Generates a list of keyphrases for each cluster in a cluster layer using the central keyphrase method.
@@ -706,6 +753,13 @@ def central_keyphrases(
     keyphrases : List[List[str]]
         A list of lists of keyphrases for each cluster.
     """
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        verbose=verbose,
+        default_verbosity=False
+    )
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -720,7 +774,7 @@ def central_keyphrases(
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Generating central keyphrases",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
         leave=False,
         unit="cluster",
         position=1,
@@ -806,7 +860,9 @@ def bm25_keyphrases(
     k1: float = 1.5,
     b: float = 0.75,
     diversify_alpha: float = 1.0,
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
+    verbose: bool = None,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer using BM25 for scoring.
 
@@ -836,6 +892,13 @@ def bm25_keyphrases(
     keyphrases : List[List[str]]
         A list of lists of keyphrases for each cluster.
     """
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        verbose=verbose,
+        default_verbosity=False
+    )
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -882,7 +945,7 @@ def bm25_keyphrases(
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Generating bm25 keyphrases",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
         leave=False,
         unit="meta-cluster",
         position=1,
@@ -964,7 +1027,9 @@ def submodular_selection_information_keyphrases(
     prior_strength: float = 0.01,
     weight_power: float = 2.0,
     submodular_function: str = "saturated_coverage",
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
+    verbose: bool = None,
 ) -> List[List[str]]:
     """Generates a list of keyphrases for each cluster in a cluster layer using saturated coverage information.
 
@@ -997,6 +1062,13 @@ def submodular_selection_information_keyphrases(
     keyphrases : List[List[str]]
         A list of lists of keyphrases for each cluster.
     """
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        verbose=verbose,
+        default_verbosity=False
+    )
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -1032,7 +1104,7 @@ def submodular_selection_information_keyphrases(
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Generating saturated coverage keyphrases",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
         leave=False,
         unit="cluster",
         position=1,

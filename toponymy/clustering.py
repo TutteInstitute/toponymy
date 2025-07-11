@@ -13,6 +13,7 @@ from sklearn.neighbors import KDTree
 from typing import List, Tuple, Dict, Type, Any, Optional
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 from typing import List, Tuple, Dict, Type, Any, Optional, NewType
+from toponymy._utils import handle_verbosity_params
 
 from sklearn.cluster import KMeans
 
@@ -99,7 +100,8 @@ def build_raw_cluster_layers(
     base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
     max_layers: Optional[int] = None,
-    verbose=False,
+    verbosity: bool = None,
+    verbose: bool = None,
 ) -> List[np.ndarray]:
     """
     Build hierarchical cluster layers from raw data using a KDTree and Boruvka's algorithm.
@@ -157,10 +159,17 @@ def build_raw_cluster_layers(
             "Try reducing base_min_cluster_size."
         )
 
+    # Handle verbosity parameters
+    _, verbose_output = handle_verbosity_params(
+        verbosity=verbosity,
+        verbose=verbose,
+        default_verbosity=False
+    )
+
     while n_clusters_in_layer >= min_clusters:
         if max_layers is not None and len(cluster_layers) >= max_layers:
             break
-        if verbose:
+        if verbose_output:
             print(f"Layer {len(cluster_layers)} found {n_clusters_in_layer} clusters")
         cluster_layers.append(clusters)
         cluster_sizes = np.bincount(clusters[clusters >= 0])
@@ -267,8 +276,9 @@ def create_cluster_layers(
     base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
     max_layers: Optional[int] = None,
-    show_progress_bar: bool = False,
-    verbose: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
+    verbose: bool = None,
     **layer_kwargs,
 ) -> Tuple[List[ClusterLayer], ClusterTree]:
     """
@@ -295,10 +305,12 @@ def create_cluster_layers(
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
     max_layers : Optional[int], optional
         The maximum number of layers to create (default is None). If None, no limit is imposed.
-    show_progress_bar : bool, optional
-        Whether to show a progress bar (default is False).
-    verbose : bool, optional
-        Whether to show verbose output (default is False).
+    verbosity : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    show_progress_bar : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
+    verbose : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
     **layer_kwargs : Any
         Any additional keyword arguments to be passed to the layer class.
 
@@ -307,6 +319,14 @@ def create_cluster_layers(
     Tuple[List[Any], Dict[Tuple[int, int], List[Tuple[int, int]]]]
         A tuple containing a list of created layers and a dictionary representing the cluster tree.
     """
+    # Handle verbosity parameters
+    show_progress_bar_val, verbose_val = handle_verbosity_params(
+        verbosity=verbosity,
+        verbose=verbose,
+        show_progress_bar=show_progress_bar,
+        default_verbosity=False
+    )
+    
     cluster_labels = build_raw_cluster_layers(
         clusterable_vectors,
         min_clusters=min_clusters,
@@ -315,7 +335,8 @@ def create_cluster_layers(
         base_n_clusters=base_n_clusters,
         next_cluster_size_quantile=next_cluster_size_quantile,
         max_layers=max_layers,
-        verbose=verbose,
+        verbosity=show_progress_bar_val,
+        verbose=verbose_val,
     )
     cluster_tree = build_cluster_tree(cluster_labels)
     layers = [
@@ -323,7 +344,8 @@ def create_cluster_layers(
             labels,
             centroids_from_labels(labels, embedding_vectors),
             layer_id=i,
-            show_progress_bar=show_progress_bar,
+            verbosity=show_progress_bar_val,
+            show_progress_bar=show_progress_bar_val,
             **layer_kwargs,
         )
         for i, labels in enumerate(cluster_labels)
@@ -376,8 +398,12 @@ class ToponymyClusterer(Clusterer):
         The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
     max_layers : Optional[int], optional
         The maximum number of layers to create (default is None). If None, no limit is imposed.
-    verbose : bool, optional
-        Whether to show verbose output (default is False).
+    verbosity : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    verbose : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
+    show_progress_bar : bool, optional, deprecated
+        Deprecated. Use verbosity instead.
 
     Attributes
     ----------
@@ -396,7 +422,9 @@ class ToponymyClusterer(Clusterer):
         base_n_clusters: Optional[int] = None,
         next_cluster_size_quantile: float = 0.85,
         max_layers: Optional[int] = None,
-        verbose=False,
+        verbosity: bool = None,
+        verbose: bool = None,
+        show_progress_bar: bool = None,
     ):
         super().__init__()
         self.min_clusters = min_clusters
@@ -405,7 +433,15 @@ class ToponymyClusterer(Clusterer):
         self.base_n_clusters = base_n_clusters
         self.next_cluster_size_quantile = next_cluster_size_quantile
         self.max_layers = max_layers
-        self.verbose = verbose
+        
+        # Handle verbosity parameters
+        _, self.verbose = handle_verbosity_params(
+            verbosity=verbosity,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+            default_verbosity=False
+        )
+        self.verbosity = self.verbose
 
         if self.base_min_cluster_size is None and self.base_n_clusters is None:
             raise ValueError(
@@ -417,7 +453,8 @@ class ToponymyClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        show_progress_bar: bool = False,
+        verbosity: bool = None,
+        show_progress_bar: bool = None,
         **layer_kwargs,
     ) -> Clusterer:
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
@@ -430,6 +467,7 @@ class ToponymyClusterer(Clusterer):
             base_n_clusters=self.base_n_clusters,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
             max_layers=self.max_layers,
+            verbosity=verbosity if verbosity is not None else self.verbosity,
             show_progress_bar=show_progress_bar,
             verbose=self.verbose,
             **layer_kwargs,
@@ -441,13 +479,15 @@ class ToponymyClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        show_progress_bar: bool = False,
+        verbosity: bool = None,
+        show_progress_bar: bool = None,
         **layer_kwargs,
     ) -> Tuple[List[ClusterLayer], ClusterTree]:
         self.fit(
             clusterable_vectors,
             embedding_vectors,
             layer_class=layer_class,
+            verbosity=verbosity,
             show_progress_bar=show_progress_bar,
             **layer_kwargs,
         )
@@ -477,26 +517,42 @@ class KMeansClusterer(Clusterer):
     """
 
     def __init__(
-        self, min_clusters: int = 6, base_n_clusters: int = 1024, verbose=False
+        self, min_clusters: int = 6, base_n_clusters: int = 1024, verbosity: bool = None, verbose: bool = None, show_progress_bar: bool = None
     ):
         super().__init__()
         self.min_clusters = min_clusters
         self.base_n_clusters = base_n_clusters
-        self.verbose = verbose
+        
+        # Handle verbosity parameters
+        _, self.verbose = handle_verbosity_params(
+            verbosity=verbosity,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+            default_verbosity=False
+        )
+        self.verbosity = self.verbose
 
     def fit(
         self,
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        show_progress_bar: bool = False,
+        verbosity: bool = None,
+        show_progress_bar: bool = None,
         **layer_kwargs,
     ) -> Clusterer:
+        # Handle verbosity parameters
+        _, verbose_output = handle_verbosity_params(
+            verbosity=verbosity if verbosity is not None else self.verbosity,
+            show_progress_bar=show_progress_bar,
+            default_verbosity=False
+        )
+        
         n_clusters = self.base_n_clusters
         cluster_label_layers = []
 
         while n_clusters >= self.min_clusters:
-            if self.verbose:
+            if verbose_output:
                 print(f"Layer {len(cluster_label_layers)} found {n_clusters} clusters")
             kmeans = KMeans(n_clusters=n_clusters)
             cluster_labels = kmeans.fit_predict(clusterable_vectors)
@@ -509,6 +565,7 @@ class KMeansClusterer(Clusterer):
                 labels,
                 centroids_from_labels(labels, embedding_vectors),
                 layer_id=i,
+                verbosity=verbosity,
                 show_progress_bar=show_progress_bar,
                 **layer_kwargs,
             )
@@ -521,10 +578,11 @@ class KMeansClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        show_progress_bar: bool = False,
+        verbosity: bool = None,
+        show_progress_bar: bool = None,
         **layer_kwargs,
     ) -> Tuple[List[ClusterLayer], ClusterTree]:
-        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, show_progress_bar=show_progress_bar, **layer_kwargs)
+        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, verbosity=verbosity, show_progress_bar=show_progress_bar, **layer_kwargs)
         return self.cluster_layers_, self.cluster_tree_
 
 
@@ -547,6 +605,9 @@ try:
             symmetrize_graph: bool = True,
             node_embedding_dim: Optional[int] = None,
             neighbor_scale: float = 1.0,
+            verbosity: bool = None,
+            verbose: bool = None,
+            show_progress_bar: bool = None,
         ):
             super().__init__()
 
@@ -562,6 +623,15 @@ try:
             self.symmetrize_graph = symmetrize_graph
             self.node_embedding_dim = node_embedding_dim
             self.neighbor_scale = neighbor_scale
+            
+            # Handle verbosity parameters
+            _, self.verbose = handle_verbosity_params(
+                verbosity=verbosity,
+                verbose=verbose,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            self.verbosity = self.verbose
 
             self.evoc = evoc.EVoC(
                 noise_level=noise_level,
@@ -583,7 +653,8 @@ try:
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
             layer_class: Type[ClusterLayer] = ClusterLayerText,
-            show_progress_bar: bool = False,
+            verbosity: bool = None,
+            show_progress_bar: bool = None,
         ) -> Clusterer:
             self.evoc.fit(embedding_vectors)
             cluster_labels = self.evoc.cluster_layers_
@@ -593,6 +664,7 @@ try:
                     labels,
                     centroids_from_labels(labels, embedding_vectors),
                     layer_id=i,
+                    verbosity=verbosity,
                     show_progress_bar=show_progress_bar,
                 )
                 for i, labels in enumerate(cluster_labels)
@@ -604,8 +676,10 @@ try:
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
             layer_class: Type[ClusterLayer] = ClusterLayerText,
+            verbosity: bool = None,
+            show_progress_bar: bool = None,
         ) -> Tuple[List[ClusterLayer], ClusterTree]:
-            self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class)
+            self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, verbosity=verbosity, show_progress_bar=show_progress_bar)
             return self.cluster_layers_, self.cluster_tree_
 
 except ImportError:

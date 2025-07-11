@@ -89,7 +89,7 @@ def cluster_topic_names_for_renaming(
                 "Either topic_name_embeddings or embedding_model must be provided."
             )
         topic_name_embeddings = embedding_model.encode(
-            topic_names, show_progress_bar=True
+            topic_names, verbosity=True
         )
     distances = pairwise_distances(topic_name_embeddings, metric="cosine")
     threshold = find_threshold_for_max_cluster_size(distances)

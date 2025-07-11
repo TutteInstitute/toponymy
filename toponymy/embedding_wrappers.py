@@ -5,6 +5,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
 
 
 from typing import Optional, List
+from toponymy._utils import handle_verbosity_params
 
 # Cohere
 try:
@@ -19,9 +20,16 @@ try:
             self.input_type="search_query" # We will be embedding keyphrases and subtopic names to match against documents
             self.embedding_types=['float']
 
-        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
+        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
             result = []
-            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
+            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar_val)):
                 response = self.co.embed(texts=texts[i:i+96], model=self.model, input_type=self.input_type, embedding_types=self.embedding_types)
                 result.append(np.asarray(response.embeddings.float_))
 
@@ -42,9 +50,16 @@ try:
             self.base_url = base_url
             self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
 
-        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
+        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
             result = []
-            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
+            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar_val)):
                 response = self.client.embeddings.create(input=texts[i:i+96], model=self.model, encoding_format="float")
                 result.append(np.asarray([item.embedding for item in response.data]))       
 
@@ -64,9 +79,16 @@ try:
             self.base_url = base_url
             self.httpx_client = httpx_client
 
-        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
+        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
             result = []
-            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
+            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar_val)):
                 batch = texts[i:i+96]
                 # Anthropic embeddings are done one at a time in the current API
                 batch_embeddings = []
@@ -108,10 +130,17 @@ try:
             assert len(embeddings) == len(texts)
             return np.array(embeddings)
 
-        def encode(self, texts: list, show_progress_bar: bool = False) -> np.ndarray:
+        def encode(self, texts: list, verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
             result = []
             
-            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
+            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar_val)):
                 embeddings = self._encode_batch(texts[i:i+96])
                 result.append(embeddings)
             
@@ -129,9 +158,16 @@ try:
             self.client = mistralai.client.MistralClient(api_key=api_key)
             self.model = model
 
-        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
+        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
             result = []
-            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
+            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar_val)):
                 response = self.client.embeddings(
                     model=self.model,
                     inputs=texts[i:i+96]
@@ -156,9 +192,16 @@ try:
                 "Content-Type": "application/json"
             }
 
-        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
+        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
             result = []
-            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar)):
+            for i in tqdm(range(0, len(texts), 96), desc="embedding texts", disable=(not show_progress_bar_val)):
                 response = requests.post(
                     self.base_url,
                     headers=self.headers,
@@ -183,8 +226,15 @@ try:
         def __init__(self, model: str = "all-MiniLM-L6-v2", kwargs: dict = {}):
             self.llm = vllm.LLM(model=model, task='embed', **kwargs)
 
-        def encode(self, texts: List[str], show_progress_bar: bool = False) -> np.ndarray:
-            outputs = self.llm.embed(texts, use_tqdm=show_progress_bar)
+        def encode(self, texts: List[str], verbosity: bool = None, show_progress_bar: bool = None) -> np.ndarray:
+            # Handle verbosity parameters
+            show_progress_bar_val, _ = handle_verbosity_params(
+                verbosity=verbosity,
+                show_progress_bar=show_progress_bar,
+                default_verbosity=False
+            )
+            
+            outputs = self.llm.embed(texts, use_tqdm=show_progress_bar_val)
             embeddings = np.vstack([o.outputs.embedding for o in outputs])
             return embeddings
         

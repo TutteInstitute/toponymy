@@ -10,6 +10,7 @@ from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy.exemplar_texts import FacilityLocationSelection, SaturatedCoverageSelection
+from toponymy._utils import handle_verbosity_params
 
 from tqdm.auto import tqdm
 
@@ -28,7 +29,8 @@ def central_subtopics(
     embedding_model: Optional[SentenceTransformer] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -39,11 +41,18 @@ def central_subtopics(
 
     central_vector = np.mean(subtopic_vectors, axis=0)
 
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        default_verbosity=False
+    )
+
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting central subtopics",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
         leave=False,
         unit="cluster",
         position=1,
@@ -103,7 +112,8 @@ def submodular_subtopics(
     embedding_model: Optional[SentenceTransformer] = None,
     n_subtopics: int = 64,
     submodular_function: str = "facility_location",
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -126,11 +136,18 @@ def submodular_subtopics(
             f"selection_function={submodular_function} is not a valid selection. Please choose one of (facility_location,saturated_coverage)"
         )
 
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        default_verbosity=False
+    )
+
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc=f"Selecting {submodular_function} subtopics",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
         leave=False,
         unit="cluster",
         position=1,
@@ -172,7 +189,8 @@ def central_subtopics_from_all_subtopics(
     embedding_model: Optional[SentenceTransformer] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -181,11 +199,18 @@ def central_subtopics_from_all_subtopics(
             )
         subtopic_vectors = subtopic_embeddings(subtopics, embedding_model)
 
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        default_verbosity=False
+    )
+
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting subtopics by topic name",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
     ):
         subtopics_in_cluster = np.unique(
             subtopic_label_vector[cluster_label_vector == cluster_num]
@@ -229,7 +254,8 @@ def information_weighted_subtopics(
     n_dictionary_vectors: int = 512,
     coding_transform_alpha: float = 0.1,
     n_jobs=-1,
-    show_progress_bar: bool = False,
+    verbosity: bool = None,
+    show_progress_bar: bool = None,
 ) -> List[List[str]]:
     if subtopic_vectors is None:
         if embedding_model is None:
@@ -266,11 +292,18 @@ def information_weighted_subtopics(
     )
     scores = weighted_sparse_coding.sum(axis=1)
 
+    # Handle verbosity parameters
+    show_progress_bar_val, _ = handle_verbosity_params(
+        verbosity=verbosity,
+        show_progress_bar=show_progress_bar,
+        default_verbosity=False
+    )
+
     result = []
     for cluster_num in tqdm(
         range(meta_cluster_label_vector.max() + 1),
         desc="Selecting informative subtopics",
-        disable=not show_progress_bar,
+        disable=not show_progress_bar_val,
     ):
         candidate_subtopics = [
             subtopics[x] for x in np.where(meta_cluster_label_vector == cluster_num)[0]
