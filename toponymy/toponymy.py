@@ -129,7 +129,7 @@ class Toponymy:
         objects: List[Any],
         embedding_vectors: np.array,
         clusterable_vectors: np.array,
-        exemplar_method: str = "facility_location",
+        exemplar_method: str = "central",
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "facility_location",
     ):
@@ -146,11 +146,11 @@ class Toponymy:
             A numpy array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
             for density based clustering to be efficient (2-25).
         exemplar_method: str, Optional
-            The method to use for generating exemplars. Default is "facility_location". Other options are "saturated_coverage", "central", and "random".
+            The method to use for generating exemplars. Default is "central". Other options are "saturated_coverage", "central", and "random".
         keyphrase_method: str, Optional
             The method to use for generating keyphrases. Default is "information_weighted". Other options are "saturated_coverage", "facility_location", "graph_cut", "central" and "bm25".
         subtopic_method: str, Optional
-            The method to use for generating subtopics. Default is "central". Other options are "information_weighted".
+            The method to use for generating subtopics. Default is "facility_location". Other options are "information_weighted".
 
         Returns:
         --------
@@ -298,7 +298,7 @@ class Toponymy:
         clusterable_vectors: np.array,
         exemplar_method: str = "central",
         keyphrase_method: str = "information_weighted",
-        subtopic_method: str = "central",
+        subtopic_method: str = "facility_location",
     ) -> List[np.array]:
         """
         Fit the model with objects and return the topic names.
