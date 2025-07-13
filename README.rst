@@ -103,11 +103,11 @@ for the documents in the data set using the ``document_vectors``, ``document_map
 
 .. code-block:: python
 
-    openai_api_key = open("openai_key.txt").read().strip()
-    %env OPENAI_API_KEY=openai_api_key
-
     from toponymy import Toponymy
-    from openai import OpenAI
+    from toponymy.llm_wrappers import OpenAI
+
+    openai_api_key = open("openai_key.txt").read().strip()
+    llm = OpenAI('openai_api_key')
 
     topic_model = Toponymy(
         llm_wrapper=llm,
