@@ -61,9 +61,7 @@ We can visualize the documents using the 2-dimensional representations in ``docu
 .. code-block:: python
 
   import datamapplot
-  plot = datamapplot.create_plot(
-      document_map
-  )
+  plot = datamapplot.create_plot(document_map)
   display(plot)
 
 .. image:: doc/example_2D_plot.png
@@ -151,7 +149,7 @@ Let's examine the last two layers of topics.
 
 
 ``topics_per_document`` contains topic labels for each document, with one list for each level of resultion in our 
-cluster layers.  In our above case this will be a list of 5 layers each containing a list of 18,170 topic names.  
+cluster layers.  In our above case this will be a list of 5 layers each containing a list of topic labels for each of the 18,170 documents.  
 Documents that aren't contained within a cluster at a given layer are given the topic ``Unlabelled``.
 
 .. code-block:: python
@@ -183,17 +181,13 @@ Documents that aren't contained within a cluster at a given layer are given the 
             'Unlabelled', 'X Window System and Graphics Software',
             'Automotive Performance and Safety'], dtype=object)]
 
-At this point we recommend that you explore your data and topic names with an interactive visualization library.  
-Our `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library is particularly well suited to exploring 
-data maps along with layers of topic names.  It takes requires our ``document_map``, ``document_vectors`` and newly created ``topics_per_document``.
-
 -----------------------------------
 Interactive Topic Visualization
 -----------------------------------
 
-Once you’ve generated the topic names and document map, it's helpful to visualize how topics are distributed across your corpus. We recommend using the `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library for this purpose. It creates interactive, zoomable maps that allow you to explore clusters and topic labels in a spatial layout.
+Once you’ve generated the topic names and document map, it's helpful to visualize how topics are distributed across your corpus. We recommend using the `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library for this purpose. It creates interactive, zoomable maps that allow you to explore clusters and topic labels in a spatial layout. It is particularly well suited to exploring data maps along with layers of topic names. 
 
-Here is an example of using ``datamapplot`` to visualize your data:
+Here is an example of using ``datamapplot`` to visualize your data. We can pass in our ``document_map``, ``document_vectors`` and newly created ``topics_per_document`` as input:
 
 .. code-block:: shell
 
