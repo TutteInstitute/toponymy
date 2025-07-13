@@ -24,7 +24,7 @@ We welcome feedback, use cases and feature suggestions.
 Basic Installation
 ------------------
 
-You can install Toponymy using
+You can install Toponymy using:
 
 .. code-block:: bash
 
@@ -43,14 +43,9 @@ To install the latest version of Toponymy from source you can do so by cloning t
 Basic Usage
 -----------
 
-We will need documents, document vectors and a low dimensional representation of these document vector to construct
-a representation.  This can be very expensive without a GPU so we recommend storing and reloading these vectors as 
-needed. For ease of experimentation we have precomputed and stored such vectors for the `20-Newsgroups dataset <http://qwone.com/~jason/20Newsgroups/>`_  
-on hugging face.  Code to retrieve these vectors is below.
+As an example, we can use Toponymy to cluster documents in the `20-Newsgroups dataset <http://qwone.com/~jason/20Newsgroups/>`_ on hugging face and then assign topic names to these clusters. The 20 newsgroups dataset contains 18,170 documents distributed roughly evenly across 20 different newsgroups. You can compute vector representations of each document on your own (see `Vector Construction <https://github.com/TutteInstitute/toponymy?tab=readme-ov-file#vector-construction>`_ for instructions), but this can be very expensive without a GPU. We recommend downloading our precomputed vectors. Code to retrieve these vectors is below:
 
 .. code-block:: python
-
-    pip install pandas
 
     import numpy as np
     import pandas as pd
@@ -59,24 +54,26 @@ on hugging face.  Code to retrieve these vectors is below.
     document_vectors = np.stack(newsgroups_df["embedding"].values)
     document_map = np.stack(newsgroups_df["map"].values)
 
-Toponymy also requires an embedding model for determining which of the documents will be most relevant to each
-of our clusters.  This doesn't have to be the embedding model that our documents were embedded with but it 
-should be similar.
+After running the above code, ``document_vectors`` will contain 768-dimensional embeddings for each of the 18,170 documents in the dataset and ``document_map`` will contain 2-dimensional embeddings of these same documents.
+
+We can visualize the documents using the 2-dimensional representations in ``document_map``:
 
 .. code-block:: python
 
-    pip install sentence_transformers
+  import datamapplot
+  plot = datamapplot.create_plot(
+      document_map
+  )
+  display(plot)
 
-    from sentence_transformers import SentenceTransformer
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+.. image:: doc/example_2D_plot.png
+  :width: 600
+  :align: center
+  :alt: example_2D_plot
 
-
-Once the low-dimensional representation is available (``document_map`` in this case), we can do the topic naming. 
-Toponymy will make use of a clusterer (such as ``ToponymyClusterer``) to create a balanced hierarchical layered 
-clustering of our documents. It will then use a variety of sampling and summarization techniques to construct prompts 
-describing each cluster to pass to a large language model (LLM).  If you would like to experiment with testing 
-various cluster parameters in order construct cluster layers appropriate to your data feel free to cluster 
-your data ahead of time via:
+Once we have a low-dimensional representation, we can do the topic naming. 
+Toponymy will make use of a clusterer to create a balanced hierarchical layered 
+clustering of our documents. (In this case, we use ``ToponymyClusterer`` on the 2-dimensional vectors in ``document_map``.)
 
 .. code-block:: python
 
@@ -86,23 +83,31 @@ your data ahead of time via:
     for i, layer in enumerate(clusterer.cluster_layers_):
         print(f'{len(np.unique(layer.cluster_labels))-1} clusters in layer {i}')
 
-    428 clusters in layer 0
-    136 clusters in layer 1
-    42 clusters in layer 2
-    14 clusters in layer 3
-    5 clusters in layer 4
+Toponymy will then use a variety of sampling and summarization techniques to construct prompts 
+describing each cluster to pass to a large language model (LLM).  
 
-Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
-Huggingface and LlamaCpp. Here we show an example using OpenAI. The following code will generate a topic naming
-for the documents in the data set using an ``embedding_model``, ``document_vectors`` and ``document_map`` created above.
+Note that Toponymy also requires an embedding model for determining which of the documents will be most relevant to each
+of our clusters.  This doesn't have to be the embedding model that our documents were embedded with but it 
+should be similar.
 
 .. code-block:: python
 
-    from toponymy import Toponymy, KeyphraseBuilder
-    from toponymy.llm_wrappers import OpenAI
+    from sentence_transformers import SentenceTransformer
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
+Huggingface and LlamaCpp. Here we show an example using OpenAI. The following code will generate a topic naming
+for the documents in the data set using the ``document_vectors``, ``document_map``, and ``embedding_model`` created above.
+
+(You will need to get a free `OpenAI key <https://platform.openai.com/api-keys>`_ and store it in the file ``openai_key.txt`` before running this code.)
+
+.. code-block:: python
 
     openai_api_key = open("openai_key.txt").read().strip()
-    llm = OpenAI('openai_api_key')
+    %env OPENAI_API_KEY=openai_api_key
+
+    from toponymy import Toponymy
+    from openai import OpenAI
 
     topic_model = Toponymy(
         llm_wrapper=llm,
@@ -110,8 +115,7 @@ for the documents in the data set using an ``embedding_model``, ``document_vecto
         clusterer=clusterer,
         object_description="newsgroup posts",
         corpus_description="20-newsgroups dataset",
-        exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"],
-        verbose=True,  # Show progress bars and informative messages
+        exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"]
     )
     topic_model.fit(text, document_vectors, document_map)
 
