@@ -12,3 +12,4 @@ tqdm
 tenacity
 aiohttp
 apricot-select
+pydantic
