@@ -115,6 +115,11 @@ for the documents in the data set using the ``document_vectors``, ``document_map
         corpus_description="20-newsgroups dataset",
         exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"]
     )
+    
+    # Note on data types for fit() method:
+    # - text: Python list of strings (not numpy array)
+    # - document_vectors: numpy array of shape (n_documents, embedding_dimension)
+    # - document_map: numpy array of shape (n_documents, clustering_dimension)
     topic_model.fit(text, document_vectors, document_map)
 
     topic_names = topic_model.topic_names_
