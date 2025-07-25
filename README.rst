@@ -113,6 +113,11 @@ for the documents in the data set using an ``embedding_model``, ``document_vecto
         exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"],
         verbose=True,  # Show progress bars and informative messages
     )
+    
+    # Note on data types for fit() method:
+    # - text: Python list of strings (not numpy array)
+    # - document_vectors: numpy array of shape (n_documents, embedding_dimension)
+    # - document_map: numpy array of shape (n_documents, clustering_dimension)
     topic_model.fit(text, document_vectors, document_map)
 
     topic_names = topic_model.topic_names_
