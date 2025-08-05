@@ -7,7 +7,13 @@ import pandas as pd
 from typing import Optional, List, Dict, Union
 
 
-def create_cluster_audit_df(toponymy_instance, layer_index: int = 0) -> pd.DataFrame:
+def create_cluster_audit_df(
+    toponymy_instance,
+    layer_index: int = 0,
+    include_all_docs: bool = False,
+    max_docs_per_cluster: Optional[int] = None,
+    original_texts: Optional[List[str]] = None,
+) -> pd.DataFrame:
     """
     Create a DataFrame comparing intermediate results with LLM outputs for a specific layer.
 
@@ -15,10 +21,14 @@ def create_cluster_audit_df(toponymy_instance, layer_index: int = 0) -> pd.DataF
     - Cluster metadata (id, size)
     - Intermediate results (keyphrases, exemplars, subtopics)
     - LLM results (final topic name)
+    - Optional: document indices and texts for full traceability
 
     Args:
         toponymy_instance: Fitted Toponymy model
         layer_index: Which layer to audit (default: 0)
+        include_all_docs: If True, includes document texts for each cluster (default: False)
+        max_docs_per_cluster: Maximum number of documents to show per cluster (default: None)
+        original_texts: Original document texts for traceability (required if include_all_docs=True)
 
     Returns:
         pd.DataFrame with audit information
@@ -53,36 +63,57 @@ def create_cluster_audit_df(toponymy_instance, layer_index: int = 0) -> pd.DataF
         if hasattr(layer, "prompts") and cluster_idx < len(layer.prompts):
             prompt = str(layer.prompts[cluster_idx])
 
-        audit_data.append(
-            {
-                # Metadata
-                "layer": layer_index,
-                "cluster_id": cluster_idx,
-                "num_documents": num_docs,
-                # Intermediate results
-                "top_5_keyphrases": ", ".join(keyphrases[:5]),
-                "all_keyphrases": keyphrases,
-                "num_keyphrases": len(keyphrases),
-                "num_exemplars": len(exemplars),
-                "first_exemplar": exemplars[0][:300] + "..." if exemplars else "",
-                "subtopics_list": subtopics[:5],
-                "subtopics_text": ", ".join(subtopics[:5]),
-                # LLM input/output
-                "prompt_preview": prompt[:500] + "..." if len(prompt) > 500 else prompt,
-                "prompt_length": len(prompt),
-                "llm_topic_name": (
-                    layer.topic_names[cluster_idx]
-                    if cluster_idx < len(layer.topic_names)
-                    else ""
-                ),
-            }
-        )
+        # Get document indices for this cluster
+        document_indices = [
+            i for i, label in enumerate(layer.cluster_labels) if label == cluster_idx
+        ]
+
+        # Build the audit row data
+        row_data = {
+            # Metadata
+            "layer": layer_index,
+            "cluster_id": cluster_idx,
+            "num_documents": num_docs,
+            # Intermediate results
+            "top_5_keyphrases": ", ".join(keyphrases[:5]),
+            "all_keyphrases": keyphrases,
+            "num_keyphrases": len(keyphrases),
+            "num_exemplars": len(exemplars),
+            "first_exemplar": exemplars[0][:300] + "..." if exemplars else "",
+            "subtopics_list": subtopics[:5],
+            "subtopics_text": ", ".join(subtopics[:5]),
+            # LLM input/output
+            "prompt_preview": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+            "prompt_length": len(prompt),
+            "llm_topic_name": (
+                layer.topic_names[cluster_idx]
+                if cluster_idx < len(layer.topic_names)
+                else ""
+            ),
+            # Document traceability
+            "document_indices": document_indices,
+        }
+
+        # Add document texts if requested
+        if include_all_docs and original_texts:
+            doc_texts = [original_texts[i] for i in document_indices]
+            if max_docs_per_cluster and len(doc_texts) > max_docs_per_cluster:
+                row_data["document_sample"] = doc_texts[:max_docs_per_cluster]
+                row_data["total_docs_in_cluster"] = len(doc_texts)
+            else:
+                row_data["document_texts"] = doc_texts
+
+        audit_data.append(row_data)
 
     return pd.DataFrame(audit_data)
 
 
 def create_audit_df(
-    toponymy_instance, layer_index: Optional[int] = None
+    toponymy_instance,
+    layer_index: Optional[int] = None,
+    include_all_docs: bool = False,
+    max_docs_per_cluster: Optional[int] = None,
+    original_texts: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """
     Create audit DataFrame for one or all layers.
@@ -90,6 +121,9 @@ def create_audit_df(
     Args:
         toponymy_instance: Fitted Toponymy model
         layer_index: Specific layer to audit. If None, audits all layers.
+        include_all_docs: If True, includes document texts for each cluster (default: False)
+        max_docs_per_cluster: Maximum number of documents to show per cluster (default: None)
+        original_texts: Original document texts for traceability (required if include_all_docs=True)
 
     Returns:
         pd.DataFrame with audit information
@@ -103,14 +137,31 @@ def create_audit_df(
            cluster_id  num_documents          llm_topic_name
         0           0            245    NHL Hockey Discussion
         1           1            189  Windows Software Support
+        
+        >>> # Include all documents
+        >>> audit_df = create_audit_df(topic_model, include_all_docs=True, original_texts=documents)
+        >>> print(audit_df['document_indices'][0])  # List of document indices for cluster 0
+        [2, 15, 27, 45, ...]
     """
     if layer_index is not None:
-        return create_cluster_audit_df(toponymy_instance, layer_index)
+        return create_cluster_audit_df(
+            toponymy_instance,
+            layer_index,
+            include_all_docs=include_all_docs,
+            max_docs_per_cluster=max_docs_per_cluster,
+            original_texts=original_texts,
+        )
 
     # Audit all layers
     all_layers = []
     for layer_idx in range(len(toponymy_instance.cluster_layers_)):
-        layer_df = create_cluster_audit_df(toponymy_instance, layer_idx)
+        layer_df = create_cluster_audit_df(
+            toponymy_instance,
+            layer_idx,
+            include_all_docs=include_all_docs,
+            max_docs_per_cluster=max_docs_per_cluster,
+            original_texts=original_texts,
+        )
         all_layers.append(layer_df)
 
     return pd.concat(all_layers, ignore_index=True)
@@ -310,6 +361,60 @@ def export_audit_excel(toponymy_instance, filename: str = "toponymy_audit.xlsx")
         prompt_df.to_excel(writer, sheet_name="Prompt Analysis", index=False)
 
     print(f"Audit data exported to {filename}")
+
+
+def get_cluster_documents(
+    toponymy_instance,
+    layer_index: int,
+    cluster_id: int,
+    original_texts: List[str],
+    max_docs: Optional[int] = None,
+) -> Dict[str, Union[List[int], List[str]]]:
+    """
+    Get all documents belonging to a specific cluster.
+
+    Args:
+        toponymy_instance: Fitted Toponymy model
+        layer_index: Layer containing the cluster
+        cluster_id: ID of the cluster
+        original_texts: Original document texts
+        max_docs: Maximum number of documents to return (default: None returns all)
+
+    Returns:
+        Dictionary containing:
+        - 'indices': List of document indices in the cluster
+        - 'texts': List of document texts
+        - 'total_count': Total number of documents in cluster
+
+    Example:
+        >>> cluster_docs = get_cluster_documents(model, 0, 5, documents)
+        >>> print(f"Cluster 5 has {cluster_docs['total_count']} documents")
+        >>> for idx, text in zip(cluster_docs['indices'][:3], cluster_docs['texts'][:3]):
+        ...     print(f"Doc {idx}: {text[:50]}...")
+    """
+    layer = toponymy_instance.cluster_layers_[layer_index]
+    
+    # Get all document indices for this cluster
+    doc_indices = [
+        i for i, label in enumerate(layer.cluster_labels) if label == cluster_id
+    ]
+    
+    # Apply max_docs limit if specified
+    if max_docs and len(doc_indices) > max_docs:
+        limited_indices = doc_indices[:max_docs]
+        doc_texts = [original_texts[i] for i in limited_indices]
+        return {
+            'indices': limited_indices,
+            'texts': doc_texts,
+            'total_count': len(doc_indices)
+        }
+    
+    doc_texts = [original_texts[i] for i in doc_indices]
+    return {
+        'indices': doc_indices,
+        'texts': doc_texts,
+        'total_count': len(doc_indices)
+    }
 
 
 def get_cluster_details(toponymy_instance, layer_index: int, cluster_id: int) -> Dict:
