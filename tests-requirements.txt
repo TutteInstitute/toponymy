@@ -15,3 +15,8 @@ transformers
 pytest-asyncio
 bm25s
 evoc
+# New LLM wrapper dependencies
+ollama
+google-generativeai
+together
+replicate
