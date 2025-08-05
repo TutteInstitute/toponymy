@@ -339,25 +339,33 @@ class LLMWrapperImportError(ImportError):
 
 class FailedImportLLMWrapper(LLMWrapper):
 
+    @classmethod
+    def _import_error_message(cls):
+        return f"Failed to import LLMWrapper for {cls.__name__}. This is likely because the required package is not installed. Please install the required package and try again."
+
     def __init__(self, *args, **kwds):
-        raise LLMWrapperImportError(f"Failed to import LLMWrapper for {self.__class__.__name__}. This is likely because the required package is not installed. Please install the required package and try again.")
+        raise LLMWrapperImportError(self._import_error_message())
 
     def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-        raise LLMWrapperImportError(f"Failed to import LLMWrapper for {self.__class__.__name__}. This is likely because the required package is not installed. Please install the required package and try again.")
+        raise LLMWrapperImportError(self._import_error_message())
 
     def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
-        raise LLMWrapperImportError(f"Failed to import LLMWrapper for {self.__class__.__name__}. This is likely because the required package is not installed. Please install the required package and try again.")
+        raise LLMWrapperImportError(self._import_error_message())
     
 
 class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
+    @classmethod
+    def _import_error_message(cls):
+        return f"Failed to import AsyncLLMWrapper for {cls.__name__}. This is likely because the required package is not installed. Please install the required package and try again."
+
     def __init__(self, *args, **kwds):
-        raise LLMWrapperImportError(f"Failed to import AsyncLLMWrapper for {self.__class__.__name__}. This is likely because the required package is not installed. Please install the required package and try again.")
+        raise LLMWrapperImportError(self._import_error_message())
     
     async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
-        raise LLMWrapperImportError(f"Failed to import AsyncLLMWrapper for {self.__class__.__name__}. This is likely because the required package is not installed. Please install the required package and try again.")
+        raise LLMWrapperImportError(self._import_error_message())
 
     async def _call_llm_with_system_prompt_batch(self, system_prompt: str, user_prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
-        raise LLMWrapperImportError(f"Failed to import AsyncLLMWrapper for {self.__class__.__name__}. This is likely because the required package is not installed. Please install the required package and try again.")
+        raise LLMWrapperImportError(self._import_error_message())
 
 try:
     import llama_cpp
