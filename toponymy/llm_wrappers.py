@@ -334,7 +334,7 @@ class AsyncLLMWrapper(ABC):
         return True
 
 class LLMWrapperImportError(ImportError):
-    """A custom exception for invalid LLM input. In these cases we do not want to retry, as the input will not change."""
+    """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
     pass
 
 class FailedImportLLMWrapper(LLMWrapper):
