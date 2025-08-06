@@ -333,6 +333,40 @@ class AsyncLLMWrapper(ABC):
         """
         return True
 
+class LLMWrapperImportError(ImportError):
+    """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
+    pass
+
+class FailedImportLLMWrapper(LLMWrapper):
+
+    @classmethod
+    def _import_error_message(cls):
+        return f"Failed to import LLMWrapper for {cls.__name__}. This is likely because the required package is not installed. Please install the required package and try again."
+
+    def __init__(self, *args, **kwds):
+        raise LLMWrapperImportError(self._import_error_message())
+
+    def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        raise LLMWrapperImportError(self._import_error_message())
+
+    def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+        raise LLMWrapperImportError(self._import_error_message())
+    
+
+class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
+    @classmethod
+    def _import_error_message(cls):
+        return f"Failed to import AsyncLLMWrapper for {cls.__name__}. This is likely because the required package is not installed. Please install the required package and try again."
+
+    def __init__(self, *args, **kwds):
+        raise LLMWrapperImportError(self._import_error_message())
+    
+    async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+        raise LLMWrapperImportError(self._import_error_message())
+
+    async def _call_llm_with_system_prompt_batch(self, system_prompt: str, user_prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+        raise LLMWrapperImportError(self._import_error_message())
+
 try:
     import llama_cpp
 
@@ -401,7 +435,10 @@ try:
             return False
 
 except ImportError:
-    pass
+    class LlamaCpp(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
 try:
     import huggingface_hub
@@ -514,7 +551,15 @@ try:
                 responses.append(response[0]["generated_text"])
             return responses
 except:
-    pass
+    class HuggingFace(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncHuggingFace(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
 try:
     import vllm
@@ -637,7 +682,15 @@ try:
             return [output.outputs[0].text for output in outputs]
 
 except ImportError:
-    pass
+    class VLLM(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncVLLM(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
 try:
     import cohere
@@ -869,7 +922,15 @@ try:
             await self.llm.close()
 
 except:
-    pass
+    class Cohere(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncCohere(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
 try:
     import anthropic
@@ -1283,7 +1344,20 @@ try:
             self.client.beta.messages.batches.cancel(batch_id)
 
 except:
-    pass
+    class Anthropic(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncAnthropic(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class BatchAnthropic(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
 try:
     import openai
@@ -1505,7 +1579,16 @@ try:
             await self.client.close()
 
 except:
-    pass
+
+    class OpenAI(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncOpenAI(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
 
 try:
@@ -1729,5 +1812,14 @@ try:
             await self.client.close()
 
 except ImportError:
-    pass
+    
+    class AzureAI(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+    
+    class AsyncAzureAI(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
 
