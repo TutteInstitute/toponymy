@@ -18,8 +18,8 @@ The following wrappers require the following libraries:
 
 - `openai`: For the OpenAI LLM wrapper.
 - `anthropic`: For the Anthropic LLM wrapper.
-- `google-generativeai`: For the Google Generative AI wrapper.
-- `azure-ai-inference`: For the Azure OpenAI wrapper.
+- `google-generativeai`: For the Google Gemini wrapper.
+- `azure-ai-inference`: For the Azure AI wrapper.
 - `cohere`: For the Cohere LLM wrapper.
 - `ollama`: For the Ollama LLM wrapper (You will also have to install ollama itself).
 - `llama-cpp-python`: For the Llama.cpp wrapper (this may require a more complex installation process depending on your system).
@@ -87,6 +87,23 @@ The VLLM wrapper provides high-performance inference for Hugging Face models usi
         max_model_len=4096  # Maximum sequence length
     )
 
+**Ollama**
+
+The Ollama wrapper provides access to locally-run models through the Ollama framework. Ollama makes it easy to run various open-source language models locally with a simple installation and management system.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import Ollama
+    
+    # Initialize with Ollama (requires Ollama to be running locally)
+    llm = Ollama(
+        model="llama3.2",  # Any model available in Ollama
+        host="http://localhost:11434",  # Default Ollama host
+        llm_specific_instructions="Generate clear topic names"
+    )
+
+**Note**: Requires Ollama to be installed and running locally. Supports a wide variety of models including Llama, Mistral, CodeLlama, and many others.
+
 API-Based Wrappers
 ~~~~~~~~~~~~~~~~~~
 
@@ -151,6 +168,21 @@ The AzureAI wrapper provides access to models through Azure AI services, support
         endpoint="https://your-endpoint.inference.ai.azure.com",
         model="your-deployed-model-name",
         llm_specific_instructions="Generate professional topic names"
+    )
+
+**GoogleGemini**
+
+The GoogleGemini wrapper provides access to Google's Gemini models through their API. Gemini models offer competitive performance with good cost efficiency.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import GoogleGemini
+    
+    # Initialize with Google Gemini API
+    llm = GoogleGemini(
+        api_key="your-google-api-key",  # Or set GOOGLE_API_KEY env var
+        model="gemini-1.5-flash",  # Fast and cost-effective
+        llm_specific_instructions="Generate concise, relevant topic names"
     )
 
 ---------------------
@@ -269,6 +301,34 @@ Enables concurrent processing with Azure AI services, supporting various deploye
         max_concurrent_requests=6
     )
 
+**AsyncOllama**
+
+Provides asynchronous access to Ollama models for concurrent local processing.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import AsyncOllama
+    
+    llm = AsyncOllama(
+        model="llama3.2",
+        host="http://localhost:11434",
+        max_concurrent_requests=5  # Limited by local hardware
+    )
+
+**AsyncGoogleGemini**
+
+Enables concurrent processing with Google's Gemini models, allowing efficient batch processing of topic naming requests.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import AsyncGoogleGemini
+    
+    llm = AsyncGoogleGemini(
+        api_key="your-google-api-key",
+        model="gemini-1.5-flash",
+        max_concurrent_requests=10  # Adjust based on rate limits
+    )
+
 --------------
 Batch Wrappers
 --------------
@@ -313,6 +373,53 @@ The BatchAnthropic wrapper uses Anthropic's Batch API, which provides significan
     # For very large batches, consider running this as a background task
     results = asyncio.run(batch_process_topics())
 
+**CohereBatch**
+
+The CohereBatch wrapper uses Cohere's Batch Processing API, offering significant cost savings (50% discount) in exchange for longer processing times. This wrapper is particularly useful for large-scale topic naming projects where cost efficiency is prioritized over immediate results.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import CohereBatch
+    import asyncio
+    
+    async def cohere_batch_process():
+        llm = CohereBatch(
+            api_key="your-cohere-api-key",
+            model="command-r-08-2024",
+            polling_interval=60,  # Check status every minute
+            timeout=7200  # 2 hour timeout
+        )
+        
+        # Submit a large batch for processing
+        prompts = [...]  # List of hundreds or thousands of prompts
+        results = await llm.generate_topic_names(prompts)
+        
+        return results
+
+**BatchAzureAI**
+
+The BatchAzureAI wrapper leverages Azure AI's batch processing capabilities, providing cost-effective processing for large-scale topic naming tasks with enterprise-grade infrastructure and compliance features.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import BatchAzureAI
+    import asyncio
+    
+    async def azure_batch_process():
+        llm = BatchAzureAI(
+            api_key="your-azure-api-key",
+            endpoint="https://your-endpoint.inference.ai.azure.com",
+            model="your-deployed-model-name",
+            polling_interval=60,
+            timeout=7200
+        )
+        
+        # Process large batches with Azure infrastructure
+        prompts = [...]  # Large list of prompts
+        results = await llm.generate_topic_names(prompts)
+        
+        return results
+
 **When to Use Batch Wrappers:**
 
 - Processing large datasets (1000+ topics) where cost is a primary concern
@@ -335,13 +442,13 @@ Selecting the appropriate wrapper depends on understanding your specific require
 
 For users just getting started with topic modeling or working with smaller datasets, the decision process is relatively straightforward. Basic synchronous wrappers provide the simplest development experience and are easier to debug when things go wrong. If you're working with fewer than 100 topics or doing exploratory analysis where you need to iterate quickly on prompts and settings, the sequential processing approach of basic wrappers is often preferable to the additional complexity of async implementations.
 
-Privacy considerations play an increasingly important role in wrapper selection, particularly for organizations handling sensitive data or operating in regulated industries. Local model wrappers like LlamaCpp, HuggingFace, and VLLM ensure that your data never leaves your infrastructure, providing complete control over data processing and compliance. However, this privacy comes with the trade-off of requiring suitable hardware resources and the technical expertise to manage model deployment and maintenance.
+Privacy considerations play an increasingly important role in wrapper selection, particularly for organizations handling sensitive data or operating in regulated industries. Local model wrappers like LlamaCpp, HuggingFace, VLLM, and Ollama ensure that your data never leaves your infrastructure, providing complete control over data processing and compliance. However, this privacy comes with the trade-off of requiring suitable hardware resources and the technical expertise to manage model deployment and maintenance.
 
 For production environments and larger-scale deployments, the choice becomes more nuanced. High throughput requirements typically favor asynchronous wrappers, which can process multiple topics concurrently and make much more efficient use of API quotas and network resources. Real-time applications benefit from async wrappers with carefully tuned concurrency limits that balance speed with API rate limit compliance. Enterprise environments often gravitate toward solutions like AzureAI that integrate well with existing infrastructure and provide the compliance and security features required for corporate deployments.
 
-Understanding the fundamental differences between local and API-based models is crucial for making informed decisions about your topic modeling infrastructure. Local models, accessed through wrappers like LlamaCpp, HuggingFace, and VLLM, eliminate ongoing API costs entirely and provide complete data privacy since all processing happens on your own hardware. This approach is particularly attractive for organizations with strict data governance requirements or projects with long-term, high-volume processing needs where API costs would accumulate significantly over time. However, local deployment requires substantial hardware investments, particularly GPU resources for reasonable performance, along with the technical expertise to manage model deployment, updates, and maintenance.
+Understanding the fundamental differences between local and API-based models is crucial for making informed decisions about your topic modeling infrastructure. Local models, accessed through wrappers like LlamaCpp, HuggingFace, VLLM, and Ollama, eliminate ongoing API costs entirely and provide complete data privacy since all processing happens on your own hardware. This approach is particularly attractive for organizations with strict data governance requirements or projects with long-term, high-volume processing needs where API costs would accumulate significantly over time. However, local deployment requires substantial hardware investments, particularly GPU resources for reasonable performance, along with the technical expertise to manage model deployment, updates, and maintenance.
 
-API-based models represent the opposite trade-off, offering a pay-per-use model that eliminates hardware requirements and provides access to cutting-edge models without the need for local infrastructure management. Services like OpenAI, Anthropic, and Cohere handle all the complexities of model hosting, scaling, and maintenance, allowing you to focus on your core application logic. The downside is the ongoing cost per request and the requirement for internet connectivity, along with the need to trust third-party services with your data processing.
+API-based models represent the opposite trade-off, offering a pay-per-use model that eliminates hardware requirements and provides access to cutting-edge models without the need for local infrastructure management. Services like OpenAI, Anthropic, Cohere, and Google Gemini handle all the complexities of model hosting, scaling, and maintenance, allowing you to focus on your core application logic. The downside is the ongoing cost per request and the requirement for internet connectivity, along with the need to trust third-party services with your data processing.
 
 The choice between local and API models often comes down to volume and usage patterns. For occasional use, small projects, or experimentation, API models typically provide better value and lower barrier to entry. For high-volume, production deployments, or scenarios with strict privacy requirements, the upfront investment in local model infrastructure often pays dividends in the long term through eliminated API costs and enhanced data control.
 
@@ -364,7 +471,7 @@ Topic naming is generally a simpler task than complex reasoning or code generati
     llm = OpenAI(model="gpt-4o-mini")  # ~$0.15/1M input tokens
     
     # Alternative: Slightly better quality, higher cost
-    llm = OpenAI(model="gpt-4")       # ~$2.50/1M input tokens
+    llm = OpenAI(model="gpt-4o")       # ~$2.50/1M input tokens
     
     # Not recommended for topic naming: Expensive with minimal benefit
     llm = OpenAI(model="o1-preview")   # ~$15/1M input tokens
@@ -383,6 +490,27 @@ Topic naming is generally a simpler task than complex reasoning or code generati
     # Not recommended for topic naming: Expensive with minimal benefit
     llm = Anthropic(model="claude-3-opus-20240229")     # ~$15/1M input tokens
 
+For local models, smaller instruction-tuned models typically work well for topic naming:
+
+.. code-block:: python
+
+    # Recommended local models (in order of preference)
+    
+    # Ollama models - easy installation and management
+    llm = Ollama(model="llama3.2")        # Latest Llama model via Ollama
+    llm = Ollama(model="mistral")         # Mistral model via Ollama
+    llm = Ollama(model="qwen2.5")         # Qwen model via Ollama
+    
+    # 7B models via HuggingFace/VLLM - good balance of quality and resource requirements
+    llm = HuggingFace(model="mistralai/Mistral-7B-Instruct-v0.3")
+    llm = VLLM(model="mistralai/Mistral-7B-Instruct-v0.3")
+    
+    # 13B models - better quality, higher resource requirements
+    llm = HuggingFace(model="mistralai/Mixtral-8x7B-Instruct-v0.1")
+    
+    # Smaller models - for resource-constrained environments
+    llm = Ollama(model="llama3.2:1b")     # 1B parameter model via Ollama
+
 **Cohere Models:**
 
 .. code-block:: python
@@ -393,23 +521,15 @@ Topic naming is generally a simpler task than complex reasoning or code generati
     # Alternative: Slightly better performance
     llm = Cohere(model="command-r-plus-08-2024") # ~$2.50/1M input tokens
 
-**Local Model Recommendations:**
-
-For local models, smaller instruction-tuned models typically work well for topic naming:
+**Google Gemini Models:**
 
 .. code-block:: python
 
-    # Recommended local models (in order of preference)
+    # Recommended: Fast and cost-effective for topic naming
+    llm = GoogleGemini(model="gemini-1.5-flash")  # ~$0.075/1M input tokens
     
-    # 7B models - good balance of quality and resource requirements
-    llm = HuggingFace(model="mistralai/Mistral-7B-Instruct-v0.3")
-    llm = VLLM(model="microsoft/DialoGPT-medium")
-    
-    # 13B models - better quality, higher resource requirements
-    llm = HuggingFace(model="mistralai/Mixtral-8x7B-Instruct-v0.1")
-    
-    # Smaller models - for resource-constrained environments
-    llm = HuggingFace(model="microsoft/DialoGPT-small")
+    # Alternative: Better performance for complex tasks
+    llm = GoogleGemini(model="gemini-1.5-pro")    # ~$1.25/1M input tokens
 
 Topic naming is fundamentally different from many other natural language processing tasks that typically drive the development of large language models. While tasks like creative writing, complex reasoning, code generation, or multi-step problem solving benefit significantly from the most advanced and expensive models, topic naming has several characteristics that make it well-suited to simpler, more cost-effective models.
 
@@ -429,18 +549,26 @@ For processing 1,000 topics with typical prompt sizes (~500 tokens each):
      - Cost per 1K topics
      - Quality for topic naming
      - Recommendation
-   * - GPT-4o-mini
-     - ~$0.25
+   * - Gemini-1.5-Flash
+     - ~$0.19
      - Excellent
      - **Recommended**
-   * - Claude-3-Haiku
-     - ~$0.35
+   * - GPT-4o-mini
+     - ~$0.25
      - Excellent
      - **Recommended**
    * - Command-R
      - ~$0.25
      - Very Good
      - **Recommended**
+   * - Claude-3-Haiku
+     - ~$0.35
+     - Excellent
+     - **Recommended**
+   * - Gemini-1.5-Pro
+     - ~$2.50
+     - Excellent+
+     - Alternative
    * - GPT-4o
      - ~$4.00
      - Excellent+
@@ -455,3 +583,27 @@ For processing 1,000 topics with typical prompt sizes (~500 tokens each):
      - **Not recommended**
 
 The quality difference between recommended models and premium models for topic naming is typically negligible, while the cost difference can be 10-100x higher.
+
+**Example Workflow Selection:**
+
+.. code-block:: python
+
+    # For exploration and small datasets
+    from toponymy.llm_wrappers import Anthropic
+    llm = Anthropic(api_key="...", model="claude-3-haiku-20240307")
+    
+    # For production with moderate scale
+    from toponymy.llm_wrappers import AsyncOpenAI
+    llm = AsyncOpenAI(api_key="...", model="gpt-4o-mini", max_concurrent_requests=5)
+    
+    # For large-scale batch processing
+    from toponymy.llm_wrappers import BatchAnthropic
+    llm = BatchAnthropic(api_key="...", model="claude-3-haiku-20240307")
+    
+    # For privacy-sensitive local processing
+    from toponymy.llm_wrappers import Ollama
+    llm = Ollama(model="llama3.2")
+    
+    # For cost-conscious processing with good performance
+    from toponymy.llm_wrappers import GoogleGemini
+    llm = GoogleGemini(api_key="...", model="gemini-1.5-flash")
