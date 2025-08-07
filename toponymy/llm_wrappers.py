@@ -722,8 +722,7 @@ try:
             This can be useful when using Cohere's private cloud or when you need to customize the HTTP client settings.
 
         llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
+            Additional instructions specific to the LLM, appended to the prompt.
 
         Attributes:
         -----------
@@ -917,9 +916,230 @@ try:
             ]
             return await asyncio.gather(*tasks)
 
-        async def close(self):
-            """Close the client connection."""
-            await self.llm.close()
+    class CohereBatch(FailedImportAsyncLLMWrapper):
+        """
+        Provides access to Cohere's Batch Processing API with asynchronous support.
+        This allows for processing large batches of prompts over an extended period.
+        For more information on Cohere's Batch Processing, see https://docs.cohere.com/docs/batch-processing.
+
+        This wrapper conforms to the AsyncLLMWrapper interface, but note that it uses Cohere's batch API,
+        which processes jobs over hours rather than in real-time. The async methods will block until the batch job completes.
+
+        This class provides a different tradeoff between speed and cost compared to the AsyncCohere wrapper.
+        It is designed for scenarios where you have a large number of prompts to process and can afford to wait for the results.
+        Cohere's batch processing is more cost-effective (half the cost per token) for large volumes of data, but it does 
+        not provide immediate responses.
+
+        Parameters:
+        -----------
+        api_key: str
+            Your Cohere API key. You can set this as an environment variable CO_API_KEY or pass it directly
+
+        model: str, optional
+            The name of the Cohere model to use. Default is "command-r-08-2024". You can use any model available
+            in the Cohere API, but this is a good balance of performance and cost.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+            model-specific instructions or context that may help improve the quality of the generated text.
+
+        polling_interval: int, optional
+            The interval (in seconds) to poll the batch job status. Default is 60 seconds. This controls how often
+            the wrapper checks the status of the batch job. A lower value will check more frequently, but may increase API usage.
+
+        timeout: int, optional
+            The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
+            the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
+            if the batch job takes too long to process. You can adjust this based on your expected processing time.
+
+        Attributes:
+        -----------
+        client: cohere.ClientV2
+            The Cohere client instance for batch processing.
+
+        model: str
+            The name of the Cohere model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Cohere, this is always True.
+        
+        """
+        
+        def __init__(self, api_key: str, model: str = "command-r-08-2024", 
+                     llm_specific_instructions=None, polling_interval: int = 60, 
+                     timeout: int = 7200):
+            self.client = cohere.ClientV2(api_key=api_key)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.polling_interval = polling_interval
+            self.timeout = timeout
+
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            """
+            Submit a batch job and wait for completion.
+            This is a blocking operation that could take hours.
+            """
+            # Create batch requests
+            requests = []
+            for i, prompt in enumerate(prompts):
+                requests.append({
+                    "custom_id": str(i),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt + self.extra_prompting}],
+                        "temperature": temperature,
+                    }
+                })
+            
+            # Submit batch
+            batch = self.client.beta.messages.batches.create(requests=requests)
+            batch_id = batch.id
+            
+            # Wait for completion (with async sleep)
+            if await self._wait_for_completion_async(batch_id):
+                return await self._retrieve_batch_results(batch_id)
+            else:
+                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
+
+        async def _call_llm_with_system_prompt_batch(
+            self, 
+            system_prompts: List[str], 
+            user_prompts: List[str], 
+            temperature: float, 
+            max_tokens: int
+        ) -> List[str]:
+            """
+            Submit a batch job with system prompts and wait for completion.
+            """
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError("Number of system prompts must match number of user prompts")
+            
+            # Create batch requests
+            requests = []
+            for i, (sys_prompt, user_prompt) in enumerate(zip(system_prompts, user_prompts)):
+                requests.append({
+                    "custom_id": str(i),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": [
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": user_prompt + self.extra_prompting}
+                        ],
+                        "temperature": temperature,
+                    }
+                })
+            
+            # Submit batch
+            batch = self.client.beta.messages.batches.create(requests=requests)
+            batch_id = batch.id
+            
+            # Wait for completion
+            if await self._wait_for_completion_async(batch_id):
+                return await self._retrieve_batch_results(batch_id)
+            else:
+                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
+
+        async def _wait_for_completion_async(self, batch_id: str) -> bool:
+            """
+            Wait for a batch job to complete, using async sleep.
+            Returns True if completed successfully, False if failed or timed out.
+            """
+            start_time = time.time()
+            
+            while time.time() - start_time < self.timeout:
+                batch = self.client.beta.messages.batches.retrieve(batch_id)
+                
+                if batch.processing_status == "ended":
+                    return True
+                elif batch.processing_status in ["canceling", "canceled", "expired"]:
+                    warn(f"Batch job {batch_id} ended with status: {batch.processing_status}")
+                    return False
+                
+                # Use async sleep to not block the event loop
+                await asyncio.sleep(self.polling_interval)
+            
+            warn(f"Batch job {batch_id} timed out after {self.timeout} seconds")
+            return False
+
+        async def _retrieve_batch_results(self, batch_id: str) -> List[str]:
+            """
+            Retrieve raw text results from a completed batch job.
+            """
+            # Run the synchronous API call in a thread pool to not block the event loop
+            loop = asyncio.get_event_loop()
+            results_page = await loop.run_in_executor(
+                None, 
+                self.client.beta.messages.batches.results, 
+                batch_id
+            )
+            
+            # Sort by custom_id to maintain order
+            sorted_results = sorted(results_page.results, key=lambda x: int(x.custom_id))
+            
+            responses = []
+            for result in sorted_results:
+                if result.result.type == "succeeded":
+                    responses.append(result.result.message.content[0].text)
+                else:
+                    warn(f"Request {result.custom_id} failed: {result.result.error}")
+                    responses.append("")  # Empty string for failed requests
+            
+            return responses
+
+        # Additional methods for non-blocking usage
+        def submit_batch(
+            self, 
+            prompts: List[Union[str, Dict[str, str]]], 
+            temperature: float, 
+            max_tokens: int
+        ) -> str:
+            """
+            Submit a batch job without waiting. Returns batch ID.
+            This is for users who want to manage batch jobs manually.
+            """
+            requests = []
+            
+            for i, prompt in enumerate(prompts):
+                if isinstance(prompt, str):
+                    messages = [{"role": "user", "content": prompt + self.extra_prompting}]
+                elif isinstance(prompt, dict):
+                    messages = [
+                        {"role": "system", "content": prompt["system"]},
+                        {"role": "user", "content": prompt["user"] + self.extra_prompting}
+                    ]
+                else:
+                    raise InvalidLLMInputError(f"Prompt must be string or dict")
+                
+                requests.append({
+                    "custom_id": str(i),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": messages,
+                        "temperature": temperature,
+                    }
+                })
+            
+            batch = self.client.beta.messages.batches.create(requests=requests)
+            return batch.id
+
+        def get_batch_status(self, batch_id: str) -> str:
+            """Check the status of a batch job."""
+            batch = self.client.beta.messages.batches.retrieve(batch_id)
+            return batch.processing_status
+
+        async def retrieve_batch_text_results(self, batch_id: str) -> List[str]:
+            """Retrieve raw text results from a completed batch."""
+            return await self._retrieve_batch_results(batch_id)
+
+        def cancel_batch(self, batch_id: str):
+            """Cancel a running batch job."""
+            self.client.beta.messages.batches.cancel(batch_id)
 
 except:
     class Cohere(FailedImportLLMWrapper):
@@ -1360,6 +1580,83 @@ except:
             super().__init__(*args, **kwds)
 
 try:
+    import together
+
+    class Together(LLMWrapper):
+        """
+        Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
+        For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
+        
+        Parameters:
+        -----------
+        api_key: str
+            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
+            
+        model: str, optional
+            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf". 
+            Available models include various Llama, Mixtral, and other open-source models.
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+        
+        Attributes:
+        -----------
+        client: together.Together
+            The Together client instance.
+            
+        model: str
+            The name of the Together model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Together, this is always True.
+        """
+        
+        def __init__(self, api_key: str, model: str = "meta-llama/Llama-3-8b-chat-hf", llm_specific_instructions=None):
+            api_key = api_key or os.getenv("TOGETHER_API_KEY")
+            if not api_key:
+                raise ValueError("Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor.")
+            
+            self.client = together.Together(api_key=api_key)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+            
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+
+    # ... rest of Together classes and OpenAI imports would go here ...
+
+except ImportError:
+    
+    class Together(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+    
+    class AsyncTogether(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+try:
     import openai
 
     class OpenAI(LLMWrapper):
@@ -1592,6 +1889,265 @@ except:
 
 
 try:
+    import together
+
+    class Together(LLMWrapper):
+        """
+        Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
+        For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
+        
+        Parameters:
+        -----------
+        api_key: str
+            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
+            
+        model: str, optional
+            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf". 
+            Available models include various Llama, Mixtral, and other open-source models.
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+        
+        Attributes:
+        -----------
+        client: together.Together
+            The Together client instance.
+            
+        model: str
+            The name of the Together model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Together, this is always True.
+        """
+        
+        def __init__(self, api_key: str, model: str = "meta-llama/Llama-3-8b-chat-hf", llm_specific_instructions=None):
+            api_key = api_key or os.getenv("TOGETHER_API_KEY")
+            if not api_key:
+                raise ValueError("Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor.")
+            
+            self.client = together.Together(api_key=api_key)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+            
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content
+
+    class AsyncTogether(AsyncLLMWrapper):
+        """
+        Provides access to Together AI's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+        Together AI provides access to various open-source models. For more information on Together AI, see https://together.ai/. 
+        You will need a Together API key to use this wrapper.
+        
+        Parameters:
+        -----------
+        api_key: str
+            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
+            
+        model: str, optional
+            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf". 
+            Available models include various Llama, Mixtral, and other open-source models.
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the Together API. Default is 10.
+        
+        Attributes:
+        -----------
+        client: together.AsyncTogether
+            The Together asynchronous client instance.
+            
+        model: str
+            The name of the Together model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Together, this is always True.
+        """
+        
+        def __init__(self, api_key: str, model: str = "meta-llama/Llama-3-8b-chat-hf", 
+                     llm_specific_instructions=None, max_concurrent_requests: int = 10):
+            api_key = api_key or os.getenv("TOGETHER_API_KEY")
+            if not api_key:
+                raise ValueError("Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor.")
+            
+            self.client = together.AsyncTogether(api_key=api_key)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+            
+        async def _call_single_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            """Call the LLM for a single prompt."""
+            try:
+                async with self.semaphore:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    return response.choices[0].message.content
+            except Exception as e:
+                warn(f"Together API call failed: {str(e)[:100]}...")
+                return ""
+                
+        async def _call_single_llm_with_system(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            """Call the LLM for a single prompt with system prompt."""
+            try:
+                async with self.semaphore:
+                    response = await self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt + self.extra_prompting}
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    return response.choices[0].message.content
+            except Exception as e:
+                warn(f"Together API call failed: {str(e)[:100]}...")
+                return ""
+                
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            """Process a batch of prompts concurrently."""
+            tasks = [
+                self._call_single_llm(prompt, temperature, max_tokens)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def _call_llm_with_system_prompt_batch(
+            self, 
+            system_prompts: List[str], 
+            user_prompts: List[str], 
+            temperature: float, 
+            max_tokens: int
+        ) -> List[str]:
+            """Process a batch of prompts with system prompts concurrently."""
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError("Number of system prompts must match number of user prompts")
+            
+            tasks = [
+                self._call_single_llm_with_system(sys_prompt, user_prompt, temperature, max_tokens)
+                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def close(self):
+            """Close the client connection."""
+            await self.client.close()
+
+except ImportError:
+    
+    class Together(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+    
+    class AsyncTogether(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+try:
+    import replicate
+
+    class Replicate(LLMWrapper):
+        """
+        Provides access to Replicate's LLMs with the Toponymy framework. Replicate provides access to various models including Llama, GPT-J, and others.
+        For more information on Replicate, see https://replicate.com/. You will need a Replicate API token to use this wrapper.
+        
+        Parameters:
+        -----------
+        api_token: str
+            Your Replicate API token. You can set this as an environment variable REPLICATE_API_TOKEN or pass it directly.
+            
+        model: str, optional
+            The name of the Replicate model to use. Default is "meta/llama-2-70b-chat". 
+            Models are specified in the format "owner/model:version" or "owner/model" for latest.
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+        
+        Attributes:
+        -----------
+        model: str
+            The name of the Replicate model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Replicate, this is always True.
+        """
+        
+        def __init__(self, api_token: str = None, model: str = "meta/llama-2-70b-chat", llm_specific_instructions=None):
+            api_token = api_token or os.getenv("REPLICATE_API_TOKEN")
+            if not api_token:
+                raise ValueError("Replicate API token is required. Set it as an environment variable REPLICATE_API_TOKEN or pass it directly to the constructor.")
+            
+            os.environ["REPLICATE_API_TOKEN"] = api_token
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            output = replicate.run(
+                self.model,
+                input={
+                    "prompt": prompt + self.extra_prompting,
+                    "temperature": temperature,
+                    "max_new_tokens": max_tokens,
+                }
+            )
+            return "".join(output)
+            
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            # Replicate models typically handle system prompts differently
+            # We combine them in a chat format
+            combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}\n\nAssistant:"
+            
+            output = replicate.run(
+                self.model,
+                input={
+                    "prompt": combined_prompt,
+                    "temperature": temperature,
+                    "max_new_tokens": max_tokens,
+                }
+            )
+            return "".join(output)
+
+except ImportError:
+    
+    class Replicate(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+try:
     from azure.ai.inference import ChatCompletionsClient
     from azure.ai.inference.aio import ChatCompletionsClient as AsyncChatCompletionsClient
     from azure.ai.inference.models import SystemMessage, UserMessage
@@ -1755,13 +2311,14 @@ try:
                 try:
                     response = await self.client.complete(
                         model=self.model,
-                        max_tokens=max_tokens,
+                                               max_tokens=max_tokens,
                         messages=[UserMessage(prompt + self.extra_prompting)],
                         temperature=temperature,
                     )
                     return response.choices[0].message.content
                 except Exception as e:
-                    return "" # Return empty string on error to avoid breaking batch processing
+                    warn(f"Azure API call failed: {str(e)[:100]}...")
+                    return ""
 
         async def _call_single_llm_with_system(
             self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
@@ -1780,7 +2337,8 @@ try:
                     )
                     return response.choices[0].message.content
                 except Exception as e:
-                    return ""  # Return empty string on error to avoid breaking batch processing
+                    warn(f"Azure API call failed: {str(e)[:100]}...")
+                    return ""
 
         async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
             """Process a batch of prompts concurrently."""
@@ -1807,12 +2365,234 @@ try:
             ]
             return await asyncio.gather(*tasks)
 
-        async def close(self):
-            """Close the client connection."""
-            await self.client.close()
+    class BatchAzureAI(AsyncLLMWrapper):
+        """
+        Provides access to Azure AI Foundry's Batch Processing API with asynchronous support.
+        This allows for processing large batches of prompts over an extended period.
+        For more information on Azure AI Foundry's Batch Processing, see https://learn.microsoft.com/en-us/azure/ai-services/ai-foundry/batch-processing.
+
+        This wrapper conforms to the AsyncLLMWrapper interface, but note that it uses Azure's batch API,
+        which processes jobs over hours rather than in real-time. The async methods will block until the batch job completes.
+
+        This class provides a different tradeoff between speed and cost compared to the AsyncAzureAI wrapper.
+        It is designed for scenarios where you have a large number of prompts to process and can afford to wait for the results.
+        Azure's batch processing is more cost-effective (half the cost per token) for large volumes of data, but it does 
+        not provide immediate responses.
+
+        Parameters:
+        -----------
+        api_key: str
+            Your Azure API key. You can set this as an environment variable AZURE_API_KEY or pass it directly.
+
+        endpoint: str
+            The endpoint URL for your Azure AI Foundry model. This is typically in the format "https://<your-resource-name>.openai.azure.com/".
+
+        model: str
+            The name of the Azure AI Foundry model to use. This should match the model name you created in Azure AI Foundry.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+            model-specific instructions or context that may help improve the quality of the generated text.
+
+        polling_interval: int, optional
+            The interval (in seconds) to poll the batch job status. Default is 60 seconds. This controls how often
+            the wrapper checks the status of the batch job. A lower value will check more frequently, but may increase API usage.
+
+        timeout: int, optional
+            The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
+            the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
+            if the batch job takes too long to process. You can adjust this based on your expected processing time.
+
+        Attributes:
+        -----------
+        client: azure.ai.inference.ChatCompletionsClient
+            The Azure AI Foundry LLM client instance.
+
+        model: str
+            The name of the Azure AI Foundry model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Azure AI Foundry, this is always True.
+        
+        """
+        
+        def __init__(self, api_key: str, endpoint: str, model: str, 
+                     llm_specific_instructions=None, polling_interval: int = 60, 
+                     timeout: int = 7200):
+            self.client = anthropic.Anthropic(api_key=api_key)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.polling_interval = polling_interval
+            self.timeout = timeout
+
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            """
+            Submit a batch job and wait for completion.
+            This is a blocking operation that could take hours.
+            """
+            # Create batch requests
+            requests = []
+            for i, prompt in enumerate(prompts):
+                requests.append({
+                    "custom_id": str(i),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt + self.extra_prompting}],
+                        "temperature": temperature,
+                    }
+                })
+            
+            # Submit batch
+            batch = self.client.beta.messages.batches.create(requests=requests)
+            batch_id = batch.id
+            
+            # Wait for completion (with async sleep)
+            if await self._wait_for_completion_async(batch_id):
+                return await self._retrieve_batch_results(batch_id)
+            else:
+                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
+
+        async def _call_llm_with_system_prompt_batch(
+            self, 
+            system_prompts: List[str], 
+            user_prompts: List[str], 
+            temperature: float, 
+            max_tokens: int
+        ) -> List[str]:
+            """
+            Submit a batch job with system prompts and wait for completion.
+            """
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError("Number of system prompts must match number of user prompts")
+            
+            # Create batch requests
+            requests = []
+            for i, (sys_prompt, user_prompt) in enumerate(zip(system_prompts, user_prompts)):
+                requests.append({
+                    "custom_id": str(i),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": [
+                            {"role": "system", "content": sys_prompt},
+                            {"role": "user", "content": user_prompt + self.extra_prompting}
+                        ],
+                        "temperature": temperature,
+                    }
+                })
+            
+            # Submit batch
+            batch = self.client.beta.messages.batches.create(requests=requests)
+            batch_id = batch.id
+            
+            # Wait for completion
+            if await self._wait_for_completion_async(batch_id):
+                return await self._retrieve_batch_results(batch_id)
+            else:
+                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
+
+        async def _wait_for_completion_async(self, batch_id: str) -> bool:
+            """
+            Wait for a batch job to complete, using async sleep.
+            Returns True if completed successfully, False if failed or timed out.
+            """
+            start_time = time.time()
+            
+            while time.time() - start_time < self.timeout:
+                batch = self.client.beta.messages.batches.retrieve(batch_id)
+                
+                if batch.processing_status == "ended":
+                    return True
+                elif batch.processing_status in ["canceling", "canceled", "expired"]:
+                    warn(f"Batch job {batch_id} ended with status: {batch.processing_status}")
+                    return False
+                
+                # Use async sleep to not block the event loop
+                await asyncio.sleep(self.polling_interval)
+            
+            warn(f"Batch job {batch_id} timed out after {self.timeout} seconds")
+            return False
+
+        async def _retrieve_batch_results(self, batch_id: str) -> List[str]:
+            """
+            Retrieve raw text results from a completed batch job.
+            """
+            # Run the synchronous API call in a thread pool to not block the event loop
+            loop = asyncio.get_event_loop()
+            results_page = await loop.run_in_executor(
+                None, 
+                self.client.beta.messages.batches.results, 
+                batch_id
+            )
+            
+            # Sort by custom_id to maintain order
+            sorted_results = sorted(results_page.results, key=lambda x: int(x.custom_id))
+            
+            responses = []
+            for result in sorted_results:
+                if result.result.type == "succeeded":
+                    responses.append(result.result.message.content[0].text)
+                else:
+                    warn(f"Request {result.custom_id} failed: {result.result.error}")
+                    responses.append("")  # Empty string for failed requests
+            
+            return responses
+
+        # Additional methods for non-blocking usage
+        def submit_batch(
+            self, 
+            prompts: List[Union[str, Dict[str, str]]], 
+            temperature: float, 
+            max_tokens: int
+        ) -> str:
+            """
+            Submit a batch job without waiting. Returns batch ID.
+            This is for users who want to manage batch jobs manually.
+            """
+            requests = []
+            
+            for i, prompt in enumerate(prompts):
+                if isinstance(prompt, str):
+                    messages = [{"role": "user", "content": prompt + self.extra_prompting}]
+                elif isinstance(prompt, dict):
+                    messages = [
+                        {"role": "system", "content": prompt["system"]},
+                        {"role": "user", "content": prompt["user"] + self.extra_prompting}
+                    ]
+                else:
+                    raise InvalidLLMInputError(f"Prompt must be string or dict")
+                
+                requests.append({
+                    "custom_id": str(i),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "messages": messages,
+                        "temperature": temperature,
+                    }
+                })
+            
+            batch = self.client.beta.messages.batches.create(requests=requests)
+            return batch.id
+
+        def get_batch_status(self, batch_id: str) -> str:
+            """Check the status of a batch job."""
+            batch = self.client.beta.messages.batches.retrieve(batch_id)
+            return batch.processing_status
+
+        async def retrieve_batch_text_results(self, batch_id: str) -> List[str]:
+            """Retrieve raw text results from a completed batch."""
+            return await self._retrieve_batch_results(batch_id)
+
+        def cancel_batch(self, batch_id: str):
+            """Cancel a running batch job."""
+            self.client.beta.messages.batches.cancel(batch_id)
 
 except ImportError:
-    
     class AzureAI(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
@@ -1820,6 +2600,387 @@ except ImportError:
     
     class AsyncAzureAI(FailedImportAsyncLLMWrapper):
 
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+try:
+    import ollama
+
+    class Ollama(LLMWrapper):
+        """
+        Provides access to Olloma's local LLMs with the Toponymy framework. Ollama allows you to run large language models locally.
+        For more information on Olloma, see https://ollama.ai/. You'll need to have Olloma installed and running locally.
+        
+        Parameters:
+        -----------
+        model: str
+            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
+            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
+            
+        host: str, optional
+            The host URL for the Olloma API. Default is "http://localhost:11434".
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+        
+        Attributes:
+        -----------
+        client: ollama.Client
+            The Olloma client instance.
+            
+        model: str
+            The name of the Olloma model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
+        """
+        
+        def __init__(self, model: str = "llama3.2", host: str = "http://localhost:11434", 
+                     llm_specific_instructions=None):
+            self.client = ollama.Client(host=host)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.generate(
+                model=self.model,
+                prompt=prompt + self.extra_prompting,
+                options={
+                    'temperature': temperature,
+                    'num_predict': max_tokens,
+                }
+            )
+            return response['response']
+            
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.chat(
+                model=self.model,
+                messages=[
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': user_prompt + self.extra_prompting}
+                ],
+                options={
+                    'temperature': temperature,
+                    'num_predict': max_tokens,
+                }
+            )
+            return response['message']['content']
+
+    class AsyncOllama(AsyncLLMWrapper):
+        """
+        Provides access to Olloma's local LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+        Olloma allows you to run large language models locally. For more information on Olloma, see https://ollama.ai/. 
+        You'll need to have Olloma installed and running locally.
+        
+        Parameters:
+        -----------
+        model: str
+            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
+            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
+            
+        host: str, optional
+            The host URL for the Olloma API. Default is "http://localhost:11434".
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the Olloma API. Default is 5. Since Olloma runs locally,
+            too many concurrent requests might overwhelm the local resources.
+        
+        Attributes:
+        -----------
+        client: ollama.AsyncClient
+            The Olloma asynchronous client instance.
+            
+        model: str
+            The name of the Olloma model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
+        """
+        
+        def __init__(self, model: str = "llama3.2", host: str = "http://localhost:11434", 
+                     llm_specific_instructions=None, max_concurrent_requests: int = 5):
+            self.client = ollama.AsyncClient(host=host)
+            self.model = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+            
+        async def _call_single_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            """Call the LLM for a single prompt."""
+            try:
+                async with self.semaphore:
+                    response = await self.client.generate(
+                        model=self.model,
+                        prompt=prompt + self.extra_prompting,
+                        options={
+                            'temperature': temperature,
+                            'num_predict': max_tokens,
+                        }
+                    )
+                    return response['response']
+            except Exception as e:
+                warn(f"Olloma API call failed: {str(e)[:100]}...")
+                return ""
+                
+        async def _call_single_llm_with_system(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            """Call the LLM for a single prompt with system prompt."""
+            try:
+                async with self.semaphore:
+                    response = await self.client.chat(
+                        model=self.model,
+                        messages=[
+                            {'role': 'system', 'content': system_prompt},
+                            {'role': 'user', 'content': user_prompt + self.extra_prompting}
+                        ],
+                        options={
+                            'temperature': temperature,
+                            'num_predict': max_tokens,
+                        }
+                    )
+                    return response['message']['content']
+            except Exception as e:
+                warn(f"Olloma API call failed: {str(e)[:100]}...")
+                return ""
+                
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            """Process a batch of prompts concurrently."""
+            tasks = [
+                self._call_single_llm(prompt, temperature, max_tokens)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def _call_llm_with_system_prompt_batch(
+            self, 
+            system_prompts: List[str], 
+            user_prompts: List[str], 
+            temperature: float, 
+            max_tokens: int
+        ) -> List[str]:
+            """Process a batch of prompts with system prompts concurrently."""
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError("Number of system prompts must match number of user prompts")
+            
+            tasks = [
+                self._call_single_llm_with_system(sys_prompt, user_prompt, temperature, max_tokens)
+                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+            ]
+            return await asyncio.gather(*tasks)
+
+except ImportError:
+    
+    class Ollama(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+    
+    class AsyncOllama(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+try:
+    import google.generativeai as genai
+
+    class GoogleGemini(LLMWrapper):
+        """
+        Provides access to Google's Gemini LLMs with the Toponymy framework. For more information on Google Gemini, see
+        https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
+        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
+        
+        Parameters:
+        -----------
+        api_key: str
+            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
+            
+        model: str, optional
+            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
+            "gemini-1.5-pro", "gemini-1.5-flash", etc.
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+        
+        Attributes:
+        -----------
+        model: genai.GenerativeModel
+            The Gemini model instance.
+            
+        model_name: str
+            The name of the Gemini model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
+        """
+        
+        def __init__(self, api_key: str, model: str = "gemini-1.5-flash", llm_specific_instructions=None):
+            api_key = api_key or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor.")
+            
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model)
+            self.model_name = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+            
+            response = self.model.generate_content(
+                prompt + self.extra_prompting,
+                generation_config=generation_config
+            )
+            return response.text
+            
+        def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+            
+            # Gemini doesn't have explicit system prompts, so we combine them
+            combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
+            
+            response = self.model.generate_content(
+                combined_prompt,
+                generation_config=generation_config
+            )
+            return response.text
+
+    class AsyncGoogleGemini(AsyncLLMWrapper):
+        """
+        Provides access to Google's Gemini LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+        For more information on Google Gemini, see https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
+        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
+        
+        Parameters:
+        -----------
+        api_key: str
+            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
+            
+        model: str, optional
+            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
+            "gemini-1.5-pro", "gemini-1.5-flash", etc.
+            
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the Gemini API. Default is 10.
+        
+        Attributes:
+        -----------
+        model: genai.GenerativeModel
+            The Gemini model instance.
+            
+        model_name: str
+            The name of the Gemini model being used.
+            
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+            
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
+        """
+        
+        def __init__(self, api_key: str, model: str = "gemini-1.5-flash", 
+                     llm_specific_instructions=None, max_concurrent_requests: int = 10):
+            api_key = api_key or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor.")
+            
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model)
+            self.model_name = model
+            self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+            
+        async def _call_single_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            """Call the LLM for a single prompt."""
+            try:
+                async with self.semaphore:
+                    generation_config = genai.types.GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    )
+                    
+                    response = await self.model.generate_content_async(
+                        prompt + self.extra_prompting,
+                        generation_config=generation_config
+                    )
+                    return response.text
+            except Exception as e:
+                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
+                return ""
+                
+        async def _call_single_llm_with_system(
+            self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            """Call the LLM for a single prompt with system prompt."""
+            try:
+                async with self.semaphore:
+                    generation_config = genai.types.GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    )
+                    
+                    # Gemini doesn't have explicit system prompts, so we combine them
+                    combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
+                    
+                    response = await self.model.generate_content_async(
+                        combined_prompt,
+                        generation_config=generation_config
+                    )
+                    return response.text
+            except Exception as e:
+                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
+                return ""
+                
+        async def _call_llm_batch(self, prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
+            """Process a batch of prompts concurrently."""
+            tasks = [
+                self._call_single_llm(prompt, temperature, max_tokens)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def _call_llm_with_system_prompt_batch(
+            self, 
+            system_prompts: List[str], 
+            user_prompts: List[str], 
+            temperature: float, 
+            max_tokens: int
+        ) -> List[str]:
+            """Process a batch of prompts with system prompts concurrently."""
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError("Number of system prompts must match number of user prompts")
+            
+            tasks = [
+                self._call_single_llm_with_system(sys_prompt, user_prompt, temperature, max_tokens)
+                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+            ]
+            return await asyncio.gather(*tasks)
+
+except ImportError:
+    
+    class GoogleGemini(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+    
+    class AsyncGoogleGemini(FailedImportAsyncLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
