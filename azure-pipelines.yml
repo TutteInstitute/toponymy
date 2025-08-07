@@ -1,4 +1,14 @@
 # Trigger a build when there is a push to the main branch or a tag starts with release-
+#
+# Ollama Integration Testing:
+# To enable Ollama integration tests, create a pipeline variable named 'INSTALL_OLLAMA' 
+# and set its value to 'true'. This will:
+#   1. Install Ollama on Linux agents
+#   2. Download a small model (qwen2.5:0.5b preferred, ~400MB)  
+#   3. Run real LLM integration tests instead of mocks
+#   4. Add ~2-5 minutes to build time
+# If INSTALL_OLLAMA is not set or is 'false', tests use mock-based coverage.
+#
 trigger:
   branches:
     include:
@@ -25,6 +35,15 @@ parameters:
 
 variables:
   triggeredByPullRequest: $[eq(variables['Build.Reason'], 'PullRequest')]
+  # Ollama Integration Testing Configuration:
+  # Set INSTALL_OLLAMA to 'true' to enable Ollama integration tests in CI.
+  # If not set or 'false', tests will use mock-based testing for LLM wrappers.
+  # Ollama setup includes:
+  #   - Installation of Ollama service (Linux only)
+  #   - Download of smallest available model (qwen2.5:0.5b preferred)
+  #   - Fallback to mock tests if installation/download fails
+  # Note: This adds ~2-5 minutes to build time and requires ~1-2GB disk space
+  # INSTALL_OLLAMA: 'true'  # Uncomment and set as pipeline variable to enable
 
 stages:
   - stage: RunAllTests
@@ -102,8 +121,105 @@ stages:
           displayName: 'Install package'
 
         - script: |
+            # Optional Ollama setup for integration tests (Linux only)
+            # This is optional - tests will fall back to mocks if Ollama is not available
+            # Set INSTALL_OLLAMA pipeline variable to 'true' to enable Ollama integration tests
+            if [ "$AGENT_OS" = "Linux" ] && [ "${INSTALL_OLLAMA:-false}" = "true" ]; then
+              echo "=== Installing Ollama for integration tests ==="
+              echo "System info:"
+              free -h || echo "free command not available"
+              df -h / || echo "df command not available"
+              echo "Installing Ollama..."
+              
+              # Install Ollama with error handling
+              if curl -fsSL https://ollama.ai/install.sh | sh; then
+                echo "Ollama installed successfully"
+              else
+                echo "Ollama installation failed, will use mock tests"
+                exit 0
+              fi
+              
+              # Check if Ollama is available
+              if command -v ollama >/dev/null 2>&1; then
+                echo "Starting Ollama service in background..."
+                nohup ollama serve > ollama.log 2>&1 &
+                OLLAMA_PID=$!
+                echo "Ollama PID: $OLLAMA_PID"
+                
+                # Wait for service to start with timeout
+                echo "Waiting for Ollama service to be ready..."
+                for i in {1..30}; do
+                  if ollama list >/dev/null 2>&1; then
+                    echo "Ollama service is ready"
+                    break
+                  fi
+                  sleep 1
+                done
+                
+                # Check if service is actually running
+                if ! ollama list >/dev/null 2>&1; then
+                  echo "Ollama service failed to start properly, will use mock tests"
+                  exit 0
+                fi
+                
+                # Try to pull the smallest available model with timeout and fallbacks
+                echo "Attempting to pull a small model for testing..."
+                echo "Available models to try (in priority order): qwen2.5:0.5b, qwen2:0.5b, tinydolphin:1.1b"
+                
+                # Set up timeout and try multiple small models
+                MODEL_PULLED=false
+                for model in "qwen2.5:0.5b" "qwen2:0.5b" "tinydolphin:1.1b" "gemma2:2b"; do
+                  echo "Trying to pull model: $model"
+                  if timeout 300 ollama pull "$model"; then
+                    echo "Successfully pulled model: $model"
+                    MODEL_PULLED=true
+                    break
+                  else
+                    echo "Failed to pull model: $model (timeout or error)"
+                  fi
+                done
+                
+                if [ "$MODEL_PULLED" = "false" ]; then
+                  echo "Could not pull any test model, will use mock tests"
+                else
+                  echo "Model pull successful! Available models:"
+                  ollama list || true
+                  echo "Ollama setup complete - integration tests can run"
+                fi
+              else
+                echo "Ollama command not found after installation, will use mock tests"
+              fi
+            else
+              echo "=== Skipping Ollama installation ==="
+              echo "Reason: INSTALL_OLLAMA not set to 'true' or not on Linux"
+              echo "Tests will use mock-based LLM wrapper coverage"
+              echo "To enable Ollama integration tests, set pipeline variable INSTALL_OLLAMA=true"
+            fi
+          displayName: 'Setup Ollama (optional for integration tests)'
+          condition: eq(variables['Agent.OS'], 'Linux')
+          continueOnError: true  # Never fail the build if Ollama setup fails
+          env:
+            INSTALL_OLLAMA: $(INSTALL_OLLAMA)  # Set this pipeline variable to enable Ollama
+
+        - script: |
             pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
           displayName: 'Run tests'
+          env:
+            # Set CI environment variable to help tests understand they're running in CI
+            CI: 'true'
+            AZURE_PIPELINES: 'true'
+            INSTALL_OLLAMA: $(INSTALL_OLLAMA)
+
+        - script: |
+            # Clean up Ollama processes if they were started
+            if [ "${INSTALL_OLLAMA:-false}" = "true" ]; then
+              echo "Cleaning up Ollama processes..."
+              pkill -f "ollama serve" || echo "No Ollama processes to clean up"
+              echo "Ollama cleanup complete"
+            fi
+          displayName: 'Cleanup Ollama processes'
+          condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
+          continueOnError: true
 
 
         - bash: |
