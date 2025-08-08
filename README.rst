@@ -112,7 +112,7 @@ Also make sure that openai is installed in your environment. You can test your c
 
 The following code will generate a topic naming
 for the documents in the data set using the ``document_vectors``, ``document_map``, and ``embedding_model`` created above.
-(Note that filtering warnings will increase the likelihood that the progress bars will display correctly.)
+(Warning are filtered here because they can interfere with the display of the progress bar.)
 
 .. code-block:: python
 
@@ -150,7 +150,7 @@ Let's examine the last layer of topics. There were five clusters in this layer. 
     'X Window System and DOS/Windows Graphics',
     'Vintage Computer Hardware']]
 
-Our gray 2-D plot from above can now be displayed with labeled clusters. (See below for more details on generating interactive plots.)
+Our gray 2-D plot from above can now be displayed with labeled clusters. (See `Interactive Topic Visualization <https://github.com/TutteInstitute/toponymy?tab=readme-ov-file#interactive-topic-visualization>`_ for more details on generating interactive plots.)
 
 .. image:: doc/example_labeled_plot.png
   :width: 600
