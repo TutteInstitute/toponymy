@@ -7,7 +7,8 @@ import asyncio
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
-    AsyncCohere, AsyncAnthropic, BatchAnthropic, AsyncOpenAI, AsyncAzureAI
+    AsyncCohere, AsyncAnthropic, BatchAnthropic, AsyncOpenAI, AsyncAzureAI,
+    AsyncOllama, AsyncGoogleGemini, AsyncTogether
 )
 from toponymy.tests.test_llm_wrappers import (
     MockLLMResponse, VALID_TOPIC_NAME_RESPONSE, VALID_CLUSTER_NAMES_RESPONSE,
@@ -470,6 +471,262 @@ async def test_async_azureai_generate_topic_cluster_names_multiple(async_azureai
     result = await async_azureai_wrapper.generate_topic_cluster_names(prompts, old_names_list)
     assert len(result) == 2
     validate_cluster_names(result[0])
+
+
+# AsyncOllama Tests
+@pytest_asyncio.fixture
+async def async_ollama_wrapper():
+    with patch('ollama.AsyncClient'):
+        wrapper = AsyncOllama(model="llama3.2", host="http://localhost:11434")
+        yield wrapper
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_generate_topic_names_success(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.generate = AsyncMock(return_value={'response': mock_data["valid_topic_name"]})
+    
+    result = await async_ollama_wrapper.generate_topic_names(["test prompt"])
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_generate_topic_names_system_prompt(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.chat = AsyncMock(return_value={'message': {'content': mock_data["valid_topic_name"]}})
+    
+    result = await async_ollama_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_generate_topic_cluster_names_success(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.generate = AsyncMock(return_value={'response': mock_data["valid_cluster_names"]})
+    
+    result = await async_ollama_wrapper.generate_topic_cluster_names(
+        ["test prompt"], [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_generate_topic_cluster_names_system_prompt(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.chat = AsyncMock(return_value={'message': {'content': mock_data["valid_cluster_names"]}})
+    
+    result = await async_ollama_wrapper.generate_topic_cluster_names(
+        [{"system": "system prompt", "user": "test prompt"}], 
+        [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_generate_topic_names_failure(async_ollama_wrapper):
+    async_ollama_wrapper.client.generate = AsyncMock(side_effect=Exception("API Error"))
+    result = await async_ollama_wrapper.generate_topic_names(["test prompt"])
+    assert len(result) == 1
+    assert result[0] == ""
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_generate_topic_cluster_names_failure(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.generate = AsyncMock(side_effect=Exception("API Error"))
+    result = await async_ollama_wrapper.generate_topic_cluster_names(
+        ["test prompt"], [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    assert result[0] == mock_data["old_names"]
+
+
+@pytest.mark.asyncio
+async def test_async_ollama_batch_processing(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.generate = AsyncMock(return_value={'response': mock_data["valid_topic_name"]})
+    
+    # Test batch processing with multiple prompts
+    result = await async_ollama_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
+    assert len(result) == 3
+    assert all(name == "Machine Learning" for name in result)
+
+
+# AsyncGoogleGemini Tests
+@pytest_asyncio.fixture
+async def async_google_gemini_wrapper():
+    with patch('google.generativeai.configure'), patch('google.generativeai.GenerativeModel'):
+        wrapper = AsyncGoogleGemini(api_key="dummy", model="gemini-1.5-flash")
+        yield wrapper
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_generate_topic_names_success(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_topic_name"]))
+    
+    result = await async_google_gemini_wrapper.generate_topic_names(["test prompt"])
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_generate_topic_names_system_prompt(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_topic_name"]))
+    
+    result = await async_google_gemini_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_generate_topic_cluster_names_success(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_cluster_names"]))
+    
+    result = await async_google_gemini_wrapper.generate_topic_cluster_names(
+        ["test prompt"], [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_generate_topic_cluster_names_system_prompt(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_cluster_names"]))
+    
+    result = await async_google_gemini_wrapper.generate_topic_cluster_names(
+        [{"system": "system prompt", "user": "test prompt"}], 
+        [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_generate_topic_names_failure(async_google_gemini_wrapper):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(side_effect=Exception("API Error"))
+    result = await async_google_gemini_wrapper.generate_topic_names(["test prompt"])
+    assert len(result) == 1
+    assert result[0] == ""
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_generate_topic_cluster_names_failure(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(side_effect=Exception("API Error"))
+    result = await async_google_gemini_wrapper.generate_topic_cluster_names(
+        ["test prompt"], [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    assert result[0] == mock_data["old_names"]
+
+
+@pytest.mark.asyncio
+async def test_async_google_gemini_batch_processing(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_topic_name"]))
+    
+    # Test batch processing with multiple prompts
+    result = await async_google_gemini_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
+    assert len(result) == 3
+    assert all(name == "Machine Learning" for name in result)
+
+
+# AsyncTogether Tests
+@pytest_asyncio.fixture
+async def async_together_wrapper():
+    with patch('together.AsyncTogether'):
+        wrapper = AsyncTogether(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
+        yield wrapper
+        # Clean up any resources
+        try:
+            await wrapper.close()
+        except:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_async_together_generate_topic_names_success(async_together_wrapper, mock_data):
+    mock_response = Mock()
+    mock_response.choices = [Mock()]
+    mock_response.choices[0].message = Mock()
+    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
+    
+    result = await async_together_wrapper.generate_topic_names(["test prompt"])
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_together_generate_topic_names_system_prompt(async_together_wrapper, mock_data):
+    mock_response = Mock()
+    mock_response.choices = [Mock()]
+    mock_response.choices[0].message = Mock()
+    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
+    
+    result = await async_together_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_together_generate_topic_cluster_names_success(async_together_wrapper, mock_data):
+    mock_response = Mock()
+    mock_response.choices = [Mock()]
+    mock_response.choices[0].message = Mock()
+    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
+    
+    result = await async_together_wrapper.generate_topic_cluster_names(
+        ["test prompt"], [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_together_generate_topic_cluster_names_system_prompt(async_together_wrapper, mock_data):
+    mock_response = Mock()
+    mock_response.choices = [Mock()]
+    mock_response.choices[0].message = Mock()
+    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
+    
+    result = await async_together_wrapper.generate_topic_cluster_names(
+        [{"system": "system prompt", "user": "test prompt"}], 
+        [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_together_generate_topic_names_failure(async_together_wrapper):
+    async_together_wrapper.client.chat.completions.create = AsyncMock(side_effect=Exception("API Error"))
+    result = await async_together_wrapper.generate_topic_names(["test prompt"])
+    assert len(result) == 1
+    assert result[0] == ""
+
+
+@pytest.mark.asyncio
+async def test_async_together_generate_topic_cluster_names_failure(async_together_wrapper, mock_data):
+    async_together_wrapper.client.chat.completions.create = AsyncMock(side_effect=Exception("API Error"))
+    result = await async_together_wrapper.generate_topic_cluster_names(
+        ["test prompt"], [mock_data["old_names"]]
+    )
+    assert len(result) == 1
+    assert result[0] == mock_data["old_names"]
+
+
+@pytest.mark.asyncio
+async def test_async_together_batch_processing(async_together_wrapper, mock_data):
+    mock_response = Mock()
+    mock_response.choices = [Mock()]
+    mock_response.choices[0].message = Mock()
+    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
+    
+    # Test batch processing with multiple prompts
+    result = await async_together_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
+    assert len(result) == 3
+    assert all(name == "Machine Learning" for name in result)
 
 
 # Test for AsyncLLMWrapper base class error cases

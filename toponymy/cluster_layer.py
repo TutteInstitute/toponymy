@@ -26,6 +26,7 @@ from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 import asyncio
 from toponymy._utils import handle_verbose_params
+import warnings
 
 
 def run_async(coro):
@@ -263,7 +264,13 @@ class ClusterLayer(ABC):
                 new_names = llm.generate_topic_cluster_names(
                     disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
                 )
-                self._update_topic_names(new_names, topic_indices)
+                if len(new_names) == len(topic_indices):
+                    self._update_topic_names(new_names, topic_indices)
+                else:
+                    warnings.warn(
+                        f"Got {len(new_names)} new topic names to match {len(topic_indices)}, so we ignore disambiguation effort for {topic_indices}.",
+                        RuntimeWarning
+                    )
         elif isinstance(llm, AsyncLLMWrapper):
             llm_results = run_async(
                 llm.generate_topic_cluster_names(

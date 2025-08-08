@@ -12,6 +12,7 @@ from toponymy.audit import (
     create_keyphrase_analysis_df,
     create_prompt_analysis_df,
     get_cluster_details,
+    get_cluster_documents,
     export_audit_excel
 )
 
@@ -177,3 +178,124 @@ class TestAuditFunctions:
         # Layer 0 should not have subtopics
         comparison_df_layer0 = create_comparison_df(self.mock_model, layer_index=0)
         assert comparison_df_layer0['Child Subtopics'].iloc[0] == ''
+    
+    def test_document_indices_always_included(self):
+        """Test that document_indices are always included in audit DataFrame."""
+        audit_df = create_audit_df(self.mock_model, layer_index=0)
+        
+        # document_indices should always be present
+        assert 'document_indices' in audit_df.columns
+        assert isinstance(audit_df['document_indices'].iloc[0], list)
+        assert len(audit_df['document_indices'].iloc[0]) > 0
+    
+    def test_document_traceability_with_texts(self):
+        """Test document traceability with full texts."""
+        # Create sample documents
+        documents = [f"Document {i}" for i in range(100)]
+        
+        # Test with include_all_docs=True
+        audit_df = create_audit_df(
+            self.mock_model, 
+            layer_index=0,
+            include_all_docs=True,
+            original_texts=documents
+        )
+        
+        # Should have document_texts column
+        assert 'document_texts' in audit_df.columns
+        assert isinstance(audit_df['document_texts'].iloc[0], list)
+        
+        # Document texts should match indices
+        first_cluster_indices = audit_df['document_indices'].iloc[0]
+        first_cluster_texts = audit_df['document_texts'].iloc[0]
+        assert len(first_cluster_indices) == len(first_cluster_texts)
+        
+        # Verify texts match indices
+        for idx, text in zip(first_cluster_indices, first_cluster_texts):
+            assert text == documents[idx]
+    
+    def test_document_traceability_with_limit(self):
+        """Test document traceability with max_docs_per_cluster limit."""
+        documents = [f"Document {i}" for i in range(100)]
+        
+        audit_df = create_audit_df(
+            self.mock_model,
+            layer_index=0,
+            include_all_docs=True,
+            max_docs_per_cluster=3,
+            original_texts=documents
+        )
+        
+        # For clusters with more than 3 docs, should have document_sample
+        for _, row in audit_df.iterrows():
+            if row['num_documents'] > 3:
+                assert 'document_sample' in row
+                assert 'total_docs_in_cluster' in row
+                assert len(row['document_sample']) == 3
+                assert row['total_docs_in_cluster'] == row['num_documents']
+            else:
+                # Small clusters should have document_texts instead
+                assert 'document_texts' in row
+                assert len(row['document_texts']) == row['num_documents']
+    
+    def test_get_cluster_documents(self):
+        """Test the get_cluster_documents helper function."""
+        documents = [f"Document {i}" for i in range(100)]
+        
+        # Get documents for cluster 0
+        cluster_docs = get_cluster_documents(
+            self.mock_model,
+            layer_index=0,
+            cluster_id=0,
+            original_texts=documents
+        )
+        
+        assert isinstance(cluster_docs, dict)
+        assert 'indices' in cluster_docs
+        assert 'texts' in cluster_docs
+        assert 'total_count' in cluster_docs
+        
+        # Verify structure
+        assert isinstance(cluster_docs['indices'], list)
+        assert isinstance(cluster_docs['texts'], list)
+        assert len(cluster_docs['indices']) == len(cluster_docs['texts'])
+        assert cluster_docs['total_count'] == len(cluster_docs['indices'])
+        
+        # Verify content
+        for idx, text in zip(cluster_docs['indices'], cluster_docs['texts']):
+            assert text == documents[idx]
+    
+    def test_get_cluster_documents_with_limit(self):
+        """Test get_cluster_documents with max_docs limit."""
+        documents = [f"Document {i}" for i in range(100)]
+        
+        cluster_docs = get_cluster_documents(
+            self.mock_model,
+            layer_index=0,
+            cluster_id=0,
+            original_texts=documents,
+            max_docs=5
+        )
+        
+        # Should only return 5 documents
+        assert len(cluster_docs['indices']) == 5
+        assert len(cluster_docs['texts']) == 5
+        
+        # But total_count should reflect actual count
+        layer = self.mock_model.cluster_layers_[0]
+        actual_count = (layer.cluster_labels == 0).sum()
+        assert cluster_docs['total_count'] == actual_count
+    
+    def test_document_traceability_without_texts(self):
+        """Test that document_indices work without original_texts."""
+        # Call without original_texts - should still have indices
+        audit_df = create_audit_df(self.mock_model, layer_index=0)
+        
+        assert 'document_indices' in audit_df.columns
+        assert 'document_texts' not in audit_df.columns
+        assert 'document_sample' not in audit_df.columns
+        
+        # Indices should still be populated
+        for indices in audit_df['document_indices']:
+            assert isinstance(indices, list)
+            assert len(indices) > 0
