@@ -94,18 +94,30 @@ should be similar.
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
-Huggingface and LlamaCpp. Here we show an example using OpenAI. The following code will generate a topic naming
-for the documents in the data set using the ``document_vectors``, ``document_map``, and ``embedding_model`` created above.
+Huggingface and LlamaCpp. Here we show an example using OpenAI. 
 
-(You will need to get a free `OpenAI key <https://platform.openai.com/api-keys>`_ and store it in the file ``openai_key.txt`` before running this code.)
+You will need to get a free `OpenAI key <https://platform.openai.com/api-keys>`_ and store it in the file ``openai_key.txt`` before running this code.
+Also make sure that openai is installed in your environment. You can test your connection to OpenAI with the test_llm_connectivity() method before running Toponymy.
 
 .. code-block:: python
 
+    import openai
     from toponymy import Toponymy
     from toponymy.llm_wrappers import OpenAI
-
+    
     openai_api_key = open("openai_key.txt").read().strip()
-    llm = OpenAI('openai_api_key')
+    llm = OpenAI(openai_api_key)
+    llm.test_llm_connectivity()
+
+
+The following code will generate a topic naming
+for the documents in the data set using the ``document_vectors``, ``document_map``, and ``embedding_model`` created above.
+(Note that filtering warnings will increase the likelihood that the progress bars will display correctly.)
+
+.. code-block:: python
+
+    import warnings
+    warnings.filterwarnings('ignore')
 
     topic_model = Toponymy(
         llm_wrapper=llm,
@@ -122,35 +134,54 @@ for the documents in the data set using the ``document_vectors``, ``document_map
     # - document_map: numpy array of shape (n_documents, clustering_dimension)
     topic_model.fit(text, document_vectors, document_map)
 
+
+``topic_model`` will contain ``topic_names``, a list of lists which can be used to explore the unique topic names in each layer or resolution.
+Let's examine the last layer of topics. There were five clusters in this layer. Toponymy assigns a name to each cluster.
+
+.. code-block:: python
+
     topic_names = topic_model.topic_names_
-    topics_per_document = [cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_]
-    
-``topic_names`` is a list of lists which can be used to explore the unique topic names in each layer or resolution.
-Let's examine the last two layers of topics.
+
+    topic_names[-1:]
+
+    [['Sports Analysis',
+    'Religion and Sociopolitical Conflicts',
+    'Automotive and Motorcycle Discussion',
+    'X Window System and DOS/Windows Graphics',
+    'Vintage Computer Hardware']]
+
+Our gray 2-D plot from above can now be displayed with labeled clusters. (See below for more details on generating interactive plots.)
+
+.. image:: doc/example_labeled_plot.png
+  :width: 600
+  :align: center
+  :alt: example_labeled_plot
+
+At this particular level of resolution, this plot also shows one topic ('NASA and Space Exploration Missions') from the second to last layer of clusters. 
 
 .. code-block:: python
 
     topic_names[-2:]
 
-    [['NHL Playoffs and Player Analysis',
+    [['NHL Hockey Playoffs and Team Analysis',
     'Major League Baseball Analysis',
-    'Space Exploration and Technology Innovations',
-    'Encryption Policy and Government Surveillance',
-    'Health and Alternative Treatments',
-    'Israeli-Palestinian and Lebanese Conflicts',
-    'Automotive Performance and Safety',
-    'Christian Theology and Debates',
-    'Waco Siege and Government Accountability',
-    'Debates on Morality and Free Speech',
-    'Gun Rights and Legislation',
-    'X Window System and Graphics Software',
-    'Hard Drive Technologies and Troubleshooting',
-    'Vintage Computer Hardware and Upgrades'],
+    'NASA and Space Exploration Missions',
+    'Clipper Chip Encryption and Privacy Debate',
+    'Medical Discussions on Chronic Diseases and Diet',
+    'Middle East Conflicts and Israeli-Palestinian Issues',
+    'Automotive and Motorcycle Discussion',
+    'Christianity, Faith, and Religious Debates',
+    'Waco Siege and Government Controversy',
+    'US Gun Rights and Regulation Debate',
+    'Political and Social Controversies Online',
+    'X Window System and DOS/Windows Graphics',
+    'Vintage PC and Macintosh Hardware',
+    'PC Hard Drive Interfaces and Troubleshooting'],
     ['Sports Analysis',
-    'Religion and Government Accountability',
-    'Automotive Performance and Safety',
-    'X Window System and Graphics Software',
-    'Computer Hardware']]
+    'Religion and Sociopolitical Conflicts',
+    'Automotive and Motorcycle Discussion',
+    'X Window System and DOS/Windows Graphics',
+    'Vintage Computer Hardware']]
 
 
 ``topics_per_document`` contains topic labels for each document, with one list for each level of resultion in our 
@@ -159,6 +190,7 @@ Documents that aren't contained within a cluster at a given layer are given the 
 
 .. code-block:: python
     
+    topics_per_document = [cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_]
     topics_per_document
     
 
