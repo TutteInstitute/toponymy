@@ -183,7 +183,14 @@ class LLMWrapper(ABC):
         By default, it does. Override in subclasses if not supported.
         """
         return True
-
+    
+    def test_llm_connectivity(self, prompt="Identify yourself and explain that you will be providing topic names for clusters") -> str:
+        try:
+            response = self._call_llm(prompt, temperature=0.4, max_tokens=128)
+            return response
+        except Exception as e:
+            warn(f"Failed to test LLM connectivity with {self.__class__.__name__}: {e}")
+            return "<error>"
 
 class AsyncLLMWrapper(ABC):
 
@@ -332,6 +339,14 @@ class AsyncLLMWrapper(ABC):
         By default, it does. Override in subclasses if not supported.
         """
         return True
+    
+    def test_llm_connectivity(self, prompt="Identify yourself and explain that you will be providing topic names for clusters") -> str:
+        try:
+            response = asyncio.run(self._call_llm_batch([prompt], temperature=0.4, max_tokens=128))
+            return response[0]
+        except Exception as e:
+            warn(f"Failed to test LLM connectivity with {self.__class__.__name__}: {e}")
+            return "<error>"
 
 class LLMWrapperImportError(ImportError):
     """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
@@ -352,6 +367,9 @@ class FailedImportLLMWrapper(LLMWrapper):
     def _call_llm_with_system_prompt(self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int) -> str:
         raise LLMWrapperImportError(self._import_error_message())
     
+    def test_llm_connectivity(self, prompt="Identify yourself and explain that you will be providing topic names for clusters"):
+        return LLMWrapperImportError(self._import_error_message())
+    
 
 class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
     @classmethod
@@ -366,6 +384,9 @@ class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
 
     async def _call_llm_with_system_prompt_batch(self, system_prompt: str, user_prompts: List[str], temperature: float, max_tokens: int) -> List[str]:
         raise LLMWrapperImportError(self._import_error_message())
+    
+    async def test_llm_connectivity(self, prompt="Identify yourself and explain that you will be providing topic names for clusters"):
+        return LLMWrapperImportError(self._import_error_message())
 
 try:
     import llama_cpp
