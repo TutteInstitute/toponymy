@@ -91,6 +91,12 @@ class LLMWrapper(ABC):
         """
         pass
 
+    def test_llm_connectivity(self, prompt="Identify yourself and tell me 'I will be providing topic names for clusters'"):
+        """
+        Allow the user to test connectivity to the LLM before running Toponymy
+        """
+        return self._call_llm(prompt, 0.4, 128)
+    
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
