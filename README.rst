@@ -7,6 +7,23 @@ Toponymy
   :align: center
   :alt: Toponymy
 
+
+.. raw:: html
+
+    <!-- Hero block -->
+    <div align="center">
+
+    <!-- Primary CTA -->
+    <p>
+      <a href="https://deepwiki.com/TutteInstitute/toponymy" style="text-decoration:none;display:inline-block">
+        <img src="https://img.shields.io/badge/chat%20with%20our%20AI%20docs-%E2%86%92-72A1FF?style=for-the-badge&logo=readthedocs&logoColor=white"
+             alt="chat with our AI docs" width="200">
+      </a>
+    </p>
+
+
+    </div>
+
 The package name Toponymy is derived from the Greek topos ‘place’ + onuma ‘name’.  Thus, the naming of places.  
 The goal of Toponymy is to put names to places in the space of information. This could be a corpus of documents,
 in which case Toponymy can be viewed as a topic naming library.  It could also be a collection of images, in which case
