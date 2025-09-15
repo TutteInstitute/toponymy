@@ -247,7 +247,8 @@ class ClusterLayer(ABC):
         Update the topic names for the specified indices.
         """
         for i, topic_index in enumerate(topic_indices):
-            self.topic_names[topic_index] = new_topic_names[i]
+            try: self.topic_names[topic_index] = new_topic_names[i]
+            except IndexError: continue
 
     def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
         if isinstance(llm, LLMWrapper):
