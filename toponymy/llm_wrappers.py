@@ -1731,13 +1731,14 @@ try:
             api_key: str,
             model: str = "gpt-4o-mini",
             base_url: str = None,
+            http_client: 'httpx.Client | None' = None,
             llm_specific_instructions=None,
         ):
             api_key = api_key or os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OpenAI API key is required. Set it as an environment variable OPENAI_API_KEY or pass it directly to the constructor.")
             
-            self.llm = openai.OpenAI(api_key=api_key, base_url=base_url)
+            self.llm = openai.OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
             self.model = model
             self.extra_prompting =  "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
 

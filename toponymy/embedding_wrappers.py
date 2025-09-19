@@ -58,11 +58,13 @@ try:
 
     class OpenAIEmbedder:
 
-        def __init__(self, api_key, model: str = "text-embedding-3-small", base_url: str = None):
+        def __init__(self, api_key, model: str = "text-embedding-3-small", base_url: str = None, http_client: Optional[httpx.Client] = None):
             self.api_key = api_key
             self.model = model
             self.base_url = base_url
-            self.client = openai.OpenAI(api_key=api_key, base_url=base_url)
+            self.http_client = http_client
+
+            self.client = openai.OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
 
         def encode(self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None) -> np.ndarray:
             # Handle verbose parameters
