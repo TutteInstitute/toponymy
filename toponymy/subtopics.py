@@ -2,7 +2,6 @@ import numpy as np
 import scipy.sparse
 
 from typing import List, Optional
-from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.decomposition import DictionaryLearning
 
@@ -11,12 +10,13 @@ from vectorizers.transformers import InformationWeightTransformer
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy.exemplar_texts import FacilityLocationSelection, SaturatedCoverageSelection
 from toponymy._utils import handle_verbose_params
+from toponymy.embedding_wrappers import TextEmbedderProtocol
 
 from tqdm.auto import tqdm
 
 
 def subtopic_embeddings(
-    subtopics: List[str], embedding_model: SentenceTransformer
+    subtopics: List[str], embedding_model: TextEmbedderProtocol
 ) -> np.ndarray:
     return embedding_model.encode(subtopics)
 
@@ -26,7 +26,7 @@ def central_subtopics(
     subtopics: List[str],
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
-    embedding_model: Optional[SentenceTransformer] = None,
+    embedding_model: Optional[TextEmbedderProtocol] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
     verbose: bool = None,
@@ -109,7 +109,7 @@ def submodular_subtopics(
     subtopics: List[str],
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
-    embedding_model: Optional[SentenceTransformer] = None,
+    embedding_model: Optional[TextEmbedderProtocol] = None,
     n_subtopics: int = 64,
     submodular_function: str = "facility_location",
     verbose: bool = None,
@@ -186,7 +186,7 @@ def central_subtopics_from_all_subtopics(
     subtopics: List[str],
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
-    embedding_model: Optional[SentenceTransformer] = None,
+    embedding_model: Optional[TextEmbedderProtocol] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
     verbose: bool = None,
@@ -246,7 +246,7 @@ def information_weighted_subtopics(
     subtopics: List[str],
     subtopic_label_vector: np.ndarray,
     subtopic_vectors: Optional[np.ndarray] = None,
-    embedding_model: Optional[SentenceTransformer] = None,
+    embedding_model: Optional[TextEmbedderProtocol] = None,
     n_subtopics: int = 64,
     diversify_alpha: float = 1.0,
     prior_strength: float = 0.1,

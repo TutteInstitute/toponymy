@@ -6,13 +6,12 @@ from joblib import Parallel, delayed, effective_n_jobs
 from functools import reduce
 from collections import Counter
 from toponymy.utility_functions import diversify_max_alpha as diversify
+from toponymy.embedding_wrappers import TextEmbedderProtocol
 from vectorizers.transformers import InformationWeightTransformer
 from sklearn.metrics import pairwise_distances
 from apricot import SaturatedCoverageSelection, GraphCutSelection
 from toponymy.exemplar_texts import FacilityLocationSelection
 from toponymy._utils import handle_verbose_params
-
-from sentence_transformers import SentenceTransformer
 
 import scipy.sparse
 import numba
@@ -411,7 +410,7 @@ class KeyphraseBuilder:
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
     
-    embedder : Optional[SentenceTransformer], optional
+    embedder : Optional[TextEmbedderProtocol], optional
         An optional embedder to generate keyphrase vectors, by default None.
     
     verbose : bool, optional
@@ -438,7 +437,7 @@ class KeyphraseBuilder:
         min_occurrences: int = 2,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
-        embedder: Optional[SentenceTransformer] = None,
+        embedder: Optional[TextEmbedderProtocol] = None,
         verbose: bool = None,
     ):
         self.object_to_text = object_to_text
@@ -548,7 +547,7 @@ def information_weighted_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    embedding_model: SentenceTransformer,
+    embedding_model: TextEmbedderProtocol,
     n_keyphrases: int = 16,
     prior_strength: float = 0.1,
     weight_power: float = 2.0,
@@ -570,8 +569,8 @@ def information_weighted_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    embedding_model : SentenceTransformer
-        A SentenceTransformer model for embedding keyphrases.
+    embedding_model : TextEmbedderProtocol
+        A text embedding model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     prior_strength : float, optional
@@ -700,7 +699,7 @@ def central_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    embedding_model: SentenceTransformer,
+    embedding_model: TextEmbedderProtocol,
     n_keyphrases: int = 16,
     diversify_alpha: float = 1.0,
     verbose: bool = None,
@@ -719,8 +718,8 @@ def central_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    embedding_model : SentenceTransformer
-        A SentenceTransformer model for embedding keyphrases.
+    embedding_model : TextEmbedderProtocol
+        A text embedding model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     diversify_alpha : float, optional
@@ -834,7 +833,7 @@ def bm25_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    embedding_model: SentenceTransformer,
+    embedding_model: TextEmbedderProtocol,
     n_keyphrases: int = 16,
     k1: float = 1.5,
     b: float = 0.75,
@@ -854,8 +853,8 @@ def bm25_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    embedding_model : SentenceTransformer
-        A SentenceTransformer model for embedding keyphrases.
+    embedding_model : TextEmbedderProtocol
+        A text embedding model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     k1 : float, optional
@@ -999,7 +998,7 @@ def submodular_selection_information_keyphrases(
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
     keyphrase_list: List[str],
     keyphrase_vectors: np.ndarray,
-    embedding_model: SentenceTransformer,
+    embedding_model: TextEmbedderProtocol,
     n_keyphrases: int = 16,
     prior_strength: float = 0.01,
     weight_power: float = 2.0,
@@ -1019,8 +1018,8 @@ def submodular_selection_information_keyphrases(
         A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
     keyphrase_vectors : np.ndarray
         An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
-    embedding_model : SentenceTransformer
-        A SentenceTransformer model for embedding keyphrases.
+    embedding_model : TextEmbedderProtocol
+        A text embedding model for embedding keyphrases.
     n_keyphrases : int, optional
         The number of keyphrases to generate for each cluster, by default 16.
     prior_strength : float, optional

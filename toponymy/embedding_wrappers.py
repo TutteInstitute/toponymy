@@ -4,8 +4,23 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
 
 
-from typing import Optional, List
+from typing import Optional, List, Protocol, Sequence
 from toponymy._utils import handle_verbose_params
+
+
+class TextEmbedderProtocol(Protocol):
+    """Protocol defining the minimal interface required by a text embedder."""
+
+    def encode(
+        self,
+        texts: Sequence[str],
+        verbose: Optional[bool],
+        show_progress_bar: Optional[bool],
+        *args,
+        **kwargs,
+    ) -> np.typing.NDArray[np.floating]:
+        ...
+
 
 # Cohere
 try:

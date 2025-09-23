@@ -3,9 +3,9 @@ from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
+from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy._utils import handle_verbose_params
 
-from sentence_transformers import SentenceTransformer
 from sklearn.utils.validation import check_is_fitted
 import numpy as np
 
@@ -22,7 +22,7 @@ class Toponymy:
     -----------
     llm_wrapper: class
         A llm_wrapper class.  These should be objects that inherit from the LlmWrapper base classs.
-    embedding_model: callable
+    text_embedding_model: TextEmbedderProtocol
         a function with an encode used to vectorize the objects that we are topic modeling.
     clusterer: Clusterer
         The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
@@ -94,7 +94,7 @@ class Toponymy:
     def __init__(
         self,
         llm_wrapper: LLMWrapper,
-        text_embedding_model: SentenceTransformer,
+        text_embedding_model: TextEmbedderProtocol,
         clusterer: Clusterer = ToponymyClusterer(),
         layer_class: Type[ClusterLayer] = ClusterLayerText,
         keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),

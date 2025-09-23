@@ -17,12 +17,12 @@ from toponymy.exemplar_texts import (
 from toponymy.subtopics import central_subtopics, information_weighted_subtopics, submodular_subtopics
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
+from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.prompt_construction import (
     topic_name_prompt,
     cluster_topic_names_for_renaming,
     distinguish_topic_names_prompt,
 )
-from sentence_transformers import SentenceTransformer
 from tqdm.auto import tqdm
 import asyncio
 from toponymy._utils import handle_verbose_params
@@ -74,7 +74,7 @@ class ClusterLayer(ABC):
         cluster_labels: np.ndarray,
         centroid_vectors: np.ndarray,
         layer_id: int,
-        text_embedding_model: Optional[SentenceTransformer] = None,
+        text_embedding_model: Optional[TextEmbedderProtocol] = None,
         object_to_text_function: Optional[Callable[List[Any], List[str]]] = None,
         n_exemplars: int = 16,
         n_keyphrases: int = 24,
@@ -119,7 +119,7 @@ class ClusterLayer(ABC):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
     ) -> List[str]:
         pass
 
@@ -140,7 +140,7 @@ class ClusterLayer(ABC):
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
     ) -> List[List[str]]:
         pass
 
@@ -150,7 +150,7 @@ class ClusterLayer(ABC):
         topic_list: List[str],
         topic_labels: np.ndarray,
         topic_vectors: Optional[np.ndarray] = None,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
     ) -> List[List[str]]:
         pass
 
@@ -164,7 +164,7 @@ class ClusterLayer(ABC):
 
     def embed_topic_names(
         self,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
     ) -> None:
         if embedding_model is None and self.text_embedding_model is None:
             raise ValueError("An embedding model must be provided")
@@ -300,7 +300,7 @@ class ClusterLayer(ABC):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
     ):
         self.embed_topic_names(embedding_model)
         self._make_disambiguation_prompts(
@@ -333,7 +333,7 @@ class ClusterLayerText(ClusterLayer):
         cluster_labels: np.ndarray,
         centroid_vectors: np.ndarray,
         layer_id: int,
-        text_embedding_model: Optional[SentenceTransformer] = None,
+        text_embedding_model: Optional[TextEmbedderProtocol] = None,
         n_keyphrases: int = 16,
         keyphrase_diversify_alpha: float = 1.0,
         n_exemplars: int = 8,
@@ -426,7 +426,7 @@ class ClusterLayerText(ClusterLayer):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
     ) -> List[str]:
         if isinstance(llm, LLMWrapper):
             self.topic_names = [
@@ -515,7 +515,7 @@ class ClusterLayerText(ClusterLayer):
         keyphrase_list: List[str],
         object_x_keyphrase_matrix: scipy.sparse.spmatrix,
         keyphrase_vectors: np.ndarray,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
         method: str = "information_weighted",
     ) -> List[List[str]]:
         if method == "information_weighted":
@@ -579,7 +579,7 @@ class ClusterLayerText(ClusterLayer):
         topic_list: List[str],
         topic_labels: np.ndarray,
         topic_vectors: Optional[np.ndarray] = None,
-        embedding_model: Optional[SentenceTransformer] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
         method: str = "facility_location",
     ) -> List[List[str]]:
         if method == "central":
