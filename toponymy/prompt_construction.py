@@ -5,7 +5,7 @@ from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_KINDS
 from collections import defaultdict
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import pairwise_distances
-from sentence_transformers import SentenceTransformer
+from toponymy.embedding_wrappers import TextEmbedderProtocol
 
 from typing import List, Optional, Any, Tuple, Union, Dict
 
@@ -63,7 +63,7 @@ def find_threshold_for_max_cluster_size(
 def cluster_topic_names_for_renaming(
     topic_names: List[str],
     topic_name_embeddings: Optional[np.ndarray] = None,
-    embedding_model: Optional[SentenceTransformer] = None,
+    embedding_model: Optional[TextEmbedderProtocol] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Cluster topic names for renaming based on cosine similarity of their embeddings.
@@ -75,8 +75,8 @@ def cluster_topic_names_for_renaming(
         List of topic names to cluster.
     topic_name_embeddings : Optional[np.ndarray], optional
         Precomputed embeddings for the topic names, by default None.
-    embedding_model : Optional[SentenceTransformer], optional
-        SentenceTransformer model to compute embeddings for the topic names, by default None.
+    embedding_model : Optional[TextEmbedderProtocol], optional
+        A text embedding model to compute embeddings for the topic names, by default None.
 
     Returns
     -------
@@ -89,7 +89,7 @@ def cluster_topic_names_for_renaming(
                 "Either topic_name_embeddings or embedding_model must be provided."
             )
         topic_name_embeddings = embedding_model.encode(
-            topic_names, verbose=True
+            topic_names
         )
     distances = pairwise_distances(topic_name_embeddings, metric="cosine")
     threshold = find_threshold_for_max_cluster_size(distances)
