@@ -14,7 +14,6 @@ class TextEmbedderProtocol(Protocol):
     def encode(
         self,
         texts: Sequence[str],
-        verbose: Optional[bool],
         show_progress_bar: Optional[bool],
         *args,
         **kwargs,
