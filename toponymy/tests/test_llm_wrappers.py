@@ -4,7 +4,7 @@ import json
 from typing import List, Optional
 from toponymy.llm_wrappers import repair_json_string_backslashes
 
-from toponymy.llm_wrappers import Anthropic, OpenAI, Cohere, HuggingFace, AzureAI, LlamaCpp, Ollama, GoogleGemini, Together, Replicate, Ollama, GoogleGemini
+from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
 
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {
@@ -144,7 +144,7 @@ def mock_data():
 @pytest.fixture
 def llamacpp_wrapper():
     with patch('llama_cpp.Llama'):
-        wrapper = LlamaCpp(model_path="dummy", n_ctx=4096, n_batch=512, n_threads=4)
+        wrapper = LlamaCppNamer(model_path="dummy", n_ctx=4096, n_batch=512, n_threads=4)
         return wrapper
 
 def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
@@ -188,7 +188,7 @@ def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
 @pytest.fixture
 def huggingface_wrapper():
     with patch('transformers.pipeline'):
-        wrapper = HuggingFace(model="dummy")
+        wrapper = HuggingFaceNamer(model="dummy")
         return wrapper
 
 def test_huggingface_generate_topic_name_success(huggingface_wrapper, mock_data):
@@ -246,7 +246,7 @@ def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_da
 @pytest.fixture
 def anthropic_wrapper():
     with patch('anthropic.Anthropic'):
-        wrapper = Anthropic(api_key="dummy")
+        wrapper = AnthropicNamer(api_key="dummy")
         return wrapper
 
 def test_anthropic_generate_topic_name_success(anthropic_wrapper, mock_data):
@@ -303,7 +303,7 @@ def test_anthropic_generate_cluster_names_failure(anthropic_wrapper, mock_data):
 @pytest.fixture
 def openai_wrapper():
     with patch('openai.OpenAI'):
-        wrapper = OpenAI(api_key="dummy")
+        wrapper = OpenAINamer(api_key="dummy")
         return wrapper
 
 def test_openai_generate_topic_name_success(openai_wrapper, mock_data):
@@ -363,7 +363,7 @@ def cohere_wrapper():
         # Mock the models.get method to prevent UnauthorizedError
         mock_client.return_value.models = Mock()
         mock_client.return_value.models.get = Mock()
-        wrapper = Cohere(api_key="dummy")
+        wrapper = CohereNamer(api_key="dummy")
         return wrapper
 
 def test_cohere_generate_topic_name_success(cohere_wrapper, mock_data):
@@ -421,7 +421,7 @@ def test_cohere_generate_cluster_names_failure(cohere_wrapper, mock_data):
 @pytest.fixture
 def azureai_wrapper():
     with patch('azure.ai.inference.ChatCompletionsClient'):
-        wrapper = AzureAI(api_key="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
+        wrapper = AzureAINamer(api_key="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
         return wrapper
     
 def test_azureai_generate_topic_name_success(azureai_wrapper, mock_data):
@@ -530,7 +530,7 @@ def test_repair_json_string_backslashes_empty():
 @pytest.fixture
 def ollama_wrapper():
     with patch('ollama.Client'):
-        wrapper = Ollama(model="llama3.2", host="http://localhost:11434")
+        wrapper = OllamaNamer(model="llama3.2", host="http://localhost:11434")
         return wrapper
 
 def test_ollama_generate_topic_name_success(ollama_wrapper, mock_data):
@@ -583,7 +583,7 @@ def test_ollama_generate_cluster_names_failure(ollama_wrapper, mock_data):
 @pytest.fixture
 def google_gemini_wrapper():
     with patch('google.generativeai.configure'), patch('google.generativeai.GenerativeModel'):
-        wrapper = GoogleGemini(api_key="dummy", model="gemini-1.5-flash")
+        wrapper = GoogleGeminiNamer(api_key="dummy", model="gemini-1.5-flash")
         return wrapper
 
 def test_google_gemini_generate_topic_name_success(google_gemini_wrapper, mock_data):
@@ -635,7 +635,7 @@ def test_google_gemini_generate_cluster_names_failure(google_gemini_wrapper, moc
 @pytest.fixture
 def together_wrapper():
     with patch('together.Together'):
-        wrapper = Together(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
+        wrapper = TogetherNamer(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
         return wrapper
 
 def test_together_generate_topic_name_success(together_wrapper, mock_data):
@@ -703,7 +703,7 @@ def test_together_generate_cluster_names_failure(together_wrapper, mock_data):
 @pytest.fixture
 def replicate_wrapper():
     with patch('replicate.run'):
-        wrapper = Replicate(api_token="dummy", model="meta/llama-2-70b-chat")
+        wrapper = ReplicateNamer(api_token="dummy", model="meta/llama-2-70b-chat")
         return wrapper
 
 def test_replicate_generate_topic_name_success(replicate_wrapper, mock_data):
