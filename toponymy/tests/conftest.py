@@ -8,24 +8,24 @@ import umap
 import pytest
 
 from sentence_transformers import SentenceTransformer
-from toponymy.llm_wrappers import HuggingFace, AsyncHuggingFace
+from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 
 @pytest.fixture(scope="function")
 def llm():
     """Fixture for the LLM model."""
-    return HuggingFace("Qwen/Qwen2.5-0.5B-Instruct")
+    return HuggingFaceNamer("Qwen/Qwen2.5-0.5B-Instruct")
     # return HuggingFace("Qwen/Qwen3-0.6B", llm_specific_instructions=" /no_think")
 
 @pytest.fixture(scope="function")
 def null_llm():
     """Fixture for a null LLM model."""
-    return HuggingFace("hf-internal-testing/tiny-random-gpt2")
+    return HuggingFaceNamer("hf-internal-testing/tiny-random-gpt2")
 
 @pytest.fixture(scope="function")
 def async_llm():
     """Fixture for the async LLM model."""
-    return AsyncHuggingFace(
+    return AsyncHuggingFaceNamer(
         "Qwen/Qwen2.5-0.5B-Instruct",
         max_concurrent_requests=4,
     )

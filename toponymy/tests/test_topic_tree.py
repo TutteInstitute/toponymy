@@ -1,7 +1,7 @@
 from toponymy import Toponymy
 from toponymy.clustering import ToponymyClusterer
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.llm_wrappers import HuggingFace
+from toponymy.llm_wrappers import HuggingFaceNamer
 
 from sentence_transformers import SentenceTransformer
 from toponymy.topic_tree import TopicTree, topic_tree_html, topic_tree_string_recursion

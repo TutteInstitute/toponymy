@@ -7,8 +7,8 @@ import asyncio
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
-    AsyncCohere, AsyncAnthropic, BatchAnthropic, AsyncOpenAI, AsyncAzureAI,
-    AsyncOllama, AsyncGoogleGemini, AsyncTogether
+    AsyncCohereNamer, AsyncAnthropicNamer, BatchAnthropicNamer, AsyncOpenAINamer, AsyncAzureAINamer,
+    AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether
 )
 from toponymy.tests.test_llm_wrappers import (
     MockLLMResponse, VALID_TOPIC_NAME_RESPONSE, VALID_CLUSTER_NAMES_RESPONSE,
@@ -94,7 +94,7 @@ class MockAsyncResponse:
 @pytest_asyncio.fixture
 async def async_cohere_wrapper():
     with patch('cohere.AsyncClientV2'):
-        wrapper = AsyncCohere(api_key="dummy")
+        wrapper = AsyncCohereNamer(api_key="dummy")
         yield wrapper
         # Clean up any resources
         try:
@@ -193,7 +193,7 @@ async def test_async_cohere_batch_processing(async_cohere_wrapper, mock_data):
 @pytest_asyncio.fixture
 async def async_anthropic_wrapper():
     with patch('anthropic.AsyncAnthropic'):
-        wrapper = AsyncAnthropic(api_key="dummy")
+        wrapper = AsyncAnthropicNamer(api_key="dummy")
         yield wrapper
 
 
@@ -258,7 +258,7 @@ async def test_async_anthropic_generate_topic_cluster_names_malformed_mapping(as
 @pytest_asyncio.fixture
 async def batch_anthropic_wrapper():
     with patch('anthropic.Anthropic'):
-        wrapper = BatchAnthropic(api_key="dummy")
+        wrapper = BatchAnthropicNamer(api_key="dummy")
         yield wrapper
 
 
@@ -322,7 +322,7 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
 @pytest_asyncio.fixture
 async def async_openai_wrapper():
     with patch('openai.AsyncOpenAI'):
-        wrapper = AsyncOpenAI(api_key="dummy")
+        wrapper = AsyncOpenAINamer(api_key="dummy")
         yield wrapper
         # Clean up any resources
         try:
@@ -392,7 +392,7 @@ async def test_async_openai_generate_topic_cluster_names_malformed_mapping(async
 @pytest_asyncio.fixture
 async def async_azureai_wrapper():
     with patch('azure.ai.inference.aio.ChatCompletionsClient'):
-        wrapper = AsyncAzureAI(api_key="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
+        wrapper = AsyncAzureAINamer(api_key="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
         yield wrapper
         # Clean up any resources
         try:
@@ -477,7 +477,7 @@ async def test_async_azureai_generate_topic_cluster_names_multiple(async_azureai
 @pytest_asyncio.fixture
 async def async_ollama_wrapper():
     with patch('ollama.AsyncClient'):
-        wrapper = AsyncOllama(model="llama3.2", host="http://localhost:11434")
+        wrapper = AsyncOllamaNamer(model="llama3.2", host="http://localhost:11434")
         yield wrapper
 
 
@@ -554,7 +554,7 @@ async def test_async_ollama_batch_processing(async_ollama_wrapper, mock_data):
 @pytest_asyncio.fixture
 async def async_google_gemini_wrapper():
     with patch('google.generativeai.configure'), patch('google.generativeai.GenerativeModel'):
-        wrapper = AsyncGoogleGemini(api_key="dummy", model="gemini-1.5-flash")
+        wrapper = AsyncGoogleGeminiNamer(api_key="dummy", model="gemini-1.5-flash")
         yield wrapper
 
 

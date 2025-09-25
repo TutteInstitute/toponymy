@@ -1,5 +1,5 @@
 from toponymy.toponymy import Toponymy
-from toponymy.llm_wrappers import HuggingFace, AsyncHuggingFace, Ollama, AsyncOllama
+from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer, OllamaNamer, AsyncOllamaNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import ClusterLayerText
@@ -276,7 +276,7 @@ def test_toponymy_with_ollama(
         
         try:
             # Use the very small model for testing
-            ollama_llm = Ollama(
+            ollama_llm = OllamaNamer(
                 model=model_name,  # Very small model for CI
                 host="http://localhost:11434"
             )
@@ -452,7 +452,7 @@ def test_toponymy_async_ollama(
         try:
             
             # Use async Ollama with very limited concurrency for small models
-            async_ollama_llm = AsyncOllama(
+            async_ollama_llm = AsyncOllamaNamer(
                 model=model_name,  # Very small model for CI
                 host="http://localhost:11434",
                 max_concurrent_requests=1  # Very conservative for small models and CI
@@ -530,20 +530,20 @@ def test_ollama_wrapper_fallback():
     """Test that Ollama wrapper gracefully handles missing dependencies."""
     try:
         # This should work if ollama is installed
-        from toponymy.llm_wrappers import Ollama, AsyncOllama
+        from toponymy.llm_wrappers import OllamaNamer, AsyncOllamaNamer
         
         # If we get here, ollama is available, so we can test basic instantiation
         # but we won't actually call the service since it might not be running
-        assert Ollama is not None
-        assert AsyncOllama is not None
+        assert OllamaNamer is not None
+        assert AsyncOllamaNamer is not None
         
     except ImportError:
         # If ollama package is not installed, we should get FailedImportLLMWrapper
-        from toponymy.llm_wrappers import Ollama, AsyncOllama
+        from toponymy.llm_wrappers import OllamaNamer, AsyncOllamaNamer
         
         # These should be FailedImportLLMWrapper instances
-        ollama_instance = Ollama()
-        async_ollama_instance = AsyncOllama()
+        ollama_instance = OllamaNamer()
+        async_ollama_instance = AsyncOllamaNamer()
         
         # Verify they handle method calls gracefully
         result = ollama_instance.generate_topic_name("test")
@@ -566,7 +566,7 @@ def test_ollama_wrapper_with_mock_for_ci():
     """
     try:
         from unittest.mock import Mock, patch
-        from toponymy.llm_wrappers import Ollama
+        from toponymy.llm_wrappers import OllamaNamer
         
         # Mock the ollama client to simulate responses
         with patch('ollama.Client') as mock_client_class:
@@ -580,7 +580,7 @@ def test_ollama_wrapper_with_mock_for_ci():
             mock_client.generate.return_value = mock_response
             
             # Create Ollama wrapper with mocked client
-            ollama_llm = Ollama(model="test-model", host="http://localhost:11434")
+            ollama_llm = OllamaNamer(model="test-model", host="http://localhost:11434")
             
             # Test basic functionality
             result = ollama_llm.generate_topic_name("Test prompt about machine learning")
@@ -614,7 +614,7 @@ def test_async_ollama_wrapper_with_mock_for_ci():
     """
     try:
         from unittest.mock import Mock, patch, AsyncMock
-        from toponymy.llm_wrappers import AsyncOllama
+        from toponymy.llm_wrappers import AsyncOllamaNamer
         import asyncio
         
         async def run_test():
@@ -630,7 +630,7 @@ def test_async_ollama_wrapper_with_mock_for_ci():
                 mock_client.generate = AsyncMock(return_value=mock_response)
                 
                 # Create AsyncOllama wrapper with mocked client
-                async_ollama_llm = AsyncOllama(
+                async_ollama_llm = AsyncOllamaNamer(
                     model="test-model", 
                     host="http://localhost:11434",
                     max_concurrent_requests=2
@@ -681,7 +681,7 @@ def test_ollama_wrapper_mock():
             'response': '{"topic_name": "Mocked Topic", "topic_specificity": 0.7}'
         }
         
-        wrapper = Ollama(model="test-model")
+        wrapper = OllamaNamer(model="test-model")
         response = wrapper.generate_topic_name("Test prompt")
         
         assert response == 'Mocked Topic'
@@ -704,7 +704,7 @@ def test_async_ollama_wrapper_mock():
                 'response': '{"topic_name": "Mocked Async Topic", "topic_specificity": 0.8}'
             }
             
-            wrapper = AsyncOllama(model="test-model")
+            wrapper = AsyncOllamaNamer(model="test-model")
             response = await wrapper.generate_topic_names(["Test prompt"])
             
             assert response == ['Mocked Async Topic']
@@ -778,7 +778,7 @@ def test_toponymy_with_mocked_ollama(
         
         mock_instance.chat.side_effect = mock_chat_response
         
-        ollama_llm = Ollama(
+        ollama_llm = OllamaNamer(
             model="mocked-model",
             host="http://localhost:11434"
         )

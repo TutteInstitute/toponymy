@@ -12,12 +12,12 @@ Local LLM Wrappers
 
 These wrappers are designed to work with locally running LLMs.
 
-.. autoclass:: toponymy.llm_wrappers.HuggingFace
+.. autoclass:: toponymy.llm_wrappers.HuggingFaceNamer
    :members:
    :undoc-members:
    :show-inheritance:
 
-.. autoclass:: toponymy.llm_wrappers.LlamaCpp
+.. autoclass:: toponymy.llm_wrappers.LlamaCppNamer
    :members:
    :undoc-members:
    :show-inheritance:
@@ -25,22 +25,22 @@ These wrappers are designed to work with locally running LLMs.
 LLM Service Wrappers
 ^^^^^^^^^^^^^^^^^^^^
 
-.. autoclass:: toponymy.llm_wrappers.OpenAI
+.. autoclass:: toponymy.llm_wrappers.OpenAINamer
     :members:
     :undoc-members:
     :show-inheritance:
 
-.. autoclass:: toponymy.llm_wrappers.Cohere
+.. autoclass:: toponymy.llm_wrappers.CohereNamer
     :members:
     :undoc-members:
     :show-inheritance:
 
-.. autoclass:: toponymy.llm_wrappers.Anthropic
+.. autoclass:: toponymy.llm_wrappers.AnthropicNamer
     :members:
     :undoc-members:
     :show-inheritance:
 
-.. autoclass:: toponymy.llm_wrappers.AzureAI
+.. autoclass:: toponymy.llm_wrappers.AzureAINamer
     :members:
     :undoc-members:
     :show-inheritance:
