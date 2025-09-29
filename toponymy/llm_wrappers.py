@@ -391,7 +391,7 @@ class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
 try:
     import llama_cpp
 
-    class LlamaCpp(LLMWrapper):
+    class LlamaCppNamer(LLMWrapper):
         """
         Provides Access to LlamaCpp models with the Toponymy framework. For more information on LlamaCpp, see
         https://github.com/abetlen/llama-cpp-python. You will need llamma-cpp-python installed to make use of 
@@ -456,7 +456,7 @@ try:
             return False
 
 except ImportError:
-    class LlamaCpp(FailedImportLLMWrapper):
+    class LlamaCppNamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -465,7 +465,7 @@ try:
     import huggingface_hub
     import transformers
 
-    class HuggingFace(LLMWrapper):
+    class HuggingFaceNamer(LLMWrapper):
         """
         Provides access to Huggingface models from Huggingface Hub with the Toponymy framework. 
         For more information on Huggingface, see https://huggingface.co/docs/transformers/index.
@@ -532,7 +532,7 @@ try:
             print(result)
             return result
         
-    class AsyncHuggingFace(AsyncLLMWrapper):
+    class AsyncHuggingFaceNamer(AsyncLLMWrapper):
         """This class is essentially for testing purposes only, allowing testing of the Async API with local models."""
 
         def __init__(self, model: str, llm_specific_instructions: Optional[str] = None, max_concurrent_requests: int = 10, **kwargs):
@@ -572,12 +572,12 @@ try:
                 responses.append(response[0]["generated_text"])
             return responses
 except:
-    class HuggingFace(FailedImportLLMWrapper):
+    class HuggingFaceNamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
-    class AsyncHuggingFace(FailedImportAsyncLLMWrapper):
+    class AsyncHuggingFaceNamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -586,7 +586,7 @@ try:
     import vllm
     import vllm.v1.engine.exceptions
 
-    class VLLM(LLMWrapper):
+    class VLLMNamer(LLMWrapper):
         """
         Provides access to Huggingface models from Huggingface Hub ran via vLLM, with the Toponymy framework. 
         For more information on vLLM, see https://docs.vllm.ai/en/latest/.
@@ -660,7 +660,7 @@ try:
             result = outputs[0].outputs[0].text
             return result
         
-    class AsyncVLLM(AsyncLLMWrapper):
+    class AsyncVLLMNamer(AsyncLLMWrapper):
         """This class is essentially for testing purposes only, allowing testing of the Async API with local models."""
 
         def __init__(self, model: str, llm_specific_instructions: Optional[str] = None, max_concurrent_requests: int = 10, **kwargs):
@@ -703,12 +703,12 @@ try:
             return [output.outputs[0].text for output in outputs]
 
 except ImportError:
-    class VLLM(FailedImportLLMWrapper):
+    class VLLMNamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
-    class AsyncVLLM(FailedImportAsyncLLMWrapper):
+    class AsyncVLLMNamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -716,7 +716,7 @@ except ImportError:
 try:
     import cohere
 
-    class Cohere(LLMWrapper):
+    class CohereNamer(LLMWrapper):
         """
         Provides access to Cohere's LLMs with the Toponymy framework. For more information on Cohere, see
         https://docs.cohere.com/docs/llm-overview. You will need a Cohere API key to use this wrapper. The
@@ -812,7 +812,7 @@ try:
             result = response.message.content[0].text
             return result
 
-    class AsyncCohere(AsyncLLMWrapper):
+    class AsyncCohereNamer(AsyncLLMWrapper):
         """
         Provides access to Cohere's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         For more information on Cohere, see https://docs.cohere.com/docs/llm-overview. You will need a Cohere API key to use this wrapper.
@@ -937,7 +937,7 @@ try:
             ]
             return await asyncio.gather(*tasks)
 
-    class CohereBatch(FailedImportAsyncLLMWrapper):
+    class CohereBatchNamer(FailedImportAsyncLLMWrapper):
         """
         Provides access to Cohere's Batch Processing API with asynchronous support.
         This allows for processing large batches of prompts over an extended period.
@@ -1163,12 +1163,12 @@ try:
             self.client.beta.messages.batches.cancel(batch_id)
 
 except:
-    class Cohere(FailedImportLLMWrapper):
+    class CohereNamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
-    class AsyncCohere(FailedImportAsyncLLMWrapper):
+    class AsyncCohereNamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -1177,7 +1177,7 @@ try:
     import anthropic
     import time
 
-    class Anthropic(LLMWrapper):
+    class AnthropicNamer(LLMWrapper):
         """
         Provides access to Anthropic's LLMs with the Toponymy framework. For more information on Anthropic, see
         https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
@@ -1251,7 +1251,7 @@ try:
             result = response.content[0].text
             return result
         
-    class AsyncAnthropic(AsyncLLMWrapper):
+    class AsyncAnthropicNamer(AsyncLLMWrapper):
         """
         Provides access to Anthropic's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         For more information on Anthropic, see https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
@@ -1359,7 +1359,7 @@ try:
             ]
             return await asyncio.gather(*tasks)
 
-    class BatchAnthropic(AsyncLLMWrapper):
+    class BatchAnthropicNamer(AsyncLLMWrapper):
         """
         Provides access to Anthropic's Batch Processing API with asynchronous support.
         This allows for processing large batches of prompts over an extended period.
@@ -1585,17 +1585,17 @@ try:
             self.client.beta.messages.batches.cancel(batch_id)
 
 except:
-    class Anthropic(FailedImportLLMWrapper):
+    class AnthropicNamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
-    class AsyncAnthropic(FailedImportAsyncLLMWrapper):
+    class AsyncAnthropicNamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
-    class BatchAnthropic(FailedImportAsyncLLMWrapper):
+    class BatchAnthropicNamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -1603,7 +1603,7 @@ except:
 try:
     import together
 
-    class Together(LLMWrapper):
+    class TogetherNamer(LLMWrapper):
         """
         Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
         For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
@@ -1669,7 +1669,7 @@ try:
 
 except ImportError:
     
-    class Together(FailedImportLLMWrapper):
+    class TogetherNamer(FailedImportLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
     
@@ -1680,7 +1680,7 @@ except ImportError:
 try:
     import openai
 
-    class OpenAI(LLMWrapper):
+    class OpenAINamer(LLMWrapper):
         """
         Provides access to OpenAI's LLMs with the Toponymy framework. For more information on OpenAI, see
         https://platform.openai.com/docs/models/overview. You will need an OpenAI API key to use this wrapper.
@@ -1768,7 +1768,7 @@ try:
             return result
 
 
-    class AsyncOpenAI(AsyncLLMWrapper):
+    class AsyncOpenAINamer(AsyncLLMWrapper):
         """
         Provides access to OpenAI's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         For more information on OpenAI, see https://platform.openai.com/docs/models/overview. You will need an OpenAI API key to use this wrapper.
@@ -1899,12 +1899,12 @@ try:
 
 except:
 
-    class OpenAI(FailedImportLLMWrapper):
+    class OpenAINamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
-    class AsyncOpenAI(FailedImportAsyncLLMWrapper):
+    class AsyncOpenAINamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -1913,7 +1913,7 @@ except:
 try:
     import together
 
-    class Together(LLMWrapper):
+    class TogetherNamer(LLMWrapper):
         """
         Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
         For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
@@ -2088,7 +2088,7 @@ try:
 
 except ImportError:
     
-    class Together(FailedImportLLMWrapper):
+    class TogetherNamer(FailedImportLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
     
@@ -2099,7 +2099,7 @@ except ImportError:
 try:
     import replicate
 
-    class Replicate(LLMWrapper):
+    class ReplicateNamer(LLMWrapper):
         """
         Provides access to Replicate's LLMs with the Toponymy framework. Replicate provides access to various models including Llama, GPT-J, and others.
         For more information on Replicate, see https://replicate.com/. You will need a Replicate API token to use this wrapper.
@@ -2165,7 +2165,7 @@ try:
 
 except ImportError:
     
-    class Replicate(FailedImportLLMWrapper):
+    class ReplicateNamer(FailedImportLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
@@ -2175,7 +2175,7 @@ try:
     from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.core.credentials import AzureKeyCredential
 
-    class AzureAI(LLMWrapper):
+    class AzureAINamer(LLMWrapper):
         """
         Provides access to the Azure AI Foundry LLMs with the Toponymy framework. For more information on Azure AI, see
         https://learn.microsoft.com/en-us/azure/ai-services/overview. You will need an Azure API key for your Foundry model 
@@ -2259,7 +2259,7 @@ try:
             result = response.choices[0].message.content
             return result
                 
-    class AsyncAzureAI(AsyncLLMWrapper):
+    class AsyncAzureAINamer(AsyncLLMWrapper):
         """
         Provides access to the Azure AI Foundry LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         For more information on Azure AI, see https://learn.microsoft.com/en-us/azure/ai-services/overview. You will need an Azure API key for your Foundry model
@@ -2387,7 +2387,7 @@ try:
             ]
             return await asyncio.gather(*tasks)
 
-    class BatchAzureAI(AsyncLLMWrapper):
+    class BatchAzureAINamer(AsyncLLMWrapper):
         """
         Provides access to Azure AI Foundry's Batch Processing API with asynchronous support.
         This allows for processing large batches of prompts over an extended period.
@@ -2615,12 +2615,12 @@ try:
             self.client.beta.messages.batches.cancel(batch_id)
 
 except ImportError:
-    class AzureAI(FailedImportLLMWrapper):
+    class AzureAINamer(FailedImportLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
     
-    class AsyncAzureAI(FailedImportAsyncLLMWrapper):
+    class AsyncAzureAINamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
@@ -2628,7 +2628,7 @@ except ImportError:
 try:
     import ollama
 
-    class Ollama(LLMWrapper):
+    class OllamaNamer(LLMWrapper):
         """
         Provides access to Olloma's local LLMs with the Toponymy framework. Ollama allows you to run large language models locally.
         For more information on Olloma, see https://ollama.ai/. You'll need to have Olloma installed and running locally.
@@ -2691,7 +2691,7 @@ try:
             )
             return response['message']['content']
 
-    class AsyncOllama(AsyncLLMWrapper):
+    class AsyncOllamaNamer(AsyncLLMWrapper):
         """
         Provides access to Olloma's local LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         Olloma allows you to run large language models locally. For more information on Olloma, see https://ollama.ai/. 
@@ -2801,18 +2801,18 @@ try:
 
 except ImportError:
     
-    class Ollama(FailedImportLLMWrapper):
+    class OllamaNamer(FailedImportLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
     
-    class AsyncOllama(FailedImportAsyncLLMWrapper):
+    class AsyncOllamaNamer(FailedImportAsyncLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
 try:
     import google.generativeai as genai
 
-    class GoogleGemini(LLMWrapper):
+    class GoogleGeminiNamer(LLMWrapper):
         """
         Provides access to Google's Gemini LLMs with the Toponymy framework. For more information on Google Gemini, see
         https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
@@ -2882,7 +2882,7 @@ try:
             )
             return response.text
 
-    class AsyncGoogleGemini(AsyncLLMWrapper):
+    class AsyncGoogleGeminiNamer(AsyncLLMWrapper):
         """
         Provides access to Google's Gemini LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         For more information on Google Gemini, see https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
@@ -2998,11 +2998,11 @@ try:
 
 except ImportError:
     
-    class GoogleGemini(FailedImportLLMWrapper):
+    class GoogleGeminiNamer(FailedImportLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
     
-    class AsyncGoogleGemini(FailedImportAsyncLLMWrapper):
+    class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
