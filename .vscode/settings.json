@@ -1,6 +1,11 @@
 {
-    "python.testing.pytestArgs": [],
+    "python.testing.pytestArgs": [
+        "toponymy/tests",
+        "-v",
+        "--tb=short"
+    ],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
     "python.experiments.optInto": ["pythonTestAdapter"]
 }
