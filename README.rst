@@ -120,10 +120,10 @@ Also make sure that openai is installed in your environment. You can test your c
 
     import openai
     from toponymy import Toponymy
-    from toponymy.llm_wrappers import OpenAI
+    from toponymy.llm_wrappers import OpenAINamer
     
     openai_api_key = open("openai_key.txt").read().strip()
-    llm = OpenAI(openai_api_key)
+    llm = OpenAINamer(openai_api_key)
     llm.test_llm_connectivity()
 
 
