@@ -1,4 +1,7 @@
+from typing import Dict, List
+
 import jinja2
+import pydantic
 
 
 SUMMARY_KINDS = [
@@ -13,6 +16,62 @@ SUMMARY_KINDS = [
 
 GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
 GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
+
+class TopicNameResponse(pydantic.BaseModel):
+    topic_name: str
+    topic_specificity: float = pydantic.Field(ge=0.0, le=1.0)
+
+
+def get_topic_cluster_json_schema(max_length: int) -> Dict:
+    return {
+        'properties': {
+            'new_topic_name_mapping': {
+                'minProperties': 1,
+                "maxProperties": max_length,
+                'additionalProperties': {
+                    'type': 'string'
+                }, 
+                'title': 'New Topic Name Mapping', 
+                'type': 'object'
+            }, 
+            'topic_specificities': {
+                'description': 'Each score must be between 0.0 and 1.0', 
+                'items': {
+                    'type': 'number'
+                }, 
+                'title': 'Topic Specificities', 
+                'type': 'array'
+            }
+        }, 
+        'required': ['new_topic_name_mapping', 'topic_specificities'], 
+        'title': 'TopicClusterNamesResponse', 
+        'type': 'object'
+    }
+
+def get_specific_topic_cluster_json_schema(old_names: List[str]) -> Dict:
+    return {
+        'properties': {
+            'new_topic_name_mapping': {
+                "properties": {n: {"type": "string"} for n in old_names},
+                "additionalProperties": False,
+                "minProperties": len(old_names),
+                "maxProperties": len(old_names),
+                'title': 'New Topic Name Mapping', 
+                'type': 'object'
+            }, 
+            'topic_specificities': {
+                'description': 'Each score must be between 0.0 and 1.0', 
+                'items': {
+                    'type': 'number'
+                }, 
+                'title': 'Topic Specificities', 
+                'type': 'array'
+            }
+        }, 
+        'required': ['new_topic_name_mapping', 'topic_specificities'], 
+        'title': 'TopicClusterNamesResponse', 
+        'type': 'object'
+    }
 
 PROMPT_TEMPLATES = {
     "layer": {
