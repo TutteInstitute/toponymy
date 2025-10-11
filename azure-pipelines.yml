@@ -117,7 +117,6 @@ stages:
             pip install -e .
             pip install pytest  pytest-azurepipelines
             pip install pytest-cov
-            pip install coveralls
           displayName: 'Install package'
 
         - script: |
@@ -221,14 +220,6 @@ stages:
           condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
           continueOnError: true
 
-
-        - bash: |
-            coveralls
-          displayName: 'Publish to coveralls'
-          condition: and(succeeded(), eq(variables.triggeredByPullRequest, false)) # Don't run this for PRs because they can't access pipeline secrets
-          env:
-            COVERALLS_REPO_TOKEN: $(COVERALLS_TOKEN)
-
         - task: PublishTestResults@2
           inputs:
             testResultsFiles: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
@@ -260,7 +251,8 @@ stages:
           displayName: 'Install package locally'
         
         - script: |
-            python setup.py sdist bdist_wheel
+            pip install build
+            python -m build --wheel --sdist --outdir dist/ .
           displayName: 'Build package'
 
         - bash: |
