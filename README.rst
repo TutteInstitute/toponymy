@@ -8,7 +8,7 @@ Toponymy
   :alt: Toponymy
 
 
-**🤖 Chat with our AI docs:** https://deepwiki.com/TutteInstitute/toponymy
+**🤖 Chat with our AI docs:** https://deepwiki.com/dmlc/xgboost?tab=readme-ov-file
 
 The package name Toponymy is derived from the Greek topos ‘place’ + onuma ‘name’.  Thus, the naming of places.  
 The goal of Toponymy is to put names to places in the space of information. This could be a corpus of documents,
