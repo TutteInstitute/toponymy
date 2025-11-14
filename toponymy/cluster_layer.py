@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Callable, Any, Optional, Tuple, Union
+from typing import List, Callable, Any, Optional, Tuple, Union, Dict
 import scipy.sparse
 import numpy as np
 import pandas as pd
@@ -14,7 +14,11 @@ from toponymy.exemplar_texts import (
     submodular_selection_exemplars,
     random_exemplars,
 )
-from toponymy.subtopics import central_subtopics, information_weighted_subtopics, submodular_subtopics
+from toponymy.subtopics import (
+    central_subtopics,
+    information_weighted_subtopics,
+    submodular_subtopics,
+)
 from toponymy.templates import SUMMARY_KINDS
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
@@ -81,7 +85,7 @@ class ClusterLayer(ABC):
         n_subtopics: int = 24,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
-        prompt_template: Optional[str] = None,
+        prompt_template: Optional[Dict[str, Any]] = None,
         verbose: bool = None,
         show_progress_bar: bool = None,
     ):
@@ -96,12 +100,10 @@ class ClusterLayer(ABC):
         self.exemplar_delimiters = exemplar_delimiters
         self.prompt_format = prompt_format
         self.prompt_template = prompt_template
-        
+
         # Handle verbose parameters
         self.show_progress_bar, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
         )
 
         # Initialize empty lists for the cluster layer's attributes
@@ -159,6 +161,7 @@ class ClusterLayer(ABC):
         self,
         object_list: List[Any],
         object_vectors: np.ndarray,
+        method: str = "central",
     ) -> List[List[str]]:
         pass
 
@@ -247,8 +250,10 @@ class ClusterLayer(ABC):
         Update the topic names for the specified indices.
         """
         for i, topic_index in enumerate(topic_indices):
-            try: self.topic_names[topic_index] = new_topic_names[i]
-            except IndexError: continue
+            try:
+                self.topic_names[topic_index] = new_topic_names[i]
+            except IndexError:
+                continue
 
     def _disambiguate_topic_names(self, llm) -> None:  # pragma: no cover
         if isinstance(llm, LLMWrapper):
@@ -270,7 +275,7 @@ class ClusterLayer(ABC):
                 else:
                     warnings.warn(
                         f"Got {len(new_names)} new topic names to match {len(topic_indices)}, so we ignore disambiguation effort for {topic_indices}.",
-                        RuntimeWarning
+                        RuntimeWarning,
                     )
         elif isinstance(llm, AsyncLLMWrapper):
             llm_results = run_async(
