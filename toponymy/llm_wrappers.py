@@ -1800,6 +1800,11 @@ try:
         organization: str, optional
             The OpenAI organization ID to use for the API requests. If not provided, the default organization will be used.
 
+        base_url: str, optional
+            The base URL for the OpenAI API. Default is None, which uses the default OpenAI endpoint.
+            You can set this as an environment variable OPENAI_API_BASE to use a different endpoint, such as 
+            a hosted model supporting the openAI API.
+
         Attributes:
         -----------
 
@@ -1818,14 +1823,15 @@ try:
         
         def __init__(self, api_key: str, model: str = "gpt-4o-mini", 
                      llm_specific_instructions=None, max_concurrent_requests: int = 10,
-                     organization: str = None):
+                     organization: str = None, base_url: str = None):
             api_key = api_key or os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OpenAI API key is required. Set it as an environment variable OPENAI_API_KEY or pass it directly to the constructor.")
             
             self.client = openai.AsyncOpenAI(
                 api_key=api_key,
-                organization=organization
+                organization=organization,
+                base_url=base_url
             )
             self.model = model
             self.extra_prompting = "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
