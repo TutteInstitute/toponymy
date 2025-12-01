@@ -2,6 +2,7 @@ import numpy as np
 import html
 from typing import Dict, List, Tuple, NewType
 from typing_extensions import Literal
+import copy
 
 ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
 
@@ -28,6 +29,97 @@ def topic_name_string(
         topic_string += f" [{cluster_sizes[layer][index] / n_objects * 100:.2f}%]"
 
     return topic_string
+
+def prune_duplicate_children(
+        tree_dict:ClusterTree, 
+        topic_names:List[List[str]]
+) -> ClusterTree:
+    """
+    Due to the way the topic tree is constructed, sometimes a parent and child can have the same topic name.
+    This function prunes those duplicate children from the tree and returns a pruned tree.
+    It removes the children from the topic tree dictionary who have the same topic name as their parent.
+    Then moves their grandchildren up to the parent.
+    The root of the topic tree is not compared to it's children since it has no topic name associated with it.
+    This function returns a modified copy of the input tree.
+    Parameters
+    ----------
+    tree_dict : ClusterTree
+        The topic tree represented as a dictionary.
+    topic_names : List[List[str]]
+        The list of topics to be included in the tree.
+    """
+    pruned_tree = copy.deepcopy(tree_dict)
+    
+    # First, identify which nodes will be pruned
+    pruned_nodes = set()
+    
+    def identify_pruned_nodes(parent: Tuple[int, int]):
+        """Identify all nodes that will be pruned from the tree."""
+        if parent[0] >= len(topic_names):
+            return
+        
+        parent_name = topic_names[parent[0]][parent[1]]
+        children = tree_dict.get(parent, [])
+        
+        for child in children:
+            child_name = topic_names[child[0]][child[1]]
+            if parent_name == child_name:
+                pruned_nodes.add(child)
+                # Also check grandchildren recursively
+                if child[0] > 0 and child in tree_dict:
+                    identify_pruned_nodes(child)
+    
+    # Identify all pruned nodes first
+    for parent in tree_dict.keys():
+        identify_pruned_nodes(parent)
+    
+    def prune_children_recursive(parent: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """
+        Recursively prune duplicate children for a given parent node.
+        Returns the pruned list of children for this parent.
+        """
+        # Get the children of this parent
+        children = tree_dict.get(parent, [])
+        
+        # Skip the root node which has no topic name
+        if parent[0] >= len(topic_names):
+            return children
+        
+        parent_name = topic_names[parent[0]][parent[1]]
+        new_children = []
+        
+        for child in children:
+            child_name = topic_names[child[0]][child[1]]
+            
+            if parent_name == child_name:
+                # This child duplicates the parent, so prune it
+                # Recursively get its children and check them against the parent
+                if child[0] > 0 and child in tree_dict:
+                    # Get the grandchildren and recursively check them
+                    grandchildren = prune_children_recursive(child)
+                    # Add grandchildren that don't duplicate the parent
+                    for grandchild in grandchildren:
+                        grandchild_name = topic_names[grandchild[0]][grandchild[1]]
+                        if parent_name != grandchild_name:
+                            new_children.append(grandchild)
+                # Don't add the duplicate child itself
+            else:
+                # Keep non-duplicate children
+                new_children.append(child)
+        
+        return new_children
+    
+    # Process all nodes in the tree, but skip pruned nodes
+    for parent in tree_dict.keys():
+        if parent[0] >= len(topic_names):
+            # Root node - keep children as-is
+            continue
+        if parent in pruned_nodes:
+            # This node was pruned, don't modify its children list
+            continue
+        pruned_tree[parent] = prune_children_recursive(parent)
+    
+    return pruned_tree
 
 def topic_tree_string_recursion(
     tree: ClusterTree,
@@ -231,7 +323,7 @@ def topic_tree_html(
     -------
     str
         An HTML representation of the topics in the tree.
-    """
+    """    
     root_node = max(
         tree_dict.keys(),
     )
@@ -327,6 +419,9 @@ class TopicTree:
     topics : List[List[str]]
         The list of topics to be included in the tree.
 
+    prune_duplicates : bool
+        If True, prune duplicate children from the tree.
+
     Attributes
     ----------
     tree : ClusterTree
@@ -342,11 +437,15 @@ class TopicTree:
         topics: List[List[str]],
         topic_sizes: List[List[int]],
         n_objects: int,
+        prune_duplicates: bool = True,
     ) -> None:
         self.tree = tree
         self.topics = topics
         self.topic_sizes = topic_sizes
         self.n_objects = n_objects
+        self.prune_duplicates = prune_duplicates
+        if prune_duplicates:
+            self.tree = prune_duplicate_children(tree, topics)
 
     def __str__(self) -> str:
         root_node = max(
