@@ -144,6 +144,16 @@ def topic_tree_string_recursion(
         The current node in the tree.
     topics : List[List[str]]
         The list of topics to be included in the string representation.
+    indent_level : int
+        The current indentation level for formatting.
+    indent_size : int
+        The number of spaces to use for each indentation level.
+    cluster_size : bool
+        If True, include the size of each cluster in the output.
+    cluster_percentage : bool
+        If True, include the percentage of each cluster in the output.
+    show_topic_id : bool
+        If True, include the topic ID in the output.
 
     Returns
     -------
@@ -212,6 +222,12 @@ def topic_tree_html_recursion(
         If True, the color of the topic name will vary based on its layer.
     variable_weight : bool
         If True, the font weight of the topic name will vary based on its layer.
+    cluster_size : bool
+        If True, include the size of each cluster in the output.
+    cluster_percentage : bool
+        If True, include the percentage of each cluster in the output.
+    show_topic_id : bool
+        If True, include the topic ID in the output.
 
     Returns
     -------
@@ -303,6 +319,9 @@ def topic_tree_html(
     n_objects: int,
     variable_color: bool = False,
     variable_weight: bool = True,
+    cluster_size: bool = False,
+    cluster_percentage: bool = False,
+    show_topic_id: bool = False,
 ) -> str:
     """
     Converts a topic tree into an HTML representation.
@@ -318,6 +337,12 @@ def topic_tree_html(
         If True, the color of the topic name will vary based on its layer.
     variable_weight : bool
         If True, the font weight of the topic name will vary based on its layer.
+    cluster_size : bool
+        If True, include the size of each cluster in the output.
+    cluster_percentage : bool
+        If True, include the percentage of each cluster in the output.
+    show_topic_id : bool
+        If True, include the topic ID in the output.
 
     Returns
     -------
@@ -338,6 +363,9 @@ def topic_tree_html(
         max_layer=root_node[0],
         variable_color=variable_color,
         variable_weight=variable_weight,
+        cluster_size=cluster_size,
+        cluster_percentage=cluster_percentage,
+        show_topic_id=show_topic_id,
     )
     root_html += "</ul>"
 
