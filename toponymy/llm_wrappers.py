@@ -1493,8 +1493,8 @@ try:
             response = self.llm.messages.create(
                 model=self.model,
                 max_tokens=max_tokens,
+                system=system_prompt,
                 messages=[
-                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt + self.extra_prompting},
                 ],
                 temperature=temperature,
@@ -1594,8 +1594,8 @@ try:
                 response = await self.client.messages.create(
                     model=self.model,
                     max_tokens=max_tokens,
+                    system=system_prompt,
                     messages=[
-                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt + self.extra_prompting},
                     ],
                     temperature=temperature,
@@ -1764,8 +1764,8 @@ try:
                         "params": {
                             "model": self.model,
                             "max_tokens": max_tokens,
+                            "system": sys_prompt,
                             "messages": [
-                                {"role": "system", "content": sys_prompt},
                                 {
                                     "role": "user",
                                     "content": user_prompt + self.extra_prompting,
