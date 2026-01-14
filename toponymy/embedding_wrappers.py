@@ -32,12 +32,17 @@ try:
             base_url: str = None,
             httpx_client: Optional[httpx.Client] = None,
         ):
-            self.co = cohere.ClientV2(api_key=api_key)
             self.model = model
             self.base_url = base_url
             self.httpx_client = httpx_client
             self.input_type = "search_query"  # We will be embedding keyphrases and subtopic names to match against documents
             self.embedding_types = ["float"]
+            self.co = cohere.ClientV2(
+                api_key=api_key,
+                base_url=base_url,
+                httpx_client=httpx_client,
+                )
+
 
         def encode(
             self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None
@@ -56,7 +61,7 @@ try:
                 disable=(not show_progress_bar_val),
             ):
                 response = self.co.embed(
-                    texts=texts[i : i + 96],
+                    texts=list(texts[i : i + 96]),
                     model=self.model,
                     input_type=self.input_type,
                     embedding_types=self.embedding_types,
@@ -126,12 +131,17 @@ try:
             api_key,
             model: str = "claude-3-haiku-20240307",
             base_url: str = None,
-            httpx_client: Optional[httpx.Client] = None,
+            http_client: Optional[httpx.Client] = None,
         ):
-            self.client = anthropic.Anthropic(api_key=api_key)
             self.model = model
             self.base_url = base_url
-            self.httpx_client = httpx_client
+            self.http_client = http_client
+            self.client = anthropic.Anthropic(
+                api_key=api_key, 
+                base_url=base_url, 
+                http_client=http_client,
+                )
+
 
         def encode(
             self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None
