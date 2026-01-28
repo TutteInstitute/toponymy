@@ -162,7 +162,7 @@ class ClusterLayer(ABC):
         object_list: List[Any],
         object_vectors: np.ndarray,
         method: str = "central",
-    ) -> List[List[str]]:
+    ) -> Tuple[List[List[str]], List[List[int]]]:
         pass
 
     def embed_topic_names(
@@ -268,7 +268,18 @@ class ClusterLayer(ABC):
                 position=1,
             ):
                 new_names = llm.generate_topic_cluster_names(
-                    disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
+                    disambiguation_prompt,
+                    [self.topic_names[i] for i in topic_indices],
+                    extract_topic_names_function=(
+                        self.prompt_template["extract_topic_names"]
+                        if self.prompt_template
+                        else None
+                    ),
+                    get_topic_names_regex=(
+                        self.prompt_template.get("get_topic_names_regex", None)
+                        if self.prompt_template
+                        else None
+                    ),
                 )
                 if len(new_names) == len(topic_indices):
                     self._update_topic_names(new_names, topic_indices)
@@ -285,6 +296,16 @@ class ClusterLayer(ABC):
                         [self.topic_names[i] for i in topic_indices]
                         for topic_indices in self.dismbiguation_topic_indices
                     ],
+                    extract_topic_names_function=(
+                        self.prompt_template["extract_topic_names"]
+                        if self.prompt_template
+                        else None
+                    ),
+                    get_topic_names_regex=(
+                        self.prompt_template.get("get_topic_names_regex", None)
+                        if self.prompt_template
+                        else None
+                    ),
                 )
             )
             for topic_indices, new_names in zip(
@@ -436,7 +457,19 @@ class ClusterLayerText(ClusterLayer):
         if isinstance(llm, LLMWrapper):
             self.topic_names = [
                 (
-                    llm.generate_topic_name(prompt)
+                    llm.generate_topic_name(
+                        prompt,
+                        topic_extraction_function=(
+                            self.prompt_template["extract_topic_name"]
+                            if self.prompt_template
+                            else None
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template.get("get_topic_name_regex", None)
+                            if self.prompt_template
+                            else None
+                        ),
+                    )
                     if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
                     else prompt.removeprefix("[!SKIP!]: ")
                 )
@@ -457,7 +490,19 @@ class ClusterLayerText(ClusterLayer):
                 if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
             ]
             llm_results = run_async(
-                llm.generate_topic_names([prompt for _, prompt in prompts_for_llm])
+                llm.generate_topic_names(
+                    [prompt for _, prompt in prompts_for_llm],
+                    extract_topic_name_function=(
+                        self.prompt_template["extract_topic_name"]
+                        if self.prompt_template
+                        else None
+                    ),
+                    get_topic_name_regex=(
+                        self.prompt_template.get("get_topic_name_regex", None)
+                        if self.prompt_template
+                        else None
+                    ),
+                )
             )
             llm_result_index = 0
             self.topic_names = []
@@ -495,7 +540,23 @@ class ClusterLayerText(ClusterLayer):
         if any([name == "" for name in self.topic_names]):
             if isinstance(llm, LLMWrapper):
                 self.topic_names = [
-                    llm.generate_topic_name(prompt) if name == "" else name
+                    (
+                        llm.generate_topic_name(
+                            prompt,
+                            topic_extraction_function=(
+                                self.prompt_template["extract_topic_name"]
+                                if self.prompt_template
+                                else None
+                            ),
+                            get_topic_name_regex=(
+                                self.prompt_template.get("get_topic_name_regex", None)
+                                if self.prompt_template
+                                else None
+                            ),
+                        )
+                        if name == ""
+                        else name
+                    )
                     for name, prompt in zip(self.topic_names, self.prompts)
                 ]
             elif isinstance(llm, AsyncLLMWrapper):
@@ -504,7 +565,21 @@ class ClusterLayerText(ClusterLayer):
                     for name, prompt in zip(self.topic_names, self.prompts)
                     if name == ""
                 ]
-                llm_results = run_async(llm.generate_topic_names(selected_prompts))
+                llm_results = run_async(
+                    llm.generate_topic_names(
+                        selected_prompts,
+                        extract_topic_name_function=(
+                            self.prompt_template["extract_topic_name"]
+                            if self.prompt_template
+                            else None
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template.get("get_topic_name_regex", None)
+                            if self.prompt_template
+                            else None
+                        ),
+                    )
+                )
                 for i in range(len(self.topic_names)):
                     if self.topic_names[i] == "":
                         self.topic_names[i] = llm_results.pop(0)

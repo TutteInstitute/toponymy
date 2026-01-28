@@ -1,4 +1,5 @@
 import jinja2
+import re
 
 
 SUMMARY_KINDS = [
@@ -12,7 +13,42 @@ SUMMARY_KINDS = [
 ]
 
 GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
-GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
+GET_TOPIC_CLUSTER_NAMES_REGEX = (
+    r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
+)
+
+
+def default_extract_topic_names(json_response, old_names, topic_name_info_raw):
+    mapping = json_response["new_topic_name_mapping"]
+    if len(mapping) == len(old_names):
+        result = []
+        for i, old_name_val in enumerate(old_names, start=1):
+            key_with_val = f"{i}. {old_name_val}"
+            key_just_index = f"{i}."
+            if key_with_val in mapping:
+                result.append(mapping[key_with_val])
+            elif (
+                key_just_index in mapping
+            ):  # This was `mapping.get(f"{n}.", name)` which is ambiguous
+                result.append(mapping[key_just_index])
+            else:
+                result.append(old_name_val)  # Fallback to old name to maintain length
+        return result
+    else:
+        # Fallback to just parsing the string as best we can
+        mapping = re.findall(
+            r'"new_topic_name_mapping":\s*\{(.*?)\}',
+            topic_name_info_raw,
+            re.DOTALL,
+        )[0]
+        new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+        if len(new_names) == len(old_names):
+            return new_names
+        else:
+            raise ValueError(
+                f"Failed to generate enough names when fixing {old_names}; got {mapping}"
+            )
+
 
 PROMPT_TEMPLATES = {
     "layer": {
@@ -74,7 +110,7 @@ Recall the output format: {"topic_name":<NAME>, "topic_specificity":<SCORE>}.
 """
         ),
         "combined": jinja2.Template(
-        """
+            """
 You are an expert of classifying {{document_type}} from {{corpus_description}} into topics.
 Below is a information about a group of {{document_type}} from {{corpus_description}} that 
 are all on the same topic and need to be given topic name.
@@ -123,7 +159,9 @@ The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specifi
 where SCORE is a value in the range 0 to 1.
 """
         ),
-      },
+        "extract_topic_name": lambda json_response: json_response["topic_name"],
+        "get_topic_name_regex": GET_TOPIC_NAME_REGEX,
+    },
     "disambiguate_topics": {
         "system": jinja2.Template(
             """
@@ -192,7 +230,7 @@ Please provide new {{summary_kind}} names for each topic, following the JSON out
 """
         ),
         "combined": jinja2.Template(
-        """
+            """
 You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -247,6 +285,8 @@ The response should be formatted as JSON in the format
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
 """
-      ),
+        ),
+        "extract_topic_names": default_extract_topic_names,
+        "get_topic_names_regex": GET_TOPIC_CLUSTER_NAMES_REGEX,
     },
 }
