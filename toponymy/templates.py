@@ -400,7 +400,7 @@ The response should be in JSON formatted as {"english_topic_name":<NAME>, "nom_d
 where SCORE is a value in the range 0 to 1.
 """
         ),
-        "extract_topic_name": lambda json_response: f"{json_response["english_topic_name"]} / {json_response["nom_du_sujet_en_français"]}",
+        "extract_topic_name": lambda json_response: f'{json_response["english_topic_name"]} / {json_response["nom_du_sujet_en_français"]}',
         "get_topic_name_regex": r'\{\s*"english_topic_name":\s*.*?,\s*"nom_du_sujet_en_français":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}',
     },
     "disambiguate_topics": {
