@@ -115,6 +115,7 @@ def distinguish_topic_names_prompt(
     exemplar_texts: List[List[str]],
     keyphrases: List[List[str]],
     subtopics: Optional[List[List[str]]],
+    previous_names: Optional[List[List[str]]],
     cluster_tree: Optional[dict],
     object_description: str,
     corpus_description: str,
@@ -122,6 +123,7 @@ def distinguish_topic_names_prompt(
     max_num_keyphrases: int = 32,
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
+    max_num_history: int = 2,
     exemplar_start_delimiter: str = "    * \"",
     exemplar_end_delimiter: str = "\"\n",
     prompt_format: str = "combined",
@@ -144,6 +146,8 @@ def distinguish_topic_names_prompt(
         List of keyphrases for each topic.
     subtopics : Optional[List[List[str]]], optional
         List of fine grained/misc subtopics for this layer, by default None.
+    previous_names: Optional[List[List[str]]], optional
+        List of names for topics in this layer in previous toponymies, by default None. 
     cluster_tree : Optional[dict], optional
         Dictionary of the cluster tree, by default None.
     object_description : str
@@ -158,6 +162,8 @@ def distinguish_topic_names_prompt(
         Maximum number of subtopics to include, by default 16.
     max_num_exemplars : int, optional
         Maximum number of exemplar texts to include, by default 128.
+    max_num_history : int, optional
+        Maximum number of historical topic names to include, by default 2.
     exemplar_start_delimiter : str, optional
         Start delimiter for exemplar texts, by default "    * \""
     exemplar_end_delimiter : str, optional
@@ -190,6 +196,13 @@ def distinguish_topic_names_prompt(
     exemplar_texts_per_topic = [
         exemplar_texts[i][:max_num_exemplars] for i in topic_indices
     ]
+    
+    if previous_names is not None:
+        previous_names_per_topic = [
+            previous_names[i][:max_num_history] for i in topic_indices
+        ]
+    else:
+        previous_names_per_topic = [[] for i in topic_indices]
 
     has_any_major_subtopics = False
 
@@ -237,6 +250,7 @@ def distinguish_topic_names_prompt(
             "misc": other_subtopics_per_topic,
         },
         "cluster_sentences": exemplar_texts_per_topic,
+        "cluster_history": None,
         "exemplar_start_delimiter": exemplar_start_delimiter,
         "exemplar_end_delimiter": exemplar_end_delimiter,
         "summary_kind": summary_kind,
@@ -268,6 +282,7 @@ def topic_name_prompt(
     exemplar_texts: List[List[str]],
     keyphrases: List[List[str]],
     subtopics: Optional[List[List[List[str]]]],
+    previous_names: Optional[List[List[str]]],
     cluster_tree: Optional[dict],
     object_description: str,
     corpus_description: str,
@@ -297,6 +312,8 @@ def topic_name_prompt(
         List of keyphrases for each topic.
     subtopics : Optional[List[List[str]]], optional
         List of subtopics for each cliuster in this layer.
+    previous_names: Optional[List[List[str]]], optional
+        List of names for topics in this layer in previous toponymies, by default None. 
     cluster_tree : Optional[dict], optional
         Dictionary of the cluster tree, by default None.
     object_description : str
@@ -362,11 +379,129 @@ def topic_name_prompt(
         minor_subtopics = []
         other_subtopics = []
 
+    cluster_history = []
+    if previous_names is not None:
+        cluster_history = previous_names[topic_index]
+    
     current_keyphrases = keyphrases[topic_index][:max_num_keyphrases] if topic_index < len(keyphrases) else []
     current_exemplars = exemplar_texts[topic_index][:max_num_exemplars] if topic_index < len(exemplar_texts) else []
     
     is_very_specific = "very specific" in summary_kind
     is_general = "general" in summary_kind
+    
+    render_params = {
+        "document_type": object_description,
+        "corpus_description": corpus_description,
+        "cluster_keywords": current_keyphrases,
+        "cluster_subtopics": {
+            "major": major_subtopics,
+            "minor": minor_subtopics,
+            "misc": other_subtopics,
+        },
+        "cluster_history": cluster_history,
+        "cluster_sentences": current_exemplars,
+        "summary_kind": summary_kind,
+        "exemplar_start_delimiter": exemplar_start_delimiter,
+        "exemplar_end_delimiter": exemplar_end_delimiter,
+        "is_very_specific_summary": is_very_specific,
+        "is_general_summary": is_general,
+        "has_major_subtopics": bool(major_subtopics),
+    }
+
+    if prompt_template is not None:
+        template_set = prompt_template
+    else:
+        template_set = PROMPT_TEMPLATES["layer"]
+
+    if prompt_format == "system_user":
+        system_prompt = template_set["system"].render(**render_params)
+        user_prompt = template_set["user"].render(**render_params)
+        return {"system": system_prompt, "user": user_prompt}
+    elif prompt_format == "combined":
+        return template_set["combined"].render(**render_params)
+    else:
+        raise ValueError(f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'.")
+
+
+def harmonize_over_time_prompt(
+    topic_indices: np.ndarray,
+    layer_id: int,
+    all_topic_names: List[List[str]],
+    exemplar_texts: List[List[str]],
+    keyphrases: List[List[str]],
+    subtopics: Optional[List[List[str]]],
+    previous_names: Optional[List[List[str]]],
+    cluster_tree: Optional[dict],
+    object_description: str,
+    corpus_description: str,
+    summary_kind: str,
+    max_num_keyphrases: int = 32,
+    max_num_subtopics: int = 16,
+    max_num_exemplars: int = 128,
+    max_num_history: int = 2,
+    exemplar_start_delimiter: str = "    * \"",
+    exemplar_end_delimiter: str = "\"\n",
+    prompt_format: str = "combined",
+    prompt_template: Optional[Dict[str, Any]] = None,
+) -> Union[str, Dict[str, str]]:
+    
+    attempted_topic_names = [all_topic_names[layer_id][x] for x in topic_indices]
+    unique_topic_names = list(dict.fromkeys(attempted_topic_names))
+    if len(unique_topic_names) == 1:
+        larger_topic = unique_topic_names[0]
+    else:
+        unique_topic_names = unique_topic_names[:3]
+        larger_topic = (
+            ", ".join(unique_topic_names[:-1]) + " and " + unique_topic_names[-1]
+        )
+    if len(larger_topic) == 0: 
+        larger_topic = f"topics found in {corpus_description}"
+
+    keyphrases_per_topic = [keyphrases[i][:max_num_keyphrases] for i in topic_indices]
+    exemplar_texts_per_topic = [
+        exemplar_texts[i][:max_num_exemplars] for i in topic_indices
+    ]
+    
+    if previous_names is not None:
+        previous_names_per_topic = [
+            previous_names[i][:max_num_history] for i in topic_indices
+        ]
+    else:
+        previous_names_per_topic = [[] for i in topic_indices]
+
+    has_any_major_subtopics = False
+
+    if subtopics is not None and cluster_tree is not None:
+        tree_subtopics_per_topic = [cluster_tree[(layer_id, x)] for x in topic_indices if (layer_id, x) in cluster_tree]
+        major_subtopics_per_topic = [
+            [
+                all_topic_names[layer_id - 1][a[1]]
+                for a in tree_subtopics
+                if a[0] == layer_id - 1
+            ]
+            for tree_subtopics in tree_subtopics_per_topic
+        ]
+        has_any_major_subtopics = any(
+            len(major_subtopics) > 0 for major_subtopics in major_subtopics_per_topic
+        )
+        minor_subtopics_per_topic = [
+            [
+                all_topic_names[layer_id - 2][a[1]]
+                for a in tree_subtopics
+                if a[0] == layer_id - 2
+            ]
+            for tree_subtopics in tree_subtopics_per_topic
+        ]
+        other_subtopics_per_topic = [
+            subtopics[cluster_id][:max_num_subtopics] for cluster_id in topic_indices
+        ]
+    else:
+        major_subtopics_per_topic = [False] * len(topic_indices)
+        minor_subtopics_per_topic = [False] * len(topic_indices)
+        other_subtopics_per_topic = [False] * len(topic_indices)
+
+    is_very_specific = "very specific" in summary_kind
+    is_general = "general" in summary_kind    
     
     render_params = {
         "document_type": object_description,
@@ -389,7 +524,7 @@ def topic_name_prompt(
     if prompt_template is not None:
         template_set = prompt_template
     else:
-        template_set = PROMPT_TEMPLATES["layer"]
+        template_set = PROMPT_TEMPLATES["harmonize_temporal"]
 
     if prompt_format == "system_user":
         system_prompt = template_set["system"].render(**render_params)
