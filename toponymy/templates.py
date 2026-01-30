@@ -273,5 +273,115 @@ The response must contain only JSON with no preamble and must have one entry for
 """
       ),
     },
+    "harmonize_temporal": {
+        "system": jinja2.Template(
+            """
+You are an expert in topics found in {{corpus_description}}. You have been asked to compare topic names assigned to sets of {{document_type}} from {{corpus_description}} that have been assigned to related topics at different points in time.
+
+The topic has a current and a previous name. Your task is to determine if the previous name for the topic group is still appropriate for the current topic group, based on the current topic name, keywords, and example {{document_type}}.
+
+The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} 
+where SCORE is a value in the range 0 to 1, measuring the specificity of the topic name, and NAME is either {{cluster_name}} or {{cluster_previous}}. 
+
+Ensure your entire response is only the JSON object, with no other text before or after it.
+"""
+        ),
+        "user": jinja2.Template(
+            """
+Below are the auto-generated topic names, along with the previous name for each topic area.
+
+Previous topic name: {{cluster_previous}}
+Current topic name: {{cluster_name}}
+
+Here is the information about the current group of {{document_type}}:
+{% if cluster_keywords %}
+- Keywords for this group include: {{", ".join(cluster_keywords)}}
+{% endif %}
+{%- if cluster_subtopics["major"] %}
+- Major subtopics of this group are:
+{%- for subtopic in cluster_subtopics["major"] %}
+  * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["minor"] %}
+- Minor subtopics of this group are:
+{%- for subtopic in cluster_subtopics["minor"] %}
+  * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["misc"] %}
+- Other miscellaneous detailed subtopics of this group in order of relevance (from most to least) include:
+{%- for subtopic in cluster_subtopics["misc"] %}
+  * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_history %}
+- Previous names of this topic in recency order (from most to least) are:
+{%- for name in cluster_history %}
+  * {{name}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_sentences %}
+- Sample {{document_type}} from this group include:
+{%- for sentence in cluster_sentences %}
+{{exemplar_start_delimiter}}{{sentence}}{{exemplar_end_delimiter}}
+{%- endfor %}
+{%- endif %}
+
+Please provide decisions about the current names for each topic, following the JSON output format specified.
+            """
+        ),
+        "combined": jinja2.Template(
+        """
+You are an expert in topics found in {{corpus_description}}. You have been asked to compare topic names assigned to sets of {{document_type}} from {{corpus_description}} that have been assigned to related topics at different points in time.
+
+The topic has a current and a previous name. Your task is to determine if the previous name for the topic group is still appropriate for the current topic group, based on the current topic name, keywords, and example {{document_type}}.
+
+
+Previous topic name: {{cluster_previous}}
+Current topic name: {{cluster_name}}
+
+Here is the information about the current group of {{document_type}}:
+{% if cluster_keywords %}
+- Keywords for this group include: {{", ".join(cluster_keywords)}}
+{% endif %}
+{%- if cluster_subtopics["major"] %}
+- Major subtopics of this group are:
+{%- for subtopic in cluster_subtopics["major"] %}
+  * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["minor"] %}
+- Minor subtopics of this group are:
+{%- for subtopic in cluster_subtopics["minor"] %}
+  * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["misc"] %}
+- Other miscellaneous detailed subtopics of this group in order of relevance (from most to least) include:
+{%- for subtopic in cluster_subtopics["misc"] %}
+  * {{subtopic}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_history %}
+- Previous names of this topic in recency order (from most to least) are:
+{%- for name in cluster_history %}
+  * {{name}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_sentences %}
+- Sample {{document_type}} from this group include:
+{%- for sentence in cluster_sentences %}
+{{exemplar_start_delimiter}}{{sentence}}{{exemplar_end_delimiter}}
+{%- endfor %}
+{%- endif %}
+
+The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} 
+where SCORE is a value in the range 0 to 1, measuring the specificity of the topic name, and NAME is either {{cluster_name}} or {{cluster_previous}}. 
+
+Ensure your entire response is only the JSON object, with no other text before or after it.
+        """
+        ),
+      },
     
 }
