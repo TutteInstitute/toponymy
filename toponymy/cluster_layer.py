@@ -26,7 +26,6 @@ from toponymy.prompt_construction import (
     topic_name_prompt,
     cluster_topic_names_for_renaming,
     distinguish_topic_names_prompt,
-    harmonize_over_time_prompt,
 )
 from tqdm.auto import tqdm
 import asyncio
@@ -245,63 +244,6 @@ class ClusterLayer(ABC):
             )
         ]
 
-    def _make_temporal_prompts(
-        self,
-        detail_level: float,
-        all_topic_names: List[List[str]],
-        object_description: str,
-        corpus_description: str,
-        cluster_tree: Optional[dict] = None,
-        max_topics_per_prompt: int = 12,
-    ) -> None:
-        """UNUSED 2026-01-29"""
-        summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
-        summary_kind = SUMMARY_KINDS[summary_level]
-
-        self.temporal_topic_indices = self.cluster_labels
-
-        # Break up over-large clusters into manageable chunks
-        self.temporal_topic_indices = [
-            topic_indices[i : i + max_topics_per_prompt]
-            for topic_indices in self.temporal_topic_indices
-            for i in range(0, len(topic_indices), max_topics_per_prompt)
-        ]
-
-        self.temporal_prompts = [
-            harmonize_over_time_prompt(
-                topic_indices,
-                self.layer_id,
-                all_topic_names,
-                exemplar_texts=self.exemplars,
-                keyphrases=self.keyphrases,
-                subtopics=self.subtopics if len(self.subtopics) > 0 else None,
-                previous_names=self.previous_names if len(self.previous_names)>0 else None,
-                cluster_tree=cluster_tree,
-                object_description=object_description,
-                corpus_description=corpus_description,
-                summary_kind=summary_kind,
-                max_num_exemplars=self.n_exemplars,
-                max_num_keyphrases=self.n_keyphrases,
-                max_num_subtopics=self.n_subtopics,
-                max_num_history=self.n_history,
-                exemplar_start_delimiter=self.exemplar_delimiters[0],
-                exemplar_end_delimiter=self.exemplar_delimiters[1],
-                prompt_format=self.prompt_format,
-                prompt_template=self.prompt_template,
-            )
-            for topic_indices in tqdm(
-                self.temporal_topic_indices,
-                desc=f"Generating temporal harmonization prompts for layer {self.layer_id}",
-                disable=(
-                    not self.show_progress_bar
-                    or len(self.temporal_topic_indices) == 0
-                ),
-                total=len(self.temporal_topic_indices),
-                unit="topic-cluster",
-                leave=False,
-                position=1,
-            )
-        ]
 
     def _update_topic_names(
         self,
