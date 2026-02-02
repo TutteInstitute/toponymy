@@ -19,7 +19,12 @@ from toponymy.subtopics import (
     information_weighted_subtopics,
     submodular_subtopics,
 )
-from toponymy.templates import SUMMARY_KINDS
+from toponymy.templates import (
+    GET_TOPIC_CLUSTER_NAMES_REGEX,
+    GET_TOPIC_NAME_REGEX,
+    SUMMARY_KINDS,
+    default_extract_topic_names,
+)
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.prompt_construction import (
@@ -85,9 +90,9 @@ class ClusterLayer(ABC):
         n_subtopics: int = 24,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
-        prompt_template: Optional[Dict[str, Any]] = None,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        prompt_template: Optional[str | Dict[str, Any]] = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
     ):
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
@@ -273,12 +278,14 @@ class ClusterLayer(ABC):
                     extract_topic_names_function=(
                         self.prompt_template["extract_topic_names"]
                         if self.prompt_template
-                        else None
+                        else default_extract_topic_names
                     ),
                     get_topic_names_regex=(
-                        self.prompt_template.get("get_topic_names_regex", None)
+                        self.prompt_template.get(
+                            "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
+                        )
                         if self.prompt_template
-                        else None
+                        else GET_TOPIC_CLUSTER_NAMES_REGEX
                     ),
                 )
                 if len(new_names) == len(topic_indices):
@@ -299,12 +306,14 @@ class ClusterLayer(ABC):
                     extract_topic_names_function=(
                         self.prompt_template["extract_topic_names"]
                         if self.prompt_template
-                        else None
+                        else default_extract_topic_names
                     ),
                     get_topic_names_regex=(
-                        self.prompt_template.get("get_topic_names_regex", None)
+                        self.prompt_template.get(
+                            "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
+                        )
                         if self.prompt_template
-                        else None
+                        else GET_TOPIC_CLUSTER_NAMES_REGEX
                     ),
                 )
             )
@@ -368,9 +377,9 @@ class ClusterLayerText(ClusterLayer):
         subtopic_diversify_alpha: float = 1.0,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
-        prompt_template: Optional[str] = None,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        prompt_template: Optional[str | Dict[str, Any]] = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -465,9 +474,11 @@ class ClusterLayerText(ClusterLayer):
                             else None
                         ),
                         get_topic_name_regex=(
-                            self.prompt_template.get("get_topic_name_regex", None)
+                            self.prompt_template.get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                            )
                             if self.prompt_template
-                            else None
+                            else GET_TOPIC_NAME_REGEX
                         ),
                     )
                     if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
@@ -546,12 +557,14 @@ class ClusterLayerText(ClusterLayer):
                             topic_extraction_function=(
                                 self.prompt_template["extract_topic_name"]
                                 if self.prompt_template
-                                else None
+                                else lambda json_response: json_response["topic_name"]
                             ),
                             get_topic_name_regex=(
-                                self.prompt_template.get("get_topic_name_regex", None)
+                                self.prompt_template.get(
+                                    "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                )
                                 if self.prompt_template
-                                else None
+                                else GET_TOPIC_NAME_REGEX
                             ),
                         )
                         if name == ""
@@ -571,12 +584,14 @@ class ClusterLayerText(ClusterLayer):
                         extract_topic_name_function=(
                             self.prompt_template["extract_topic_name"]
                             if self.prompt_template
-                            else None
+                            else lambda json_response: json_response["topic_name"]
                         ),
                         get_topic_name_regex=(
-                            self.prompt_template.get("get_topic_name_regex", None)
+                            self.prompt_template.get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                            )
                             if self.prompt_template
-                            else None
+                            else GET_TOPIC_NAME_REGEX
                         ),
                     )
                 )

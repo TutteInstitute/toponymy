@@ -11,7 +11,7 @@ import numpy as np
 
 from tqdm.auto import tqdm
 
-from typing import List, Any, Type
+from typing import List, Any, Optional, Type, Dict
 
 
 class Toponymy:
@@ -97,14 +97,15 @@ class Toponymy:
         text_embedding_model: TextEmbedderProtocol,
         clusterer: Clusterer = ToponymyClusterer(),
         layer_class: Type[ClusterLayer] = ClusterLayerText,
+        prompt_template: Optional[str | Dict[str, Any]] = None,
         keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
         object_description: str = "objects",
         corpus_description: str = "collection of objects",
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
-        verbose: bool = None,
-        show_progress_bars: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bars: Optional[bool] = None,
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
@@ -116,12 +117,11 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
-        
+        self.prompt_template = prompt_template
+
         # Handle verbose parameters
         self.show_progress_bars, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bars=show_progress_bars,
-            default_verbose=True
+            verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
         )
 
     def fit(
@@ -180,11 +180,14 @@ class Toponymy:
                     if self.llm_wrapper.supports_system_prompts
                     else "combined"
                 ),
+                prompt_template=self.prompt_template,
             )
 
         # Initialize other data structures
-        self.topic_names_ = [[]] * len(self.cluster_layers_)
-        self.topic_name_vectors_ = [np.array([])] * len(self.cluster_layers_)
+        self.topic_names_: List[List[str]] = [[]] * len(self.cluster_layers_)
+        self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
+            self.cluster_layers_
+        )
         detail_levels = np.linspace(
             self.lowest_detail_level,
             self.highest_detail_level,
