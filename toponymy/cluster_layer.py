@@ -217,7 +217,9 @@ class ClusterLayer(ABC):
                 exemplar_texts=self.exemplars,
                 keyphrases=self.keyphrases,
                 subtopics=self.subtopics if len(self.subtopics) > 0 else None,
-                previous_names=self.previous_names if len(self.previous_names)>0 else None,
+                previous_names=(
+                    self.previous_names if len(self.previous_names) > 0 else None
+                ),
                 cluster_tree=cluster_tree,
                 object_description=object_description,
                 corpus_description=corpus_description,
@@ -299,7 +301,7 @@ class ClusterLayer(ABC):
             raise ValueError(
                 "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
             )
-            
+
     # pragma: no cover
     def disambiguate_topics(
         self,
@@ -320,7 +322,6 @@ class ClusterLayer(ABC):
             cluster_tree=cluster_tree,
         )
         self._disambiguate_topic_names(llm)
-
 
 
 class ClusterLayerText(ClusterLayer):
@@ -401,7 +402,9 @@ class ClusterLayerText(ClusterLayer):
                 exemplar_texts=self.exemplars,
                 keyphrases=self.keyphrases,
                 subtopics=self.subtopics,
-                previous_names=self.previous_names if len(self.previous_names)>0 else None,
+                previous_names=(
+                    self.previous_names if len(self.previous_names) > 0 else None
+                ),
                 cluster_tree=cluster_tree,
                 object_description=object_description,
                 corpus_description=corpus_description,
@@ -430,7 +433,6 @@ class ClusterLayerText(ClusterLayer):
 
         return self.prompts
 
-
     def make_temporal_prompts(
         self,
         all_topic_names: List[List[str]],
@@ -440,7 +442,7 @@ class ClusterLayerText(ClusterLayer):
         prompt_format: str = None,
         prompt_template: Optional[str] = None,
     ) -> List[str]:
-        
+
         self.temporal_prompts = [
             harmonize_over_time_prompt(
                 topic_index,
@@ -449,7 +451,9 @@ class ClusterLayerText(ClusterLayer):
                 exemplar_texts=self.exemplars,
                 keyphrases=self.keyphrases,
                 subtopics=self.subtopics,
-                previous_names=self.previous_names if len(self.previous_names)>0 else None,
+                previous_names=(
+                    self.previous_names if len(self.previous_names) > 0 else None
+                ),
                 cluster_tree=cluster_tree,
                 object_description=object_description,
                 corpus_description=corpus_description,
@@ -474,8 +478,7 @@ class ClusterLayerText(ClusterLayer):
         ]
 
         return self.temporal_prompts
-    
-    
+
     # pragma: no cover
     def name_topics(
         self,
@@ -556,7 +559,7 @@ class ClusterLayerText(ClusterLayer):
                 cluster_tree=cluster_tree,
                 embedding_model=embedding_model,
             )
-        
+
         # Try to fix any failures to generate a name
         if any([name == "" for name in self.topic_names]):
             if isinstance(llm, LLMWrapper):
@@ -751,8 +754,7 @@ class ClusterLayerText(ClusterLayer):
 
         return self.topic_name_vector
 
-
-    def _harmonize_topic_names_over_time(self,llm):
+    def _harmonize_topic_names_over_time(self, llm):
         if isinstance(llm, LLMWrapper):
             self.topic_names = [
                 (
@@ -789,7 +791,6 @@ class ClusterLayerText(ClusterLayer):
                     # If the prompt is marked to be skipped, use the original prompt text
                     self.topic_names.append(prompt.removeprefix("[!SKIP!]: "))
 
-        
     def harmonize_topics_over_time(
         self,
         llm,
@@ -805,6 +806,6 @@ class ClusterLayerText(ClusterLayer):
             object_description=object_description,
             corpus_description=corpus_description,
             cluster_tree=cluster_tree,
-            prompt_format = "combined", #todo 
+            prompt_format="combined",  # todo
         )
         self._harmonize_topic_names_over_time(llm)

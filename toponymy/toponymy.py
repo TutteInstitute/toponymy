@@ -116,12 +116,10 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
-        
+
         # Handle verbose parameters
         self.show_progress_bars, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bars=show_progress_bars,
-            default_verbose=True
+            verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
         )
 
     def fit(

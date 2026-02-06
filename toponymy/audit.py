@@ -137,7 +137,7 @@ def create_audit_df(
            cluster_id  num_documents          llm_topic_name
         0           0            245    NHL Hockey Discussion
         1           1            189  Windows Software Support
-        
+
         >>> # Include all documents
         >>> audit_df = create_audit_df(topic_model, include_all_docs=True, original_texts=documents)
         >>> print(audit_df['document_indices'][0])  # List of document indices for cluster 0
@@ -393,28 +393,24 @@ def get_cluster_documents(
         ...     print(f"Doc {idx}: {text[:50]}...")
     """
     layer = toponymy_instance.cluster_layers_[layer_index]
-    
+
     # Get all document indices for this cluster
     doc_indices = [
         i for i, label in enumerate(layer.cluster_labels) if label == cluster_id
     ]
-    
+
     # Apply max_docs limit if specified
     if max_docs and len(doc_indices) > max_docs:
         limited_indices = doc_indices[:max_docs]
         doc_texts = [original_texts[i] for i in limited_indices]
         return {
-            'indices': limited_indices,
-            'texts': doc_texts,
-            'total_count': len(doc_indices)
+            "indices": limited_indices,
+            "texts": doc_texts,
+            "total_count": len(doc_indices),
         }
-    
+
     doc_texts = [original_texts[i] for i in doc_indices]
-    return {
-        'indices': doc_indices,
-        'texts': doc_texts,
-        'total_count': len(doc_indices)
-    }
+    return {"indices": doc_indices, "texts": doc_texts, "total_count": len(doc_indices)}
 
 
 def get_cluster_details(toponymy_instance, layer_index: int, cluster_id: int) -> Dict:
