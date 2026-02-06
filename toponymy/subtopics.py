@@ -8,7 +8,10 @@ from sklearn.decomposition import DictionaryLearning
 from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
-from toponymy.exemplar_texts import FacilityLocationSelection, SaturatedCoverageSelection
+from toponymy.exemplar_texts import (
+    FacilityLocationSelection,
+    SaturatedCoverageSelection,
+)
 from toponymy._utils import handle_verbose_params
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 
@@ -43,9 +46,7 @@ def central_subtopics(
 
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
     result = []
@@ -61,13 +62,16 @@ def central_subtopics(
             cluster_label_vector == cluster_num
         ]
         cluster_subtopic_indices = np.unique(subtopic_label_vector_for_cluster)
-        candidate_subtopic_centroids = np.asarray(
-            [
-                subtopic_vectors[subtopic_index]
-                for subtopic_index in cluster_subtopic_indices
-                if subtopic_index != -1
-            ]
-        ) - central_vector
+        candidate_subtopic_centroids = (
+            np.asarray(
+                [
+                    subtopic_vectors[subtopic_index]
+                    for subtopic_index in cluster_subtopic_indices
+                    if subtopic_index != -1
+                ]
+            )
+            - central_vector
+        )
         candidate_subtopics = np.asarray(
             [
                 subtopics[subtopic_index]
@@ -138,9 +142,7 @@ def submodular_subtopics(
 
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
     result = []
@@ -156,13 +158,16 @@ def submodular_subtopics(
             cluster_label_vector == cluster_num
         ]
         cluster_subtopic_indices = np.unique(subtopic_label_vector_for_cluster)
-        candidate_subtopic_centroids = np.asarray(
-            [
-                subtopic_vectors[subtopic_index]
-                for subtopic_index in cluster_subtopic_indices
-                if subtopic_index != -1
-            ]
-        ) - null_topic_vector
+        candidate_subtopic_centroids = (
+            np.asarray(
+                [
+                    subtopic_vectors[subtopic_index]
+                    for subtopic_index in cluster_subtopic_indices
+                    if subtopic_index != -1
+                ]
+            )
+            - null_topic_vector
+        )
         candidate_subtopics = np.asarray(
             [
                 subtopics[subtopic_index]
@@ -172,7 +177,9 @@ def submodular_subtopics(
         )
 
         if candidate_subtopic_centroids.shape[0] >= n_subtopics:
-            _, chosen_subtopics = selector.fit_transform(candidate_subtopic_centroids, y=candidate_subtopics)
+            _, chosen_subtopics = selector.fit_transform(
+                candidate_subtopic_centroids, y=candidate_subtopics
+            )
         else:
             chosen_subtopics = candidate_subtopics
 
@@ -201,9 +208,7 @@ def central_subtopics_from_all_subtopics(
 
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
     result = []
@@ -215,9 +220,7 @@ def central_subtopics_from_all_subtopics(
         subtopics_in_cluster = np.unique(
             subtopic_label_vector[cluster_label_vector == cluster_num]
         )
-        cluster_centroid = np.mean(
-            subtopic_vectors[subtopics_in_cluster], axis=0
-        )
+        cluster_centroid = np.mean(subtopic_vectors[subtopics_in_cluster], axis=0)
         # Select the central subtopics as the closest samples to the centroid
         base_distances = pairwise_distances(
             cluster_centroid.reshape(1, -1),
@@ -294,9 +297,7 @@ def information_weighted_subtopics(
 
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
     result = []
@@ -311,7 +312,9 @@ def information_weighted_subtopics(
         candidate_scores = scores[meta_cluster_label_vector == cluster_num]
         candidate_vectors = subtopic_vectors[meta_cluster_label_vector == cluster_num]
 
-        cluster_centroid = np.average(candidate_vectors, weights=candidate_scores, axis=0)
+        cluster_centroid = np.average(
+            candidate_vectors, weights=candidate_scores, axis=0
+        )
 
         if sum(candidate_scores) == 0:
             result.append(["No notable keyphrases"])

@@ -159,10 +159,7 @@ def build_raw_cluster_layers(
         )
 
     # Handle verbose parameters
-    _, verbose_output = handle_verbose_params(
-        verbose=verbose,
-        default_verbose=False
-    )
+    _, verbose_output = handle_verbose_params(verbose=verbose, default_verbose=False)
 
     while n_clusters_in_layer >= min_clusters:
         if max_layers is not None and len(cluster_layers) >= max_layers:
@@ -248,7 +245,7 @@ def build_cluster_tree(
 @numba.njit()
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
-) -> np.ndarray: # pragma: no cover
+) -> np.ndarray:  # pragma: no cover
     result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
     counts = np.zeros(cluster_labels.max() + 1)
     for i in range(cluster_labels.shape[0]):
@@ -316,11 +313,9 @@ def create_cluster_layers(
     """
     # Handle verbose parameters
     show_progress_bar_val, verbose_val = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    
+
     cluster_labels = build_raw_cluster_layers(
         clusterable_vectors,
         min_clusters=min_clusters,
@@ -423,12 +418,10 @@ class ToponymyClusterer(Clusterer):
         self.base_n_clusters = base_n_clusters
         self.next_cluster_size_quantile = next_cluster_size_quantile
         self.max_layers = max_layers
-        
+
         # Handle verbose parameters
         _, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
         )
 
         if self.base_min_cluster_size is None and self.base_n_clusters is None:
@@ -504,17 +497,19 @@ class KMeansClusterer(Clusterer):
     """
 
     def __init__(
-        self, min_clusters: int = 6, base_n_clusters: int = 1024, verbose: bool = None, show_progress_bar: bool = None
+        self,
+        min_clusters: int = 6,
+        base_n_clusters: int = 1024,
+        verbose: bool = None,
+        show_progress_bar: bool = None,
     ):
         super().__init__()
         self.min_clusters = min_clusters
         self.base_n_clusters = base_n_clusters
-        
+
         # Handle verbose parameters
         _, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
         )
 
     def fit(
@@ -530,9 +525,9 @@ class KMeansClusterer(Clusterer):
         _, verbose_output = handle_verbose_params(
             verbose=verbose if verbose is not None else self.verbose,
             show_progress_bar=show_progress_bar,
-            default_verbose=False
+            default_verbose=False,
         )
-        
+
         n_clusters = self.base_n_clusters
         cluster_label_layers = []
 
@@ -567,7 +562,14 @@ class KMeansClusterer(Clusterer):
         show_progress_bar: bool = None,
         **layer_kwargs,
     ) -> Tuple[List[ClusterLayer], ClusterTree]:
-        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, verbose=verbose, show_progress_bar=show_progress_bar, **layer_kwargs)
+        self.fit(
+            clusterable_vectors,
+            embedding_vectors,
+            layer_class=layer_class,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+            **layer_kwargs,
+        )
         return self.cluster_layers_, self.cluster_tree_
 
 
@@ -578,7 +580,7 @@ try:
 
         def __init__(
             self,
-            min_clusters: int = 4,          
+            min_clusters: int = 4,
             base_min_cluster_size: Optional[int] = 10,
             base_n_clusters: Optional[int] = None,
             noise_level: float = 0.5,
@@ -607,12 +609,12 @@ try:
             self.symmetrize_graph = symmetrize_graph
             self.node_embedding_dim = node_embedding_dim
             self.neighbor_scale = neighbor_scale
-            
+
             # Handle verbose parameters
             _, self.verbose = handle_verbose_params(
                 verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbose=False
+                default_verbose=False,
             )
 
             self.evoc = evoc.EVoC(
@@ -661,7 +663,13 @@ try:
             verbose: bool = None,
             show_progress_bar: bool = None,
         ) -> Tuple[List[ClusterLayer], ClusterTree]:
-            self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, verbose=verbose, show_progress_bar=show_progress_bar)
+            self.fit(
+                clusterable_vectors,
+                embedding_vectors,
+                layer_class=layer_class,
+                verbose=verbose,
+                show_progress_bar=show_progress_bar,
+            )
             return self.cluster_layers_, self.cluster_tree_
 
 except ImportError:

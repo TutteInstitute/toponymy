@@ -245,35 +245,32 @@ def build_keyphrase_count_matrix(
     verbose: bool = None,
 ) -> scipy.sparse.spmatrix:
     """
-     Builds a count matrix of keyphrases in a list of objects.
+    Builds a count matrix of keyphrases in a list of objects.
 
-     Parameters
-     ----------
-     objects : List[str]
-         A list of objects; for use in building a count matrix this should be string representations of the objects.
-     keyphrases : Dict[str, int]
-         A dictionary where keys are keyphrases to count in the objects and values are their respective indices.
-     ngrammer : Ngrammer
-         A function that takes a string and returns a list of n-grams.
-     n_jobs : int, optional
-         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
-     min_chunk_size : int, optional
-         The minimum chunk size for parallel processing, by default 20_000.
-     verbose : bool, optional
-         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    Parameters
+    ----------
+    objects : List[str]
+        A list of objects; for use in building a count matrix this should be string representations of the objects.
+    keyphrases : Dict[str, int]
+        A dictionary where keys are keyphrases to count in the objects and values are their respective indices.
+    ngrammer : Ngrammer
+        A function that takes a string and returns a list of n-grams.
+    n_jobs : int, optional
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
+    verbose : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
 
 
-     Returns
-     -------
-     scipy.sparse.spmatrix
-         A sparse count matrix of keyphrases in the objects.
+    Returns
+    -------
+    scipy.sparse.spmatrix
+        A sparse count matrix of keyphrases in the objects.
     """
     # Handle verbose parameters
-    _, verbose_output = handle_verbose_params(
-        verbose=verbose,
-        default_verbose=False
-    )
-    
+    _, verbose_output = handle_verbose_params(verbose=verbose, default_verbose=False)
+
     # count ngrams in parallel with joblib
     n_chunks = effective_n_jobs(n_jobs)
     chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
@@ -409,10 +406,10 @@ class KeyphraseBuilder:
 
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
-    
+
     embedder : Optional[TextEmbedderProtocol], optional
         An optional embedder to generate keyphrase vectors, by default None.
-    
+
     verbose : bool, optional
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
 
@@ -449,12 +446,9 @@ class KeyphraseBuilder:
         self.stop_words = stop_words
         self.n_jobs = n_jobs
         self.embedder = embedder
-        
+
         # Handle verbose parameters
-        _, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            default_verbose=False
-        )
+        _, self.verbose = handle_verbose_params(verbose=verbose, default_verbose=False)
 
     def fit(self, objects: List[Any]):
         if self.object_to_text is None:
@@ -593,11 +587,9 @@ def information_weighted_keyphrases(
     """
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    
+
     keyphrase_vector_mapping = {
         keyphrase: vector
         for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
@@ -734,9 +726,7 @@ def central_keyphrases(
     """
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
     keyphrase_vector_mapping = {
         keyphrase: vector
@@ -871,9 +861,7 @@ def bm25_keyphrases(
     """
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
     keyphrase_vector_mapping = {
         keyphrase: vector
@@ -1039,9 +1027,7 @@ def submodular_selection_information_keyphrases(
     """
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
     keyphrase_vector_mapping = {
         keyphrase: vector
@@ -1114,10 +1100,18 @@ def submodular_selection_information_keyphrases(
                 keyphrase_vector_mapping[keyphrase] = vector
 
         if len(candidate_keyphrases) >= n_keyphrases:
-            keyphrase_costs = 1.0 - (keyphrase_weights / (0.01 + keyphrase_weights.max()))
-            candidate_vectors = np.asarray(
-                [keyphrase_vector_mapping[phrase] for phrase in candidate_keyphrases]
-            ) - central_vector
+            keyphrase_costs = 1.0 - (
+                keyphrase_weights / (0.01 + keyphrase_weights.max())
+            )
+            candidate_vectors = (
+                np.asarray(
+                    [
+                        keyphrase_vector_mapping[phrase]
+                        for phrase in candidate_keyphrases
+                    ]
+                )
+                - central_vector
+            )
 
             _, chosen_keyphrases = selector.fit_transform(
                 X=candidate_vectors, y=candidate_keyphrases, sample_cost=keyphrase_costs

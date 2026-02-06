@@ -36,6 +36,7 @@ def test_centroids_from_labels():
         )
         np.testing.assert_array_equal(result, expected)
 
+
 def test_centroids_from_labels_no_jit():
     for i in range(10):
         n_clusters = np.random.randint(5, 50)
@@ -54,6 +55,7 @@ def test_centroids_from_labels_no_jit():
             ]
         )
         np.testing.assert_array_equal(result, expected)
+
 
 def test_build_cluster_tree():
     clusterable_data = np.vstack(
@@ -95,6 +97,7 @@ def test_build_cluster_tree():
                 assert (i, j) in clusters_in_tree
             else:
                 assert (i, j) in clusters_in_tree and (i, j) in cluster_tree
+
 
 def test_build_cluster_tree_no_jit():
     clusterable_data = np.vstack(
@@ -243,6 +246,7 @@ def test_kmeans_clusterer_class():
         for i in range(len(class_cluster_layers))
     )
 
+
 def test_evoc_clusterer_class():
     clusterer = EVoCClusterer(
         min_clusters=4,
@@ -265,11 +269,19 @@ def test_evoc_clusterer_class():
         embedding_vectors=clusterable_data,
         layer_class=ClusterLayerText,
     )
-    assert np.unique(class_cluster_layers[-1].cluster_labels).shape[0] >= 5 and np.unique(class_cluster_layers[-1].cluster_labels).shape[0] <= 7
-    assert adjusted_mutual_info_score(
-        class_cluster_layers[-1].cluster_labels[class_cluster_layers[-1].cluster_labels >= 0],
-        cluster_labels[class_cluster_layers[-1].cluster_labels >= 0]
-    ) >= 0.75
+    assert (
+        np.unique(class_cluster_layers[-1].cluster_labels).shape[0] >= 5
+        and np.unique(class_cluster_layers[-1].cluster_labels).shape[0] <= 7
+    )
+    assert (
+        adjusted_mutual_info_score(
+            class_cluster_layers[-1].cluster_labels[
+                class_cluster_layers[-1].cluster_labels >= 0
+            ],
+            cluster_labels[class_cluster_layers[-1].cluster_labels >= 0],
+        )
+        >= 0.75
+    )
 
 
 def test_max_layers_limit():
@@ -285,7 +297,7 @@ def test_max_layers_limit():
         random_state=42,
     )
     embedding_vectors = np.random.random_sample((2000, 256))
-    
+
     # Test with max_layers=2
     clusterer_with_limit = ToponymyClusterer(
         min_clusters=4,
@@ -293,15 +305,17 @@ def test_max_layers_limit():
         base_min_cluster_size=10,
         max_layers=2,  # Limit to 2 layers
     )
-    
+
     layers_limited, _ = clusterer_with_limit.fit_predict(
         clusterable_vectors=clusterable_data,
         embedding_vectors=embedding_vectors,
         layer_class=ClusterLayerText,
     )
-    
-    assert len(layers_limited) == 2, f"Expected exactly 2 layers, got {len(layers_limited)}"
-    
+
+    assert (
+        len(layers_limited) == 2
+    ), f"Expected exactly 2 layers, got {len(layers_limited)}"
+
     # Test with max_layers=None (no limit)
     clusterer_no_limit = ToponymyClusterer(
         min_clusters=4,
@@ -309,16 +323,18 @@ def test_max_layers_limit():
         base_min_cluster_size=10,
         max_layers=None,  # No limit
     )
-    
+
     layers_unlimited, _ = clusterer_no_limit.fit_predict(
         clusterable_vectors=clusterable_data,
         embedding_vectors=embedding_vectors,
         layer_class=ClusterLayerText,
     )
-    
+
     # Should create more than 2 layers when not limited
-    assert len(layers_unlimited) >= 2, f"Expected at least 2 layers, got {len(layers_unlimited)}"
-    
+    assert (
+        len(layers_unlimited) >= 2
+    ), f"Expected at least 2 layers, got {len(layers_unlimited)}"
+
     # Test with different max_layers values
     for max_layers in [1, 3, 4]:
         clusterer = ToponymyClusterer(
@@ -327,11 +343,13 @@ def test_max_layers_limit():
             base_min_cluster_size=10,
             max_layers=max_layers,
         )
-        
+
         layers, _ = clusterer.fit_predict(
             clusterable_vectors=clusterable_data,
             embedding_vectors=embedding_vectors,
             layer_class=ClusterLayerText,
         )
-        
-        assert len(layers) <= max_layers, f"Expected at most {max_layers} layers, got {len(layers)}"
+
+        assert (
+            len(layers) <= max_layers
+        ), f"Expected at most {max_layers} layers, got {len(layers)}"

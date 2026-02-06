@@ -26,6 +26,7 @@ from toponymy.prompt_construction import (
     topic_name_prompt,
     cluster_topic_names_for_renaming,
     distinguish_topic_names_prompt,
+    harmonize_over_time_prompt,
 )
 from tqdm.auto import tqdm
 import asyncio
@@ -111,6 +112,7 @@ class ClusterLayer(ABC):
         self.exemplars = []
         self.keyphrases = []
         self.subtopics = []
+        self.previous_names = []
 
     @abstractmethod
     def name_topics(
@@ -215,6 +217,9 @@ class ClusterLayer(ABC):
                 exemplar_texts=self.exemplars,
                 keyphrases=self.keyphrases,
                 subtopics=self.subtopics if len(self.subtopics) > 0 else None,
+                previous_names=(
+                    self.previous_names if len(self.previous_names) > 0 else None
+                ),
                 cluster_tree=cluster_tree,
                 object_description=object_description,
                 corpus_description=corpus_description,
@@ -222,6 +227,7 @@ class ClusterLayer(ABC):
                 max_num_exemplars=self.n_exemplars,
                 max_num_keyphrases=self.n_keyphrases,
                 max_num_subtopics=self.n_subtopics,
+                max_num_history=self.n_history,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
                 prompt_format=self.prompt_format,
@@ -345,6 +351,7 @@ class ClusterLayerText(ClusterLayer):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
+        n_history: int = 2,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
         prompt_template: Optional[str] = None,
@@ -370,6 +377,7 @@ class ClusterLayerText(ClusterLayer):
         self.exemplars_diversify_alpha = exemplars_diversify_alpha
         self.n_subtopics = n_subtopics
         self.subtopic_diversify_alpha = subtopic_diversify_alpha
+        self.n_history = n_history
         if text_embedding_model is not None:
             self.embedding_model = text_embedding_model
 
@@ -394,6 +402,9 @@ class ClusterLayerText(ClusterLayer):
                 exemplar_texts=self.exemplars,
                 keyphrases=self.keyphrases,
                 subtopics=self.subtopics,
+                previous_names=(
+                    self.previous_names if len(self.previous_names) > 0 else None
+                ),
                 cluster_tree=cluster_tree,
                 object_description=object_description,
                 corpus_description=corpus_description,
@@ -421,6 +432,52 @@ class ClusterLayerText(ClusterLayer):
         ]
 
         return self.prompts
+
+    def make_temporal_prompts(
+        self,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        prompt_format: str = None,
+        prompt_template: Optional[str] = None,
+    ) -> List[str]:
+
+        self.temporal_prompts = [
+            harmonize_over_time_prompt(
+                topic_index,
+                self.layer_id,
+                all_topic_names,
+                exemplar_texts=self.exemplars,
+                keyphrases=self.keyphrases,
+                subtopics=self.subtopics,
+                previous_names=(
+                    self.previous_names if len(self.previous_names) > 0 else None
+                ),
+                cluster_tree=cluster_tree,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                max_num_exemplars=self.n_exemplars,
+                max_num_keyphrases=self.n_keyphrases,
+                max_num_subtopics=self.n_subtopics,
+                exemplar_start_delimiter=self.exemplar_delimiters[0],
+                exemplar_end_delimiter=self.exemplar_delimiters[1],
+                prompt_format=(
+                    self.prompt_format if prompt_format is None else prompt_format
+                ),
+                prompt_template="harmonize_temporal",
+            )
+            for topic_index in tqdm(
+                range(self.centroid_vectors.shape[0]),
+                desc=f"Generating temporal prompts for layer {self.layer_id}",
+                disable=not self.show_progress_bar,
+                unit="topic",
+                leave=False,
+                position=1,
+            )
+        ]
+
+        return self.temporal_prompts
 
     # pragma: no cover
     def name_topics(
@@ -490,6 +547,18 @@ class ClusterLayerText(ClusterLayer):
                 cluster_tree=cluster_tree,
                 embedding_model=embedding_model,
             )  # pragma: no cover
+
+        # If there is temporal information, try to collapse similar topic names in time
+        if self.previous_names is not None:
+            self.harmonize_topics_over_time(
+                llm=llm,
+                detail_level=detail_level,
+                all_topic_names=all_topic_names,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                cluster_tree=cluster_tree,
+                embedding_model=embedding_model,
+            )
 
         # Try to fix any failures to generate a name
         if any([name == "" for name in self.topic_names]):
@@ -684,3 +753,59 @@ class ClusterLayerText(ClusterLayer):
             self.topic_name_vector[self.cluster_labels == i] = name
 
         return self.topic_name_vector
+
+    def _harmonize_topic_names_over_time(self, llm):
+        if isinstance(llm, LLMWrapper):
+            self.topic_names = [
+                (
+                    llm.generate_topic_name(prompt)
+                    if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
+                    else prompt.removeprefix("[!SKIP!]: ")
+                )
+                for prompt in tqdm(
+                    self.temporal_prompts,
+                    desc=f"Harmonizing topic names over time for layer {self.layer_id}",
+                    disable=not self.show_progress_bar,
+                    unit="topic",
+                    leave=False,
+                    position=1,
+                )
+            ]
+        elif isinstance(llm, AsyncLLMWrapper):
+            # Filter out prompts that are marked to be skipped
+            prompts_for_llm = [
+                (index, prompt)
+                for index, prompt in enumerate(self.temporal_prompts)
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
+            ]
+            llm_results = run_async(
+                llm.generate_topic_names([prompt for _, prompt in prompts_for_llm])
+            )
+            llm_result_index = 0
+            self.topic_names = []
+            for index, prompt in enumerate(self.prompts):
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
+                    self.topic_names.append(llm_results[llm_result_index])
+                    llm_result_index += 1
+                else:
+                    # If the prompt is marked to be skipped, use the original prompt text
+                    self.topic_names.append(prompt.removeprefix("[!SKIP!]: "))
+
+    def harmonize_topics_over_time(
+        self,
+        llm,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
+    ):
+        self.make_temporal_prompts(
+            all_topic_names,
+            object_description=object_description,
+            corpus_description=corpus_description,
+            cluster_tree=cluster_tree,
+            prompt_format="combined",  # todo
+        )
+        self._harmonize_topic_names_over_time(llm)
