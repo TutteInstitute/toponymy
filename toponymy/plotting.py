@@ -1,9 +1,7 @@
 from collections import Counter
-import pathlib
+import pathlib 
 import anywidget
 import traitlets
-from toponymy import ToponymyClusterer
-
 
 def construct_topic_hierarchy(
     clusterer: ToponymyClusterer, topic_names, root_name="Root"
