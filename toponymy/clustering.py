@@ -100,7 +100,7 @@ def build_raw_cluster_layers(
     base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
     max_layers: Optional[int] = None,
-    verbose: bool = None,
+    verbose: Optional[bool] = None,
 ) -> List[np.ndarray]:
     """
     Build hierarchical cluster layers from raw data using a KDTree and Boruvka's algorithm.
@@ -129,8 +129,8 @@ def build_raw_cluster_layers(
         A list of numpy arrays, each representing cluster labels for a layer.
     """
     n_samples = data.shape[0]
-    cluster_layers = []
-    min_cluster_size = base_min_cluster_size
+    cluster_layers: List[np.ndarray] = []
+    min_cluster_size: np.signedinteger = np.intp(base_min_cluster_size)
 
     sklearn_tree = KDTree(data)
     numba_tree = kdtree_to_numba(sklearn_tree)
@@ -159,10 +159,7 @@ def build_raw_cluster_layers(
         )
 
     # Handle verbose parameters
-    _, verbose_output = handle_verbose_params(
-        verbose=verbose,
-        default_verbose=False
-    )
+    _, verbose_output = handle_verbose_params(verbose=verbose, default_verbose=False)
 
     while n_clusters_in_layer >= min_clusters:
         if max_layers is not None and len(cluster_layers) >= max_layers:
@@ -171,7 +168,7 @@ def build_raw_cluster_layers(
             print(f"Layer {len(cluster_layers)} found {n_clusters_in_layer} clusters")
         cluster_layers.append(clusters)
         cluster_sizes = np.bincount(clusters[clusters >= 0])
-        next_min_cluster_size = int(
+        next_min_cluster_size = np.intp(
             np.quantile(cluster_sizes, next_cluster_size_quantile)
         )
         if next_min_cluster_size <= min_cluster_size + 1:
@@ -219,7 +216,7 @@ def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
 
 def build_cluster_tree(
     labels: List[np.ndarray],
-) -> ClusterTree:
+) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
     """
     Builds a cluster tree from the given labels.
 
@@ -234,7 +231,7 @@ def build_cluster_tree(
         A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
         and the values are lists of tuples representing the child clusters (layer, cluster index).
     """
-    result = {}
+    result: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
     raw_mapping = _build_cluster_tree(np.vstack(labels))
     for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
         parent_name = (parent_layer, parent_cluster)
@@ -248,7 +245,7 @@ def build_cluster_tree(
 @numba.njit()
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
-) -> np.ndarray: # pragma: no cover
+) -> np.ndarray:  # pragma: no cover
     result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
     counts = np.zeros(cluster_labels.max() + 1)
     for i in range(cluster_labels.shape[0]):
@@ -274,10 +271,10 @@ def create_cluster_layers(
     base_n_clusters: Optional[int] = None,
     next_cluster_size_quantile: float = 0.8,
     max_layers: Optional[int] = None,
-    verbose: bool = None,
-    show_progress_bar: bool = None,
+    verbose: Optional[bool] = None,
+    show_progress_bar: Optional[bool] = None,
     **layer_kwargs,
-) -> Tuple[List[ClusterLayer], ClusterTree]:
+) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
     """
     Create cluster layers from given vectors and parameters.
 
@@ -316,11 +313,9 @@ def create_cluster_layers(
     """
     # Handle verbose parameters
     show_progress_bar_val, verbose_val = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    
+
     cluster_labels = build_raw_cluster_layers(
         clusterable_vectors,
         min_clusters=min_clusters,
@@ -368,7 +363,7 @@ class Clusterer(ABC):
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer],
         **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], ClusterTree]:
+    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
         pass
 
 
@@ -413,8 +408,8 @@ class ToponymyClusterer(Clusterer):
         base_n_clusters: Optional[int] = None,
         next_cluster_size_quantile: float = 0.85,
         max_layers: Optional[int] = None,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
     ):
         super().__init__()
         self.min_clusters = min_clusters
@@ -423,12 +418,10 @@ class ToponymyClusterer(Clusterer):
         self.base_n_clusters = base_n_clusters
         self.next_cluster_size_quantile = next_cluster_size_quantile
         self.max_layers = max_layers
-        
+
         # Handle verbose parameters
         _, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
         )
 
         if self.base_min_cluster_size is None and self.base_n_clusters is None:
@@ -441,8 +434,8 @@ class ToponymyClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
         **layer_kwargs,
     ) -> Clusterer:
         self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
@@ -451,7 +444,11 @@ class ToponymyClusterer(Clusterer):
             embedding_vectors=embedding_vectors,
             min_clusters=self.min_clusters,
             min_samples=self.min_samples,
-            base_min_cluster_size=self.base_min_cluster_size,
+            base_min_cluster_size=(
+                self.base_min_cluster_size
+                if self.base_min_cluster_size is not None
+                else 10
+            ),
             base_n_clusters=self.base_n_clusters,
             next_cluster_size_quantile=self.next_cluster_size_quantile,
             max_layers=self.max_layers,
@@ -466,10 +463,10 @@ class ToponymyClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
         **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], ClusterTree]:
+    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
         self.fit(
             clusterable_vectors,
             embedding_vectors,
@@ -504,17 +501,19 @@ class KMeansClusterer(Clusterer):
     """
 
     def __init__(
-        self, min_clusters: int = 6, base_n_clusters: int = 1024, verbose: bool = None, show_progress_bar: bool = None
+        self,
+        min_clusters: int = 6,
+        base_n_clusters: int = 1024,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
     ):
         super().__init__()
         self.min_clusters = min_clusters
         self.base_n_clusters = base_n_clusters
-        
+
         # Handle verbose parameters
         _, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
         )
 
     def fit(
@@ -522,19 +521,19 @@ class KMeansClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
         **layer_kwargs,
     ) -> Clusterer:
         # Handle verbose parameters
         _, verbose_output = handle_verbose_params(
             verbose=verbose if verbose is not None else self.verbose,
             show_progress_bar=show_progress_bar,
-            default_verbose=False
+            default_verbose=False,
         )
-        
+
         n_clusters = self.base_n_clusters
-        cluster_label_layers = []
+        cluster_label_layers: List[np.ndarray] = []
 
         while n_clusters >= self.min_clusters:
             if verbose_output:
@@ -550,8 +549,10 @@ class KMeansClusterer(Clusterer):
                 labels,
                 centroids_from_labels(labels, embedding_vectors),
                 layer_id=i,
-                verbose=verbose,
-                show_progress_bar=show_progress_bar,
+                verbose=verbose if verbose is not None else False,
+                show_progress_bar=(
+                    show_progress_bar if show_progress_bar is not None else False
+                ),
                 **layer_kwargs,
             )
             for i, labels in enumerate(cluster_label_layers)
@@ -563,11 +564,18 @@ class KMeansClusterer(Clusterer):
         clusterable_vectors: np.ndarray,
         embedding_vectors: np.ndarray,
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
         **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], ClusterTree]:
-        self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, verbose=verbose, show_progress_bar=show_progress_bar, **layer_kwargs)
+    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+        self.fit(
+            clusterable_vectors,
+            embedding_vectors,
+            layer_class=layer_class,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+            **layer_kwargs,
+        )
         return self.cluster_layers_, self.cluster_tree_
 
 
@@ -578,7 +586,7 @@ try:
 
         def __init__(
             self,
-            min_clusters: int = 4,          
+            min_clusters: int = 4,
             base_min_cluster_size: Optional[int] = 10,
             base_n_clusters: Optional[int] = None,
             noise_level: float = 0.5,
@@ -590,8 +598,8 @@ try:
             symmetrize_graph: bool = True,
             node_embedding_dim: Optional[int] = None,
             neighbor_scale: float = 1.0,
-            verbose: bool = None,
-            show_progress_bar: bool = None,
+            verbose: Optional[bool] = None,
+            show_progress_bar: Optional[bool] = None,
         ):
             super().__init__()
 
@@ -607,12 +615,12 @@ try:
             self.symmetrize_graph = symmetrize_graph
             self.node_embedding_dim = node_embedding_dim
             self.neighbor_scale = neighbor_scale
-            
+
             # Handle verbose parameters
             _, self.verbose = handle_verbose_params(
                 verbose=verbose,
                 show_progress_bar=show_progress_bar,
-                default_verbose=False
+                default_verbose=False,
             )
 
             self.evoc = evoc.EVoC(
@@ -635,8 +643,9 @@ try:
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
             layer_class: Type[ClusterLayer] = ClusterLayerText,
-            verbose: bool = None,
-            show_progress_bar: bool = None,
+            verbose: Optional[bool] = None,
+            show_progress_bar: Optional[bool] = None,
+            **layer_kwargs,
         ) -> Clusterer:
             self.evoc.fit(embedding_vectors)
             cluster_labels = self.evoc.cluster_layers_
@@ -646,8 +655,10 @@ try:
                     labels,
                     centroids_from_labels(labels, embedding_vectors),
                     layer_id=i,
-                    verbose=verbose,
-                    show_progress_bar=show_progress_bar,
+                    verbose=verbose if verbose is not None else False,
+                    show_progress_bar=(
+                        show_progress_bar if show_progress_bar is not None else False
+                    ),
                 )
                 for i, labels in enumerate(cluster_labels)
             ]
@@ -658,10 +669,17 @@ try:
             clusterable_vectors: np.ndarray,
             embedding_vectors: np.ndarray,
             layer_class: Type[ClusterLayer] = ClusterLayerText,
-            verbose: bool = None,
-            show_progress_bar: bool = None,
-        ) -> Tuple[List[ClusterLayer], ClusterTree]:
-            self.fit(clusterable_vectors, embedding_vectors, layer_class=layer_class, verbose=verbose, show_progress_bar=show_progress_bar)
+            verbose: Optional[bool] = None,
+            show_progress_bar: Optional[bool] = None,
+            **layer_kwargs,
+        ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+            self.fit(
+                clusterable_vectors,
+                embedding_vectors,
+                layer_class=layer_class,
+                verbose=verbose,
+                show_progress_bar=show_progress_bar,
+            )
             return self.cluster_layers_, self.cluster_tree_
 
 except ImportError:

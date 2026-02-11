@@ -10,12 +10,13 @@ from toponymy.llm_wrappers import LLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy._utils import handle_verbose_params
 
+from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 import numpy as np
 
 from tqdm.auto import tqdm
 
-from typing import List, Any, Optional, Type, Dict
+from typing import List, Any, Optional, Type, Dict, Tuple
 
 
 class Toponymy:
@@ -128,14 +129,24 @@ class Toponymy:
             verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
         )
 
+    def __sklearn_tags__(self):
+        tags = BaseEstimator.__sklearn_tags__(self)
+        tags.requires_fit = True
+        tags.non_deterministic = True
+        tags.input_tags.one_d_array = False
+        tags.input_tags.two_d_array = False
+        tags.input_tags.string = True
+
+        return tags
+
     def fit(
         self,
         objects: List[Any],
-        embedding_vectors: np.array,
-        clusterable_vectors: np.array,
+        embedding_vectors: np.ndarray,
+        clusterable_vectors: np.ndarray,
         exemplar_method: str = "central",
         keyphrase_method: str = "information_weighted",
-        subtopic_method: str = "facility_location",
+        subtopic_method: str = "central",
     ):
         """
         Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
@@ -241,6 +252,7 @@ class Toponymy:
             self.cluster_layers_[0].make_exemplar_texts(
                 objects,
                 embedding_vectors,
+                method=exemplar_method,
             )
 
         if self.keyphrase_vectors_ is None:
@@ -332,12 +344,12 @@ class Toponymy:
     def fit_predict(
         self,
         objects: List[Any],
-        object_vectors: np.array,
-        clusterable_vectors: np.array,
+        object_vectors: np.ndarray,
+        clusterable_vectors: np.ndarray,
         exemplar_method: str = "central",
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "facility_location",
-    ) -> List[np.array]:
+    ) -> List[np.ndarray]:
         """
         Fit the model with objects and return the topic names.
 

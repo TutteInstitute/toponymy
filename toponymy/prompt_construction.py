@@ -39,7 +39,7 @@ def find_threshold_for_max_cluster_size(
         linkage="complete",
     )
     clustering.fit(distances)
-    cluster_sizes = defaultdict(lambda: 1)
+    cluster_sizes: Dict[int, int] = defaultdict(lambda: 1)
     merge_distances = clustering.distances_
 
     for i, (cluster1, cluster2) in enumerate(clustering.children_):
@@ -88,7 +88,9 @@ def cluster_topic_names_for_renaming(
             raise ValueError(
                 "Either topic_name_embeddings or embedding_model must be provided."
             )
-        topic_name_embeddings = embedding_model.encode(topic_names)
+        topic_name_embeddings = embedding_model.encode(
+            topic_names, show_progress_bar=False
+        )
     distances = pairwise_distances(topic_name_embeddings, metric="cosine")
     threshold = find_threshold_for_max_cluster_size(distances)
     clustering = AgglomerativeClustering(

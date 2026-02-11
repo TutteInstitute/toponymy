@@ -94,7 +94,7 @@ class ClusterLayer(ABC):
         n_subtopics: int = 24,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
-        prompt_template: Optional[str | Dict[str, Any]] = None,
+        prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
     ):
@@ -116,10 +116,10 @@ class ClusterLayer(ABC):
         )
 
         # Initialize empty lists for the cluster layer's attributes
-        self.topic_names = []
-        self.exemplars = []
-        self.keyphrases = []
-        self.subtopics = []
+        self.topic_names: List[str] = []
+        self.exemplars: List[List[str]] = []
+        self.keyphrases: List[List[str]] = []
+        self.subtopics: List[List[str]] = []
 
     @abstractmethod
     def name_topics(
@@ -148,7 +148,7 @@ class ClusterLayer(ABC):
         prompt_template: Optional[str] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
-    ) -> List[str]:
+    ) -> List[str | Dict[str, str]]:
         pass
 
     @abstractmethod
@@ -191,8 +191,13 @@ class ClusterLayer(ABC):
             raise ValueError("An embedding model must be provided")
         elif embedding_model is None:
             embedding_model = self.text_embedding_model
+        assert (
+            embedding_model is not None
+        ), "Embedding model should not be None by this point"
 
-        self.topic_name_embeddings = embedding_model.encode(self.topic_names)
+        self.topic_name_embeddings = embedding_model.encode(
+            self.topic_names, show_progress_bar=self.show_progress_bar
+        )
 
     def _make_disambiguation_prompts(
         self,
@@ -390,7 +395,7 @@ class ClusterLayerText(ClusterLayer):
         subtopic_diversify_alpha: float = 1.0,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
-        prompt_template: Optional[str | Dict[str, Any]] = None,
+        prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
         **kwargs: Any,
@@ -423,11 +428,11 @@ class ClusterLayerText(ClusterLayer):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        prompt_format: str = None,
-        prompt_template: Optional[str] = None,
+        prompt_format: Optional[str] = None,
+        prompt_template: Optional[Dict[str, Any]] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
-    ) -> List[str]:
+    ) -> List[str | Dict[str, str]]:
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
