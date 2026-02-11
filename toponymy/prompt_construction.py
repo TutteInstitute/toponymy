@@ -403,7 +403,7 @@ def topic_name_prompt(
     }
 
     if prompt_template is not None:
-        template_set = prompt_template
+        template_set = prompt_template["layer"]
     else:
         template_set = PROMPT_TEMPLATES["layer"]
 
