@@ -289,6 +289,7 @@ class Toponymy:
             )
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
 
+        self._is_fitted = True
         return self
 
     def fit_predict(
@@ -358,3 +359,9 @@ class Toponymy:
             topic_sizes,
             self.embedding_vectors_.shape[0],
         )
+
+    def __sklearn_is_fitted__(self):
+        """
+        Check fitted status and return a Boolean value.
+        """
+        return hasattr(self, "_is_fitted") and self._is_fitted
