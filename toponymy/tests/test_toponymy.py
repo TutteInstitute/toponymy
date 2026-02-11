@@ -50,7 +50,7 @@ def test_toponymy(
         metric="cosine",
     )
     row_matching, col_matching = linear_sum_assignment(distance_matrix)
-    assert distance_matrix[row_matching, col_matching].sum() < 2.7
+    assert distance_matrix[row_matching, col_matching].sum() < 2.5
     assert np.all(
         pd.Series(model.cluster_layers_[1].cluster_labels)
         .map(dict(np.vstack([np.arange(5), col_matching]).T))
@@ -59,6 +59,7 @@ def test_toponymy(
     )
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_toponymy_alternative_options(
     async_llm,
     embedder,
@@ -110,6 +111,7 @@ def test_toponymy_alternative_options(
     assert len(str(model.topic_tree_)) > 10
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_toponymy_alternative_options_2(
     async_llm,
     embedder,
@@ -161,6 +163,7 @@ def test_toponymy_alternative_options_2(
     assert len(str(model.topic_tree_)) > 10
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_toponymy_with_ollama(
     embedder,
     clusterer,
@@ -344,6 +347,7 @@ def test_toponymy_with_ollama(
         pytest.skip(f"Ollama test failed: {e}")
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_toponymy_async_ollama(
     embedder,
     clusterer,
@@ -547,6 +551,7 @@ def test_toponymy_async_ollama(
         pytest.skip(f"Async Ollama test failed: {e}")
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_ollama_wrapper_fallback():
     """Test that Ollama wrapper gracefully handles missing dependencies."""
     try:
@@ -580,6 +585,7 @@ def test_ollama_wrapper_fallback():
         asyncio.run(test_async())
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_ollama_wrapper_with_mock_for_ci():
     """Test Ollama wrapper functionality using a mock for CI environments.
 
@@ -634,6 +640,7 @@ def test_ollama_wrapper_with_mock_for_ci():
         pytest.skip("Ollama package not available for testing")
 
 
+# @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_async_ollama_wrapper_with_mock_for_ci():
     """Test AsyncOllama wrapper functionality using a mock for CI environments.
 

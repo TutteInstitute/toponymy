@@ -493,7 +493,7 @@ class ClusterLayerText(ClusterLayer):
                         topic_extraction_function=(
                             self.prompt_template["extract_topic_name"]
                             if self.prompt_template
-                            else None
+                            else lambda json_response: json_response["topic_name"]
                         ),
                         get_topic_name_regex=(
                             self.prompt_template.get(
@@ -528,12 +528,14 @@ class ClusterLayerText(ClusterLayer):
                     extract_topic_name_function=(
                         self.prompt_template["extract_topic_name"]
                         if self.prompt_template
-                        else None
+                        else lambda json_response: json_response["topic_name"]
                     ),
                     get_topic_name_regex=(
-                        self.prompt_template.get("get_topic_name_regex", None)
+                        self.prompt_template.get(
+                            "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                        )
                         if self.prompt_template
-                        else None
+                        else GET_TOPIC_NAME_REGEX
                     ),
                 )
             )

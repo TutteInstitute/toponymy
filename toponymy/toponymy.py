@@ -8,6 +8,7 @@ from toponymy.cluster_layer import (
 from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
+from toponymy.templates import PROMPT_TEMPLATES
 from toponymy._utils import handle_verbose_params
 
 from sklearn.base import BaseEstimator
@@ -102,7 +103,7 @@ class Toponymy:
         text_embedding_model: TextEmbedderProtocol,
         clusterer: Clusterer = ToponymyClusterer(),
         layer_class: Type[ClusterLayer] = ClusterLayerText,
-        prompt_template: Optional[str | Dict[str, Any]] = None,
+        prompt_template: Dict[str, Any] = PROMPT_TEMPLATES,
         keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
         object_description: str = "objects",
         corpus_description: str = "collection of objects",
