@@ -86,8 +86,8 @@ class ClusterLayer(ABC):
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
         prompt_template: Optional[Dict[str, Any]] = None,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
     ):
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
@@ -107,10 +107,10 @@ class ClusterLayer(ABC):
         )
 
         # Initialize empty lists for the cluster layer's attributes
-        self.topic_names = []
-        self.exemplars = []
-        self.keyphrases = []
-        self.subtopics = []
+        self.topic_names: List[str] = []
+        self.exemplars: List[List[str]] = []
+        self.keyphrases: List[List[str]] = []
+        self.subtopics: List[List[str]] = []
 
     @abstractmethod
     def name_topics(
@@ -133,7 +133,7 @@ class ClusterLayer(ABC):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-    ) -> List[str]:
+    ) -> List[str | Dict[str, str]]:
         pass
 
     @abstractmethod
@@ -162,7 +162,7 @@ class ClusterLayer(ABC):
         object_list: List[Any],
         object_vectors: np.ndarray,
         method: str = "central",
-    ) -> List[List[str]]:
+    ) -> Tuple[List[List[str]], List[List[int]]]:
         pass
 
     def embed_topic_names(
@@ -173,8 +173,13 @@ class ClusterLayer(ABC):
             raise ValueError("An embedding model must be provided")
         elif embedding_model is None:
             embedding_model = self.text_embedding_model
+        assert (
+            embedding_model is not None
+        ), "Embedding model should not be None by this point"
 
-        self.topic_name_embeddings = embedding_model.encode(self.topic_names)
+        self.topic_name_embeddings = embedding_model.encode(
+            self.topic_names, show_progress_bar=self.show_progress_bar
+        )
 
     def _make_disambiguation_prompts(
         self,
@@ -347,9 +352,9 @@ class ClusterLayerText(ClusterLayer):
         subtopic_diversify_alpha: float = 1.0,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         prompt_format: str = "combined",
-        prompt_template: Optional[str] = None,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
+        prompt_template: Optional[Dict[str, Any]] = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
         **kwargs: Any,
     ):
         super().__init__(
@@ -380,9 +385,9 @@ class ClusterLayerText(ClusterLayer):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        prompt_format: str = None,
-        prompt_template: Optional[str] = None,
-    ) -> List[str]:
+        prompt_format: Optional[str] = None,
+        prompt_template: Optional[Dict[str, Any]] = None,
+    ) -> List[str | Dict[str, str]]:
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 

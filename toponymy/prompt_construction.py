@@ -39,7 +39,7 @@ def find_threshold_for_max_cluster_size(
         linkage="complete",
     )
     clustering.fit(distances)
-    cluster_sizes = defaultdict(lambda: 1)
+    cluster_sizes: Dict[int, int] = defaultdict(lambda: 1)
     merge_distances = clustering.distances_
 
     for i, (cluster1, cluster2) in enumerate(clustering.children_):
@@ -89,7 +89,7 @@ def cluster_topic_names_for_renaming(
                 "Either topic_name_embeddings or embedding_model must be provided."
             )
         topic_name_embeddings = embedding_model.encode(
-            topic_names
+            topic_names, show_progress_bar=False
         )
     distances = pairwise_distances(topic_name_embeddings, metric="cosine")
     threshold = find_threshold_for_max_cluster_size(distances)
@@ -122,8 +122,8 @@ def distinguish_topic_names_prompt(
     max_num_keyphrases: int = 32,
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
-    exemplar_start_delimiter: str = "    * \"",
-    exemplar_end_delimiter: str = "\"\n",
+    exemplar_start_delimiter: str = '    * "',
+    exemplar_end_delimiter: str = '"\n',
     prompt_format: str = "combined",
     prompt_template: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, str]]:
@@ -164,7 +164,7 @@ def distinguish_topic_names_prompt(
         End delimiter for exemplar texts, by default "\"\n"
     prompt_format : str, optional
         Format of the prompt, either "combined" or "system_user" to use a separate
-        system prompt, by default "combined". 
+        system prompt, by default "combined".
     prompt_template : Optional[str], optional
         Custom prompt template to use, by default None. If provided, this will override
         the default prompt template.
@@ -183,7 +183,7 @@ def distinguish_topic_names_prompt(
         larger_topic = (
             ", ".join(unique_topic_names[:-1]) + " and " + unique_topic_names[-1]
         )
-    if len(larger_topic) == 0: 
+    if len(larger_topic) == 0:
         larger_topic = f"topics found in {corpus_description}"
 
     keyphrases_per_topic = [keyphrases[i][:max_num_keyphrases] for i in topic_indices]
@@ -194,7 +194,11 @@ def distinguish_topic_names_prompt(
     has_any_major_subtopics = False
 
     if subtopics is not None and cluster_tree is not None:
-        tree_subtopics_per_topic = [cluster_tree[(layer_id, x)] for x in topic_indices if (layer_id, x) in cluster_tree]
+        tree_subtopics_per_topic = [
+            cluster_tree[(layer_id, x)]
+            for x in topic_indices
+            if (layer_id, x) in cluster_tree
+        ]
         major_subtopics_per_topic = [
             [
                 all_topic_names[layer_id - 1][a[1]]
@@ -229,7 +233,7 @@ def distinguish_topic_names_prompt(
         "larger_topic": larger_topic,
         "document_type": object_description,
         "corpus_description": corpus_description,
-        "topics": attempted_topic_names, 
+        "topics": attempted_topic_names,
         "cluster_keywords": keyphrases_per_topic,
         "cluster_subtopics": {
             "major": major_subtopics_per_topic,
@@ -257,8 +261,9 @@ def distinguish_topic_names_prompt(
     elif prompt_format == "combined":
         return template_set["combined"].render(**render_params)
     else:
-        raise ValueError(f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'.")
-
+        raise ValueError(
+            f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'."
+        )
 
 
 def topic_name_prompt(
@@ -275,10 +280,10 @@ def topic_name_prompt(
     max_num_keyphrases: int = 32,
     max_num_subtopics: int = 16,
     max_num_exemplars: int = 128,
-    exemplar_start_delimiter: str = "    * \"",
-    exemplar_end_delimiter: str = "\"\n",
+    exemplar_start_delimiter: str = '    * "',
+    exemplar_end_delimiter: str = '"\n',
     prompt_format: str = "combined",
-    prompt_template: Optional[str] = None,
+    prompt_template: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, str]]:
     """
     Construct a prompt for naming a topic.
@@ -334,7 +339,10 @@ def topic_name_prompt(
             else []
         )
 
-        if len(tree_subtopics) == 1 and all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]] != "":
+        if (
+            len(tree_subtopics) == 1
+            and all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]] != ""
+        ):
             return f"[!SKIP!]: {all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]]}"
 
         # Subtopics one layer down are major subtopics; two layers down are minor
@@ -362,12 +370,20 @@ def topic_name_prompt(
         minor_subtopics = []
         other_subtopics = []
 
-    current_keyphrases = keyphrases[topic_index][:max_num_keyphrases] if topic_index < len(keyphrases) else []
-    current_exemplars = exemplar_texts[topic_index][:max_num_exemplars] if topic_index < len(exemplar_texts) else []
-    
+    current_keyphrases = (
+        keyphrases[topic_index][:max_num_keyphrases]
+        if topic_index < len(keyphrases)
+        else []
+    )
+    current_exemplars = (
+        exemplar_texts[topic_index][:max_num_exemplars]
+        if topic_index < len(exemplar_texts)
+        else []
+    )
+
     is_very_specific = "very specific" in summary_kind
     is_general = "general" in summary_kind
-    
+
     render_params = {
         "document_type": object_description,
         "corpus_description": corpus_description,
@@ -398,4 +414,6 @@ def topic_name_prompt(
     elif prompt_format == "combined":
         return template_set["combined"].render(**render_params)
     else:
-        raise ValueError(f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'.")
+        raise ValueError(
+            f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'."
+        )
