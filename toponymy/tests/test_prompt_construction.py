@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from toponymy.prompt_construction import topic_name_prompt
-from toponymy.templates import PROMPT_TEMPLATES
+from toponymy.templates import MULTILINGUAL_PROMPT_TEMPLATES, PROMPT_TEMPLATES
 from toponymy.prompt_construction import (
     cluster_topic_names_for_renaming,
     find_threshold_for_max_cluster_size,
@@ -33,8 +33,8 @@ def test_topic_name_prompt_no_subtopics():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompt = topic_name_prompt(
@@ -79,8 +79,8 @@ def test_topic_name_prompt_with_subtopics():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
         has_major_subtopics=True,
     )
 
@@ -131,8 +131,8 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
         has_major_subtopics=True,
     )
 
@@ -178,8 +178,8 @@ def test_topic_name_prompt_with_empty_subtopics():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
         has_major_subtopics=True,
     )
 
@@ -362,8 +362,8 @@ def test_distinguish_topic_names_prompt_no_subtopics():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -386,7 +386,16 @@ def test_distinguish_topic_names_prompt_with_subtopics():
     topic_indices = np.array([0, 1])
     layer_id = 1
     all_topic_names = [
-        ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2", "SubtopicA3", "SubtopicA4", "SubtopicB3", "SubtopicB4"],
+        [
+            "Subtopic A1",
+            "Subtopic A2",
+            "Subtopic B1",
+            "Subtopic B2",
+            "SubtopicA3",
+            "SubtopicA4",
+            "SubtopicB3",
+            "SubtopicB4",
+        ],
         ["Topic A", "Topic B"],
     ]
     exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
@@ -410,8 +419,8 @@ def test_distinguish_topic_names_prompt_with_subtopics():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",        
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -457,8 +466,8 @@ def test_distinguish_topic_names_prompt_with_single_topic():
         },
         cluster_sentences=[["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -505,8 +514,8 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",        
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompt = distinguish_topic_names_prompt(
@@ -523,6 +532,7 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
     )
 
     assert prompt == expected_prompt
+
 
 def test_topic_name_prompt_system_user_format():
     topic_index = 0
@@ -547,8 +557,8 @@ def test_topic_name_prompt_system_user_format():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     expected_user_prompt = PROMPT_TEMPLATES["layer"]["user"].render(
@@ -562,8 +572,8 @@ def test_topic_name_prompt_system_user_format():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompts = topic_name_prompt(
@@ -577,7 +587,7 @@ def test_topic_name_prompt_system_user_format():
         object_description,
         corpus_description,
         summary_kind,
-        prompt_format="system_user"
+        prompt_format="system_user",
     )
 
     assert prompts["system"] == expected_system_prompt
@@ -595,8 +605,8 @@ def test_topic_name_prompt_custom_template():
     object_description = "document"
     corpus_description = "corpus"
     summary_kind = "summary"
-    
-    custom_template = PROMPT_TEMPLATES["layer"]  # Using existing template for test
+
+    custom_template = MULTILINGUAL_PROMPT_TEMPLATES  # Using existing template for test
 
     prompt = topic_name_prompt(
         topic_index,
@@ -609,7 +619,7 @@ def test_topic_name_prompt_custom_template():
         object_description,
         corpus_description,
         summary_kind,
-        prompt_template=custom_template
+        prompt_template=custom_template,
     )
 
     expected_prompt = custom_template["combined"].render(
@@ -623,8 +633,8 @@ def test_topic_name_prompt_custom_template():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     assert prompt == expected_prompt
@@ -655,8 +665,8 @@ def test_distinguish_topic_names_prompt_system_user_format():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     expected_user_prompt = PROMPT_TEMPLATES["disambiguate_topics"]["user"].render(
@@ -672,8 +682,8 @@ def test_distinguish_topic_names_prompt_system_user_format():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     prompts = distinguish_topic_names_prompt(
@@ -687,7 +697,7 @@ def test_distinguish_topic_names_prompt_system_user_format():
         object_description,
         corpus_description,
         summary_kind,
-        prompt_format="system_user"
+        prompt_format="system_user",
     )
 
     assert prompts["system"] == expected_system_prompt
@@ -705,8 +715,10 @@ def test_distinguish_topic_names_prompt_custom_template():
     object_description = "document"
     corpus_description = "corpus"
     summary_kind = "summary"
-    
-    custom_template = PROMPT_TEMPLATES["disambiguate_topics"]  # Using existing template for test
+
+    custom_template = PROMPT_TEMPLATES[
+        "disambiguate_topics"
+    ]  # Using existing template for test
 
     prompt = distinguish_topic_names_prompt(
         topic_indices,
@@ -719,7 +731,7 @@ def test_distinguish_topic_names_prompt_custom_template():
         object_description,
         corpus_description,
         summary_kind,
-        prompt_template=custom_template
+        prompt_template=custom_template,
     )
 
     expected_prompt = custom_template["combined"].render(
@@ -735,8 +747,8 @@ def test_distinguish_topic_names_prompt_custom_template():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
     )
 
     assert prompt == expected_prompt
@@ -767,8 +779,8 @@ def test_distinguish_topic_names_prompt_very_specific_summary():
         },
         cluster_sentences=[["Example text for Topic A"], ["Example text for Topic B"]],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
         is_very_specific_summary=True,
         is_general_summary=False,
         has_major_subtopics=False,
@@ -813,8 +825,8 @@ def test_topic_name_prompt_general_summary():
         },
         cluster_sentences=exemplar_texts[topic_index][:128],
         summary_kind=summary_kind,
-        exemplar_start_delimiter="    * \"",
-        exemplar_end_delimiter="\"\n",
+        exemplar_start_delimiter='    * "',
+        exemplar_end_delimiter='"\n',
         is_very_specific_summary=False,
         is_general_summary=True,
         has_major_subtopics=False,
@@ -860,7 +872,7 @@ def test_topic_name_prompt_invalid_format():
             object_description,
             corpus_description,
             summary_kind,
-            prompt_format="invalid_format"
+            prompt_format="invalid_format",
         )
 
 
@@ -888,5 +900,5 @@ def test_distinguish_topic_names_prompt_invalid_format():
             object_description,
             corpus_description,
             summary_kind,
-            prompt_format="invalid_format"
+            prompt_format="invalid_format",
         )
