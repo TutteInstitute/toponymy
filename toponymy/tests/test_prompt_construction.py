@@ -622,7 +622,7 @@ def test_topic_name_prompt_custom_template():
         prompt_template=custom_template,
     )
 
-    expected_prompt = custom_template["combined"].render(
+    expected_prompt = custom_template["layer"]["combined"].render(
         document_type=object_description,
         corpus_description=corpus_description,
         cluster_keywords=keyphrases[topic_index][:32],
