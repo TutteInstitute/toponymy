@@ -4,7 +4,11 @@ from warnings import warn
 import tokenizers
 import transformers
 
-from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
+from toponymy.templates import (
+    GET_TOPIC_CLUSTER_NAMES_REGEX,
+    GET_TOPIC_NAME_REGEX,
+    default_extract_topic_names,
+)
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -104,7 +108,11 @@ class LLMWrapper(ABC):
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_name(
-        self, prompt: Union[str, Dict[str, str]], temperature: float = 0.4
+        self,
+        prompt: Union[str, Dict[str, str]],
+        temperature: float = 0.4,
+        topic_extraction_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
     ) -> str:
         try:
             if isinstance(prompt, str):
@@ -124,9 +132,9 @@ class LLMWrapper(ABC):
                 )
 
             topic_name_info = llm_output_to_result(
-                topic_name_info_raw, GET_TOPIC_NAME_REGEX
+                topic_name_info_raw, get_topic_name_regex
             )
-            topic_name = str(topic_name_info["topic_name"])
+            topic_name = str(topic_extraction_function(topic_name_info))
         except Exception as e:
             raise ValueError(
                 f"Failed to generate topic name with {self.__class__.__name__}"
@@ -149,6 +157,8 @@ class LLMWrapper(ABC):
         prompt: Union[str, Dict[str, str]],
         old_names: List[str],
         temperature: float = 0.4,
+        extract_topic_names_function=default_extract_topic_names,
+        get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
     ) -> List[str]:
         try:
             if isinstance(prompt, str):
@@ -176,37 +186,40 @@ class LLMWrapper(ABC):
             )
             return old_names
 
-        mapping = topic_name_info["new_topic_name_mapping"]
-        if len(mapping) == len(old_names):
-            result = []
-            for i, old_name_val in enumerate(old_names, start=1):
-                key_with_val = f"{i}. {old_name_val}"
-                key_just_index = f"{i}."
-                if key_with_val in mapping:
-                    result.append(mapping[key_with_val])
-                elif (
-                    key_just_index in mapping
-                ):  # This was `mapping.get(f"{n}.", name)` which is ambiguous
-                    result.append(mapping[key_just_index])
-                else:
-                    result.append(
-                        old_name_val
-                    )  # Fallback to old name to maintain length
-            return result
-        else:
-            # Fallback to just parsing the string as best we can
-            mapping = re.findall(
-                r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                topic_name_info_raw,
-                re.DOTALL,
-            )[0]
-            new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-            if len(new_names) == len(old_names):
-                return new_names
-            else:
-                raise ValueError(
-                    f"Failed to generate enough names when fixing {old_names}; got {mapping}"
-                )
+        return extract_topic_names_function(
+            topic_name_info, old_names, topic_name_info_raw
+        )
+        # mapping = topic_name_info["new_topic_name_mapping"]
+        # if len(mapping) == len(old_names):
+        #     result = []
+        #     for i, old_name_val in enumerate(old_names, start=1):
+        #         key_with_val = f"{i}. {old_name_val}"
+        #         key_just_index = f"{i}."
+        #         if key_with_val in mapping:
+        #             result.append(mapping[key_with_val])
+        #         elif (
+        #             key_just_index in mapping
+        #         ):  # This was `mapping.get(f"{n}.", name)` which is ambiguous
+        #             result.append(mapping[key_just_index])
+        #         else:
+        #             result.append(
+        #                 old_name_val
+        #             )  # Fallback to old name to maintain length
+        #     return result
+        # else:
+        #     # Fallback to just parsing the string as best we can
+        #     mapping = re.findall(
+        #         r'"new_topic_name_mapping":\s*\{(.*?)\}',
+        #         topic_name_info_raw,
+        #         re.DOTALL,
+        #     )[0]
+        #     new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+        #     if len(new_names) == len(old_names):
+        #         return new_names
+        #     else:
+        #         raise ValueError(
+        #             f"Failed to generate enough names when fixing {old_names}; got {mapping}"
+        #         )
 
     @property
     def supports_system_prompts(self) -> bool:
@@ -255,7 +268,11 @@ class AsyncLLMWrapper(ABC):
         pass
 
     async def generate_topic_names(
-        self, prompts: List[Union[str, Dict[str, str]]], temperature: float = 0.4
+        self,
+        prompts: List[Union[str, Dict[str, str]]],
+        temperature: float = 0.4,
+        extract_topic_name_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
     ) -> List[str]:
         """
         Generate topic names for a batch of prompts.
@@ -287,8 +304,8 @@ class AsyncLLMWrapper(ABC):
 
             # Attempt to parse the response
             try:
-                topic_name_info = llm_output_to_result(response, GET_TOPIC_NAME_REGEX)
-                results.append(str(topic_name_info["topic_name"]))
+                topic_name_info = llm_output_to_result(response, get_topic_name_regex)
+                results.append(str(extract_topic_name_function(topic_name_info)))
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
@@ -302,6 +319,8 @@ class AsyncLLMWrapper(ABC):
         prompts: List[Union[str, Dict[str, str]]],
         old_names_list: List[List[str]],
         temperature: float = 0.4,
+        extract_topic_names_function=default_extract_topic_names,
+        get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
     ) -> List[List[str]]:
         """
         Generate topic cluster names for a batch of prompts.
@@ -332,42 +351,54 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response, old_names in zip(responses, old_names_list):
-            results.append(self._parse_cluster_response(response, old_names))
+            results.append(
+                self._parse_cluster_response(
+                    response,
+                    old_names,
+                    extract_topic_names_function,
+                    get_topic_names_regex,
+                )
+            )
 
         return results
 
-    def _parse_cluster_response(self, response: str, old_names: List[str]) -> List[str]:
+    def _parse_cluster_response(
+        self,
+        response: str,
+        old_names: List[str],
+        extract_topic_names_function,
+        get_topic_names_regex,
+    ) -> List[str]:
         """Parse a single cluster response."""
         try:
-            topic_name_info = llm_output_to_result(
-                response, GET_TOPIC_CLUSTER_NAMES_REGEX
-            )
-            mapping = topic_name_info["new_topic_name_mapping"]
+            topic_name_info = llm_output_to_result(response, get_topic_names_regex)
+            return extract_topic_names_function(topic_name_info, old_names, response)
+            # mapping = topic_name_info["new_topic_name_mapping"]
 
-            if len(mapping) == len(old_names):
-                result = []
-                for i, old_name_val in enumerate(old_names, start=1):
-                    key_with_val = f"{i}. {old_name_val}"
-                    key_just_index = f"{i}."
-                    if key_with_val in mapping:
-                        result.append(mapping[key_with_val])
-                    elif key_just_index in mapping:
-                        result.append(mapping[key_just_index])
-                    else:
-                        result.append(old_name_val)
-                return result
-            else:
-                # Fallback parsing
-                mapping_str = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    response,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping_str, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names; got {mapping}")
+            # if len(mapping) == len(old_names):
+            #     result = []
+            #     for i, old_name_val in enumerate(old_names, start=1):
+            #         key_with_val = f"{i}. {old_name_val}"
+            #         key_just_index = f"{i}."
+            #         if key_with_val in mapping:
+            #             result.append(mapping[key_with_val])
+            #         elif key_just_index in mapping:
+            #             result.append(mapping[key_just_index])
+            #         else:
+            #             result.append(old_name_val)
+            #     return result
+            # else:
+            #     # Fallback parsing
+            #     mapping_str = re.findall(
+            #         r'"new_topic_name_mapping":\s*\{(.*?)\}',
+            #         response,
+            #         re.DOTALL,
+            #     )[0]
+            #     new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping_str, re.DOTALL)
+            #     if len(new_names) == len(old_names):
+            #         return new_names
+            #     else:
+            #         raise ValueError(f"Failed to generate enough names; got {mapping}")
         except Exception as e:
             warn(f"Failed to parse cluster names: {e}")
             return old_names

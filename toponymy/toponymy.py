@@ -1,9 +1,14 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
+from toponymy.cluster_layer import (
+    ClusterLayer,
+    ClusterLayerSummaryText,
+    ClusterLayerText,
+)
 from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
+from toponymy.templates import PROMPT_TEMPLATES
 from toponymy._utils import handle_verbose_params
 
 from sklearn.base import BaseEstimator
@@ -12,7 +17,7 @@ import numpy as np
 
 from tqdm.auto import tqdm
 
-from typing import List, Any, Type, Optional, Dict, Tuple
+from typing import List, Any, Optional, Type, Dict, Tuple
 
 
 class Toponymy:
@@ -98,6 +103,7 @@ class Toponymy:
         text_embedding_model: TextEmbedderProtocol,
         clusterer: Clusterer = ToponymyClusterer(),
         layer_class: Type[ClusterLayer] = ClusterLayerText,
+        prompt_template: Dict[str, Any] = PROMPT_TEMPLATES,
         keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
         object_description: str = "objects",
         corpus_description: str = "collection of objects",
@@ -117,6 +123,7 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
+        self.prompt_template = prompt_template
 
         # Handle verbose parameters
         self.show_progress_bars, self.verbose = handle_verbose_params(
@@ -189,6 +196,7 @@ class Toponymy:
                     if self.llm_wrapper.supports_system_prompts
                     else "combined"
                 ),
+                prompt_template=self.prompt_template,
             )
 
         # Initialize other data structures
@@ -196,6 +204,13 @@ class Toponymy:
         self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
             self.cluster_layers_
         )
+        if isinstance(self.cluster_layers_[0], ClusterLayerSummaryText):
+            self.topic_summaries_: List[List[str]] = [[]] * len(self.cluster_layers_)
+            self.topic_explanations_: List[List[str]] = [[]] * len(self.cluster_layers_)
+            _summarize_topics = True
+        else:
+            _summarize_topics = False
+
         detail_levels = np.linspace(
             self.lowest_detail_level,
             self.highest_detail_level,
@@ -283,22 +298,46 @@ class Toponymy:
                     method=subtopic_method,
                 )
 
-            layer.make_prompts(
-                detail_levels[i],
-                self.topic_names_,
-                self.object_description,
-                self.corpus_description,
-                self.cluster_tree_,
-            )
-            self.topic_names_[i] = layer.name_topics(
-                self.llm_wrapper,
-                detail_levels[i],
-                self.topic_names_,
-                self.object_description,
-                self.corpus_description,
-                self.cluster_tree_,
-                self.embedding_model,
-            )
+            if _summarize_topics:
+                layer.make_prompts(
+                    detail_levels[i],
+                    self.topic_names_,
+                    self.object_description,
+                    self.corpus_description,
+                    self.cluster_tree_,
+                    self.topic_summaries_,
+                    self.topic_explanations_,
+                )
+                (
+                    self.topic_names_[i],
+                    self.topic_summaries_[i],
+                    self.topic_explanations_[i],
+                ) = layer.name_topics(
+                    self.llm_wrapper,
+                    detail_levels[i],
+                    self.topic_names_,
+                    self.object_description,
+                    self.corpus_description,
+                    self.cluster_tree_,
+                    self.embedding_model,
+                )
+            else:
+                layer.make_prompts(
+                    detail_levels[i],
+                    self.topic_names_,
+                    self.object_description,
+                    self.corpus_description,
+                    self.cluster_tree_,
+                )
+                self.topic_names_[i] = layer.name_topics(
+                    self.llm_wrapper,
+                    detail_levels[i],
+                    self.topic_names_,
+                    self.object_description,
+                    self.corpus_description,
+                    self.cluster_tree_,
+                    self.embedding_model,
+                )
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
 
         return self
