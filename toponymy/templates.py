@@ -292,7 +292,7 @@ The response must contain only JSON with no preamble and must have one entry for
     },
 }
 
-MULTILINGUAL_PROMPT_TEMPLATES = {
+MULTILINGUAL_EN_FR_PROMPT_TEMPLATES = {
     "layer": {
         "system": jinja2.Template(
             """

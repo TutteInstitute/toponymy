@@ -868,7 +868,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
         prompt_template: Optional[str] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
-    ) -> List[str] | Dict[str, str]:
+    ) -> List[str | Dict[str, str]]:
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
