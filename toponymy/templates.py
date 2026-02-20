@@ -553,7 +553,7 @@ and capture the specific aspects of the topic, while the explanation should prov
 comprehensive overview of the topic's content and nuances.
 {% elif is_general_summary %}
 The topic name should be broad and simple enough to capture the overall sense of the
-large and diverse range of {{document_type}} contained in it at a glance. The topic summaryshould provide
+large and diverse range of {{document_type}} contained in it at a glance. The topic summary should provide
 a concise overview of the main themes and ideas encompassed by the topic, while the explanation should elaborate 
 on the sumamry providing a more detailed accounting of the full breadth and range of subtopics covered by the topic.
 {% endif %}
@@ -665,7 +665,7 @@ and capture the specific aspects of the topic, while the explanation should prov
 comprehensive overview of the topic's content and nuances.
 {% elif is_general_summary %}
 The topic name should be broad and simple enough to capture the overall sense of the
-large and diverse range of {{document_type}} contained in it at a glance. The topic summaryshould provide
+large and diverse range of {{document_type}} contained in it at a glance. The topic summary should provide
 a concise overview of the main themes and ideas encompassed by the topic, while the explanation should elaborate 
 on the sumamry providing a more detailed accounting of the full breadth and range of subtopics covered by the topic.
 {% endif %}
