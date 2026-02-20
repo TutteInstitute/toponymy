@@ -607,7 +607,7 @@ def test_topic_name_prompt_custom_template():
     summary_kind = "summary"
 
     custom_template = (
-        MULTILINGUAL_EN_FRPROMPT_TEMPLATES  # Using existing template for test
+        MULTILINGUAL_EN_FR_PROMPT_TEMPLATES  # Using existing template for test
     )
 
     prompt = topic_name_prompt(
