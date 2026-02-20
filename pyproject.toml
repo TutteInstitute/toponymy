@@ -42,6 +42,7 @@ Homepage = "https://github.com/TutteInstitute/toponymy"
 
 [project.optional-dependencies]
 dev = [
+    "huggingface-hub<1.0",
     "black",
     "isort",
     "pylint",

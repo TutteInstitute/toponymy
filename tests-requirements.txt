@@ -13,6 +13,7 @@ numpy>=2.0
 sentence-transformers>=2.2; sys_platform != "darwin"
 sentence-transformers<=3.1; sys_platform == "darwin"
 transformers
+pandas
 pytest-asyncio
 bm25s
 evoc
