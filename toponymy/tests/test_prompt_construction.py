@@ -1,7 +1,7 @@
 import pytest
 import numpy as np
 from toponymy.prompt_construction import topic_name_prompt
-from toponymy.templates import MULTILINGUAL_PROMPT_TEMPLATES, PROMPT_TEMPLATES
+from toponymy.templates import MULTILINGUAL_EN_FR_PROMPT_TEMPLATES, PROMPT_TEMPLATES
 from toponymy.prompt_construction import (
     cluster_topic_names_for_renaming,
     find_threshold_for_max_cluster_size,
@@ -606,7 +606,9 @@ def test_topic_name_prompt_custom_template():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    custom_template = MULTILINGUAL_PROMPT_TEMPLATES  # Using existing template for test
+    custom_template = (
+        MULTILINGUAL_EN_FRPROMPT_TEMPLATES  # Using existing template for test
+    )
 
     prompt = topic_name_prompt(
         topic_index,
