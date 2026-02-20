@@ -5,7 +5,6 @@ from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy._utils import handle_verbose_params
-from toponymy.treemap import treemap_dataframe
 
 from sklearn.utils.validation import check_is_fitted
 import numpy as np
@@ -13,7 +12,6 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from typing import List, Any, Type
-    
 
 
 class Toponymy:
@@ -118,12 +116,10 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
-        
+
         # Handle verbose parameters
         self.show_progress_bars, self.verbose = handle_verbose_params(
-            verbose=verbose,
-            show_progress_bars=show_progress_bars,
-            default_verbose=True
+            verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
         )
 
     def fit(
@@ -360,38 +356,3 @@ class Toponymy:
             topic_sizes,
             self.embedding_vectors_.shape[0],
         )
-
-    def draw_treemap(
-        self,
-        margin: dict=dict(t=10, l=10, r=10, b=10)
-    ):
-        """
-        Draws a hierarchical treemap of the Toponymy using plotly.express.treemap
-
-        Returns:
-        --------
-        fig
-            A `plotly.graph_objects.Figure` containing a tree map.
-        """
-        fig = None
-        # The reason I wrap with this try/except block is
-        # to avoid adding plotly as a dependency to Toponymy
-        # while failing gracefully if plotly is not installed
-        try: 
-            from plotly.express import treemap
-            df = treemap_dataframe(self)
-            fig = treemap(
-                df,
-                ids="id",
-                parents="parent",
-                names="label",
-                values="value",
-            )
-            fig.update_layout(
-                margin=margin,
-            )
-        except ImportError as e:
-            print(f"Failed to import plotly: {e}")
-
-        return fig
-        
