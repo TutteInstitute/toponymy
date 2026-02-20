@@ -17,7 +17,7 @@ def treemap_dataframe(
         layer, c = node
         if layer == n_layers:
             # root node!
-            clustered = np.size(topic_tree.topic_sizes[-1])
+            clustered = sum(topic_tree.topic_sizes[-1])
             pc = clustered/topic_tree.n_objects*100
             return f"Everything | {clustered}/{topic_tree.n_objects} clustered ({pc:.2f}%)"
         try:
@@ -29,7 +29,7 @@ def treemap_dataframe(
         layer, c = node
         if layer == n_layers:
             # root node!
-            size = np.size(topic_tree.topic_sizes[-1])
+            size = sum(topic_tree.topic_sizes[-1])
         else:
             size = topic_tree.topic_sizes[layer][c]
         return size
