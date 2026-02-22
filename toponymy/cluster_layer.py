@@ -549,7 +549,7 @@ class ClusterLayerText(ClusterLayer):
             )  # pragma: no cover
 
         # If there is temporal information, try to collapse similar topic names in time
-        if self.previous_names is not None:
+        if len(self.previous_names)>0:
             self.harmonize_topics_over_time(
                 llm=llm,
                 detail_level=detail_level,
