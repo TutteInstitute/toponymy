@@ -75,6 +75,12 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
 
     return result
 
+def on_retry_error(retry_state):
+    exc = retry_state.outcome.exception()
+    attempts = retry_state.attempt_number
+    warn(f"Warning: Calling the LLM failed after {attempts} attempts. Last error: {exc}")
+    return ""
+
 
 class LLMWrapper(ABC):
 
@@ -100,7 +106,7 @@ class LLMWrapper(ABC):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry_error_callback=lambda x: "",
+        retry_error_callback=on_retry_error,
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_name(
@@ -129,7 +135,7 @@ class LLMWrapper(ABC):
             topic_name = str(topic_name_info["topic_name"])
         except Exception as e:
             raise ValueError(
-                f"Failed to generate topic name with {self.__class__.__name__}"
+                f"Failed to generate topic name with {self.__class__.__name__}: {e}"
             )
         return topic_name
 
