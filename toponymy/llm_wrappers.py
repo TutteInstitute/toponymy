@@ -78,7 +78,7 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
 def on_retry_error(retry_state):
     exc = retry_state.outcome.exception()
     attempts = retry_state.attempt_number
-    warn(f"Calling the LLM failed after {attempts} attempts. Last error: {exc}")
+    warn(f"Calling the LLM failed after {attempts} attempts. Last error: {exc.args[0]}")
     return ""
 
 
