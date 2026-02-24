@@ -8,12 +8,14 @@ Toponymy is available on PyPI, so you can install it using pip:
 
     pip install toponymy
 
-If you are using conda, you can also install Toponymy using conda-forge (comming soon):
+If you are using conda, you can also install Toponymy using conda-forge (coming soon):
+
 .. code-block:: shell
 
     conda install -c conda-forge toponymy
 
 To get the latest and greatest version of Toponymy, you can also install it from source.
+
 .. code-block:: shell
 
     git clone https://github.com/TutteInstitute/toponymy.git
@@ -22,7 +24,7 @@ To get the latest and greatest version of Toponymy, you can also install it from
     pip install -e .
 
 This provides the basics to get started, but Toponymy makes use of LLMs and embedding models as well. Instead 
-of havign a very large dependency list, we allow you to install what you need, and different options 
+of having a very large dependency list, we allow you to install what you need, and different options 
 will become available within Toponymy based on what you have installed.
 
 If you are interested in working with local models, you can install ``llama-cpp-python`` or huggingface's ``transformers``.
@@ -45,6 +47,7 @@ packages respectively.
     pip install anthropic
 
 If you are using models on Azure's AI Foundry you will need to install the azure-ai-inference package.
+
 .. code-block:: shell
 
     pip install azure-ai-inference

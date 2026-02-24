@@ -1,0 +1,673 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clusterers for Toponymy &mdash; Toponymy 0.3 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+      <link rel="stylesheet" type="text/css" href="_static/nbsphinx-code-cells.css?v=2aa19091" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=b489f392"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+      <script>window.MathJax = {"tex": {"inlineMath": [["$", "$"], ["\\(", "\\)"]], "processEscapes": true}, "options": {"ignoreHtmlClass": "tex2jax_ignore|mathjax_ignore|document", "processHtmlClass": "tex2jax_process|mathjax_process|math|output_area"}}</script>
+      <script defer="defer" src="https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Clusterer Options" href="clustering_options.html" />
+    <link rel="prev" title="How Toponymy Works" href="how_toponymy_works.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Toponymy
+              <img src="_static/toponymy_logo_rtd.png" class="logo" alt="Logo"/>
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="intro.html">Introduction to Toponymy</a></li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="basic_usage.html">Getting Started with Toponymy</a></li>
+<li class="toctree-l1"><a class="reference internal" href="params_and_options.html">Parameters and Options</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting More out of Toponymy:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="how_toponymy_works.html">How Toponymy Works</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Clusterers for Toponymy</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#ToponymyClusterer">ToponymyClusterer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#EVōC-Clusterer">EVōC Clusterer</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#Your-Own-Clusterer">Your Own Clusterer</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="clustering_options.html">Clusterer Options</a></li>
+<li class="toctree-l1"><a class="reference internal" href="keyphrases.html">Keyphrase extractors</a></li>
+<li class="toctree-l1"><a class="reference internal" href="exemplar_texts.html">Exemplar Text Selection</a></li>
+<li class="toctree-l1"><a class="reference internal" href="llm_wrappers.html">LLM Wrappers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="embedding_wrappers.html">Embedding Wrappers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cluster_layers.html">Cluster_layers</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Sundries:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api.html">Toponymy API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Toponymy</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Clusterers for Toponymy</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/clusterers.ipynb.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="Clusterers-for-Toponymy">
+<h1>Clusterers for Toponymy<a class="headerlink" href="#Clusterers-for-Toponymy" title="Link to this heading"></a></h1>
+<p>Toponymy supports different ways to cluster your data. There is a default approach, the <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code> that works well with the rest of the toolchain. However other clusterers exist, and it can be relatively easy to create your own clusterer that can plug directly into the existing Toponymy infrastructure. This tutorial will look at the clusterers available, and briefly explore what would be involved in writing your own clusterer class that can work with Toponymy.</p>
+<p>Before we start let’s get some basic librarties imported, and load some data.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[1]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">matplotlib.pyplot</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">plt</span>
+</pre></div>
+</div>
+</div>
+<p>We’ll use the standard 20-newsgroup data with pre-built embeddings and a pre-built data map.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[2]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">newsgroups_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_parquet</span><span class="p">(</span><span class="s2">&quot;hf://datasets/lmcinnes/20newsgroups_embedded/data/train-00000-of-00001.parquet&quot;</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">newsgroups_df</span><span class="o">.</span><span class="n">head</span><span class="p">()</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[3]:
+</pre></div>
+</div>
+<div class="output_area rendered_html docutils container">
+<div>
+<style scoped>
+    .dataframe tbody tr th:only-of-type {
+        vertical-align: middle;
+    }
+
+    .dataframe tbody tr th {
+        vertical-align: top;
+    }
+
+    .dataframe thead th {
+        text-align: right;
+    }
+</style>
+<table border="1" class="dataframe">
+  <thead>
+    <tr style="text-align: right;">
+      <th></th>
+      <th>post</th>
+      <th>newsgroup</th>
+      <th>embedding</th>
+      <th>map</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <th>0</th>
+      <td>\n\nI am sure some bashers of Pens fans are pr...</td>
+      <td>rec.sport.hockey</td>
+      <td>[-0.04380008950829506, 0.08495834469795227, -0...</td>
+      <td>[-0.13199903070926666, 10.1972017288208]</td>
+    </tr>
+    <tr>
+      <th>1</th>
+      <td>My brother is in the market for a high-perform...</td>
+      <td>comp.sys.ibm.pc.hardware</td>
+      <td>[0.006855607498437166, -0.05531690642237663, -...</td>
+      <td>[11.03041934967041, 9.509867668151855]</td>
+    </tr>
+    <tr>
+      <th>2</th>
+      <td>\n\n\n\n\tFinally you said what you dream abou...</td>
+      <td>talk.politics.mideast</td>
+      <td>[0.01537406351417303, 0.03572937101125717, -0....</td>
+      <td>[1.7360589504241943, -0.31686803698539734]</td>
+    </tr>
+    <tr>
+      <th>3</th>
+      <td>\nThink!\n\nIt's the SCSI card doing the DMA t...</td>
+      <td>comp.sys.ibm.pc.hardware</td>
+      <td>[0.010156078264117241, -0.07253803312778473, -...</td>
+      <td>[10.975887298583984, 10.715202331542969]</td>
+    </tr>
+    <tr>
+      <th>4</th>
+      <td>1)    I have an old Jasmine drive which I cann...</td>
+      <td>comp.sys.mac.hardware</td>
+      <td>[-0.008448092266917229, 0.06011670082807541, 0...</td>
+      <td>[10.498811721801758, 11.010639190673828]</td>
+    </tr>
+  </tbody>
+</table>
+</div></div>
+</div>
+<p>For the purposes of the clusterer we really care about two things – the embedding vectors, and a potentially different representation that is ideally more clusterable than the raw embedding vectors (usually via some manner of dimension reduction).</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[4]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">document_vectors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">newsgroups_df</span><span class="p">[</span><span class="s2">&quot;embedding&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+<span class="n">clusterable_vectors</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">stack</span><span class="p">(</span><span class="n">newsgroups_df</span><span class="p">[</span><span class="s2">&quot;map&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">values</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>We can import the different clusterers directly from <code class="docutils literal notranslate"><span class="pre">toponymy.clustering</span></code>. We’ll import the default <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code> as well as the <code class="docutils literal notranslate"><span class="pre">KMeansClusterer</span></code> and the <code class="docutils literal notranslate"><span class="pre">EVoCClusterer</span></code>. To make use of the clusterer’s <code class="docutils literal notranslate"><span class="pre">fit</span></code> method we will also need a layer class since the clusterer will create the relevant cluster layers with the given class. For this demonstration we just have text so the basic <code class="docutils literal notranslate"><span class="pre">ClusterLayerText</span></code> well be fine here.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[5]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">toponymy.clustering</span><span class="w"> </span><span class="kn">import</span> <span class="n">ToponymyClusterer</span><span class="p">,</span> <span class="n">KMeansClusterer</span><span class="p">,</span> <span class="n">EVoCClusterer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">toponymy.cluster_layer</span><span class="w"> </span><span class="kn">import</span> <span class="n">ClusterLayerText</span>
+</pre></div>
+</div>
+</div>
+<section id="ToponymyClusterer">
+<h2>ToponymyClusterer<a class="headerlink" href="#ToponymyClusterer" title="Link to this heading"></a></h2>
+<p>We’ll start with the <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code>. It is designed to work well within the Toponymy framework, and to be easy to use without having to worry too much about complicated hyperparameter choices. The default choices for the ToponymyClusterer should work reasonably well for most datasets. However, lets set some of the major options here to demonstrate what can be altered.</p>
+<p>The ToponymyClusterer uses a variant of HDBSCAN, but produces a number of layers at different clustering rsolutions rather than a hierarchical tree of clusters. This provides a less complex structure to work with (a short list of layers) and ensures that each layer has clusters of roughly the same size, resulting in layers of topics that will be on roughly the same scale of specificity/generality. To control this we can set <code class="docutils literal notranslate"><span class="pre">base_n_clusters</span></code> which determines (roughly) how many clusters to aim
+for at the most fine-grained resolution, and <code class="docutils literal notranslate"><span class="pre">min_clusters</span></code> which gives the minimum number of clusters to accept at uppermost clustering layer that contains the fewest clusters. If you would rather determine the <em>size</em> of clusters at the finest scale <code class="docutils literal notranslate"><span class="pre">base_min_cluster_size</span></code> can be specified instead. The <code class="docutils literal notranslate"><span class="pre">next_cluster_size_quantile</span></code> controls the qualtile of cluster sizes used to determine the <code class="docutils literal notranslate"><span class="pre">min_cluster_size</span></code> for the next layer. From a practical perspective you should think of this as a
+value on 1.0 specifying that there should be as few layers as possible, and lower values resulting in more layers of clusters (up to infintiely many layers for a value of 0.0 – we don’t recommend doing this).</p>
+<p>Since we have an HDBSCAN-like algorithm a <code class="docutils literal notranslate"><span class="pre">min_samples</span></code> value can also be specified – see <a class="reference external" href="https://hdbscan.readthedocs.io/en/latest/parameter_selection.html">HDBSCAN documentation</a> for more details on that parameter.</p>
+<p>Lastly we’ll set <code class="docutils literal notranslate"><span class="pre">verbose</span></code> to <code class="docutils literal notranslate"><span class="pre">True</span></code> so we can see progress information as the model is fit.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[6]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span> <span class="o">=</span> <span class="n">ToponymyClusterer</span><span class="p">(</span>
+    <span class="n">min_clusters</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+    <span class="n">base_n_clusters</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="n">next_cluster_size_quantile</span><span class="o">=</span><span class="mf">0.95</span><span class="p">,</span>
+    <span class="n">min_samples</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>Next we need for fit the model. For this we need a few things:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">clusterable_vectors</span></code> which should be a vector representation of your objects (in this case text samples) that is clusterable via a clustering algorithm like HDBSCAN. In practice that means a low-dimensional representation. If you are wanting to visualize your data this can often be a 2D representation from UMAP, t-SNE, or other similar algorithms. If visualization isn’t required then some other representation, ideally in the 2 to 50 dimensional range, provided by, say, UMAP, should be
+sufficient. We keep this separate so that you can choose whichever dimension reduction method you wish.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">embedding_vectors</span></code> which should be a potentially high dimensional (dense) vector representation of your objects. Usually this would be the outpuyt of a neural embedding model. In the case of text working with <a href="#id1"><span class="problematic" id="id2">`sentence-transformers &lt;&gt;`__</span></a> package would be a good approach. You could even use classical NLP methods like <code class="docutils literal notranslate"><span class="pre">CountVectorizer</span></code> or <code class="docutils literal notranslate"><span class="pre">TfidfVectorizer</span></code> from scikit-learn, but you will need to use a TruncatedSVD to get those sparse vectors down to dense vectors for use here.</p></li>
+<li><p>Optionally a <code class="docutils literal notranslate"><span class="pre">layer_class</span></code> which will provide appropriate tools for dealing with different object types. The default is <code class="docutils literal notranslate"><span class="pre">ClusterLayerText</span></code> which is suitable for short to medium length text samples (and so we don’t actually have to specify it here, but we will for completeness). Other options include classes for working with images <code class="docutils literal notranslate"><span class="pre">ClusterLayerImage</span></code>, long documents <code class="docutils literal notranslate"><span class="pre">ClusterLayerLongText</span></code>, etc. Not all of these have been implemented yet, but should be coming.</p></li>
+</ul>
+<p>Given these things we can simply pass them all to the clusterer’s <code class="docutils literal notranslate"><span class="pre">fit</span></code> method to train the model.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+    <span class="n">clusterable_vectors</span><span class="o">=</span><span class="n">clusterable_vectors</span><span class="p">,</span>
+    <span class="n">embedding_vectors</span><span class="o">=</span><span class="n">document_vectors</span><span class="p">,</span>
+    <span class="n">layer_class</span><span class="o">=</span><span class="n">ClusterLayerText</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+Layer 0 found 511 clusters
+Layer 1 found 110 clusters
+Layer 2 found 21 clusters
+Layer 3 found 6 clusters
+</pre></div></div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[7]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;toponymy.clustering.ToponymyClusterer at 0x7f45e0244080&gt;
+</pre></div></div>
+</div>
+<p>The verbose output tells us about the various layers of clustering that have been generated, and the numbers of clusters found at each layer. Note that at the base layer we did not find exactly the 512 clusters we specified, but rather the closest value the clusterer could find, in this case 511. As we cluster higher layers we get fewer clusters until we reach the <code class="docutils literal notranslate"><span class="pre">min_clusters</span></code> threshold and stop. In this case we have generated four layers. We can access the layers themselves via the
+<code class="docutils literal notranslate"><span class="pre">cluster_layers_</span></code> attribute which provides a list of <code class="docutils literal notranslate"><span class="pre">ClusterLayerText</span></code> objects:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_layers_</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[8]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+[&lt;toponymy.cluster_layer.ClusterLayerText at 0x7f418c53a420&gt;,
+ &lt;toponymy.cluster_layer.ClusterLayerText at 0x7f418c539790&gt;,
+ &lt;toponymy.cluster_layer.ClusterLayerText at 0x7f418c53a0f0&gt;,
+ &lt;toponymy.cluster_layer.ClusterLayerText at 0x7f418c539f70&gt;]
+</pre></div></div>
+</div>
+<p>We also have a cluster tree, which provides the relative nesting tree structure of the clusters we have found. This is accessible as the <code class="docutils literal notranslate"><span class="pre">cluster_tree_</span></code> attribute, which as we see below, is a dictionary:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="nb">type</span><span class="p">(</span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_tree_</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[9]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+dict
+</pre></div></div>
+</div>
+<p>The dictionary is keyed by numeric tuples of <code class="docutils literal notranslate"><span class="pre">(layer_num,</span> <span class="pre">cluster_num)</span></code> with values being the list of <code class="docutils literal notranslate"><span class="pre">(layer_num,</span> <span class="pre">cluster_num)</span></code> tuples that are the child clusters of the given cluster. For example, to find the immediate children of the zeroth cluster in the uppermost layer we provide the key <code class="docutils literal notranslate"><span class="pre">(3,</span> <span class="pre">0)</span></code>:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[10]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_tree_</span><span class="p">[(</span><span class="mi">3</span><span class="p">,</span><span class="mi">0</span><span class="p">)]</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[10]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+[(2, 1), (2, 0), (1, 0), (0, 0)]
+</pre></div></div>
+</div>
+<p>If you want to access the actual cluster labels for a given cluster layer you can get that via the <code class="docutils literal notranslate"><span class="pre">cluster_labels</span></code> attribute of a given <code class="docutils literal notranslate"><span class="pre">ClusterLayer</span></code>. For example, to get cluster labels for the base layer of our clustering we can tyr the following:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_layers_</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">cluster_labels</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[11]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+array([ -1, 475,  -1, ..., 148, 422,  -1])
+</pre></div></div>
+</div>
+<p>The result is a scikit-learn style label vector wityh a numeric value for example sample clusters. Negative labels represent noise points, and positive labels provide the cluster index that a given sample belongs to.</p>
+<p>To get some sense of how the clustering has worked over the various layers let’s create a simple plotting function that can plot a scatterplot of our <code class="docutils literal notranslate"><span class="pre">clusterable_vectors</span></code> coloured by cluster. Since we’ll be reusing this we will make it a little flexible: it should handle a variable number of layers, plotting the result in a small grid; and we want to discern clusters, so let’s shuffle the cluster indices (since the clusterer tends to give nearby clusters similar cluster indices).</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[12]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">plot_cluster_layers</span><span class="p">(</span><span class="n">cluster_layers</span><span class="p">):</span>
+    <span class="n">fig</span><span class="p">,</span> <span class="n">axs</span> <span class="o">=</span> <span class="n">plt</span><span class="o">.</span><span class="n">subplots</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="mi">2</span><span class="p">,</span> <span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span><span class="mi">8</span><span class="p">))</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">layer</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">cluster_layers</span><span class="p">):</span>
+        <span class="n">max_clusters_ind</span> <span class="o">=</span> <span class="n">layer</span><span class="o">.</span><span class="n">cluster_labels</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+        <span class="n">cluster_shuffle</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">max_clusters_ind</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">shuffle</span><span class="p">(</span><span class="n">cluster_shuffle</span><span class="p">)</span>
+        <span class="n">color_mapping</span> <span class="o">=</span> <span class="p">[</span><span class="n">plt</span><span class="o">.</span><span class="n">cm</span><span class="o">.</span><span class="n">Spectral</span><span class="p">(</span><span class="n">cluster_shuffle</span><span class="p">[</span><span class="n">x</span><span class="p">]</span> <span class="o">/</span> <span class="n">max_clusters_ind</span><span class="p">)</span> <span class="k">if</span> <span class="n">x</span> <span class="o">&gt;=</span> <span class="mi">0</span> <span class="k">else</span> <span class="p">(</span><span class="mf">0.66</span><span class="p">,</span> <span class="mf">0.66</span><span class="p">,</span> <span class="mf">0.66</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">layer</span><span class="o">.</span><span class="n">cluster_labels</span><span class="p">]</span>
+        <span class="n">axs</span><span class="p">[</span><span class="n">i</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">scatter</span><span class="p">(</span><span class="o">*</span><span class="n">clusterable_vectors</span><span class="o">.</span><span class="n">T</span><span class="p">,</span> <span class="n">s</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">c</span><span class="o">=</span><span class="n">color_mapping</span><span class="p">,</span> <span class="n">alpha</span><span class="o">=</span><span class="mf">0.25</span><span class="p">)</span>
+        <span class="n">axs</span><span class="p">[</span><span class="n">i</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">set_title</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Layer </span><span class="si">{</span><span class="n">i</span><span class="si">}</span><span class="s2"> clusters&quot;</span><span class="p">)</span>
+        <span class="n">axs</span><span class="p">[</span><span class="n">i</span> <span class="o">//</span> <span class="mi">2</span><span class="p">,</span> <span class="n">i</span> <span class="o">%</span> <span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">axis</span><span class="p">(</span><span class="s1">&#39;off&#39;</span><span class="p">);</span>
+</pre></div>
+</div>
+</div>
+<p>Now let’s plot the resulting clustering, providing the various layers in different subplots:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[13]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">plot_cluster_layers</span><span class="p">(</span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_layers_</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="_images/clusterers_24_0.png" src="_images/clusterers_24_0.png" />
+</div>
+</div>
+<p>As you can see, the bottommost layer 0 captures very fine grained topics, with much of the data falling on one small cluster or another. As we move up the layers we capture larger and larger scale structures and more general topics. Notably we also fine more data cast aside as noise. This reflects topics that are specific, but not part of the larger scale topics in the data. Working this way we have the uppermost layer providing the major themes of the corpus, with those themes not being
+polluted by smaller unrelated topics. At the same time, the top level also doesn’t include those smaller scale topics as separate clusters – they aren’t large enough to appear at that uppermost level. The smaller topics do appear, however, as we move down through the layers, allowing a finer topic resolution, and thus picking up smaller scale topics for consideration. This layered structure is used heavily within Toponymy to help provide good topic names for the large scale topics (for which we
+cannot reasonably sample adequately from the large number of documents within the topic).</p>
+</section>
+<section id="EVōC-Clusterer">
+<h2>EVōC Clusterer<a class="headerlink" href="#EVōC-Clusterer" title="Link to this heading"></a></h2>
+<p>It is not always the case that you are interested in a visualizable representation of the corpus, and just want to get to clusters without having to produce your own clusterable representation, without any particular preferences on any dimension reduction that may occur along the way. If that’s the case you likely also want to get clusters out as quickly as possible. For that we provide the <code class="docutils literal notranslate"><span class="pre">EVoCClusterer</span></code> which makes use of <a class="reference external" href="https://github.com/TutteInstitute/evoc">EVōC</a> a library for very
+efficient <strong>E</strong>mbedding <strong>V</strong>ector <strong>O</strong>riented <strong>C</strong>lustering. The <code class="docutils literal notranslate"><span class="pre">EVoCClusterer</span></code> clusterer works very similarly to <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code>, with similar hyper-parameter arguments. Much like the <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code> we have the ability to specify the <code class="docutils literal notranslate"><span class="pre">base_min_cluster_size</span></code> or, alternatively, the <code class="docutils literal notranslate"><span class="pre">base_n_clusters</span></code>. Also like <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code> there is a <code class="docutils literal notranslate"><span class="pre">next_cluster_size_quantile</span></code> and <code class="docutils literal notranslate"><span class="pre">min_clusters</span></code> that determine the number of layers produced. Other parameters are more
+specific to EVōC, so check the documentation for further details.</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[17]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span> <span class="o">=</span> <span class="n">EVoCClusterer</span><span class="p">(</span>
+    <span class="n">min_clusters</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+    <span class="n">min_samples</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span>
+    <span class="n">base_n_clusters</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+    <span class="n">next_cluster_size_quantile</span><span class="o">=</span><span class="mf">0.9</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>One difference is that, when it comes time for fit the clusterer model, there is no need to pass in clusterable vectors. To keep API compatibility it is still an argument to <code class="docutils literal notranslate"><span class="pre">fit</span></code>, but you can pass in the high dimensional vectors (and pass the same vectors as <code class="docutils literal notranslate"><span class="pre">embedding_vectors</span></code>). EVōC will take care of ensuring the high dimensional data is clustered.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+    <span class="n">clusterable_vectors</span><span class="o">=</span><span class="n">document_vectors</span><span class="p">,</span>
+    <span class="n">embedding_vectors</span><span class="o">=</span><span class="n">document_vectors</span><span class="p">,</span>
+    <span class="n">layer_class</span><span class="o">=</span><span class="n">ClusterLayerText</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[18]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;toponymy.clustering.EVoCClusterer at 0x7f72c2d05ac0&gt;
+</pre></div></div>
+</div>
+<p>Again we can visualize the results. You’ll see that they are qualitatively similar to what we got from the <code class="docutils literal notranslate"><span class="pre">ToponymyClusterer</span></code>, but not indentical. In particular the clusters needn’t follow precisely from the low dimensional layout used for visualization, and may be slightly disconnected in the visual representation since it needn’t be exactly aligned to that particular dimension reduction outcome. Another thing to note is that EVōC is fast – much faster than applying stdnard dimension
+reduction and clustering the result. Lastly it is important to note that EVōC is trading reproducibility for that speed: different runs are not guranteed to produce identical results.</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[19]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">plot_cluster_layers</span><span class="p">(</span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_layers_</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="_images/clusterers_31_0.png" src="_images/clusterers_31_0.png" />
+</div>
+</div>
+</section>
+<section id="Your-Own-Clusterer">
+<h2>Your Own Clusterer<a class="headerlink" href="#Your-Own-Clusterer" title="Link to this heading"></a></h2>
+<p>It is not that hard to write your own clusterer for Toponymy that wraps your preferred clustering solution. Toponymy provides a <code class="docutils literal notranslate"><span class="pre">Clusterer</span></code> base class to inherit from (<code class="docutils literal notranslate"><span class="pre">toponymy.clustering.Clusterer</span></code>), and it is not hard to follow the required patterns to get a Clusterer up and running. To make this a little easier we provide a very simple demonstration clusterer, the <code class="docutils literal notranslate"><span class="pre">KMeansClusterer</span></code> which produces multiple layers using the K-Means clustering algorithm. We can instantiate one easily
+enough:</p>
+<div class="nbinput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[20]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span> <span class="o">=</span> <span class="n">KMeansClusterer</span><span class="p">(</span>
+    <span class="n">min_clusters</span><span class="o">=</span><span class="mi">6</span><span class="p">,</span>
+    <span class="n">base_n_clusters</span><span class="o">=</span><span class="mi">512</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<p>To see how it works, let’s query the object for its source code:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[23]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span>clusterer<span class="o">??</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+<span class="ansi-red-fg">Type:</span>        KMeansClusterer
+<span class="ansi-red-fg">String form:</span> &lt;toponymy.clustering.KMeansClusterer object at 0x7f72c366b050&gt;
+<span class="ansi-red-fg">File:</span>        ~/src/topicnaming/toponymy/clustering.py
+<span class="ansi-red-fg">Source:</span>
+<span class="ansi-green-fg">class</span> KMeansClusterer<span class="ansi-blue-fg">(</span>Clusterer<span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">:</span>
+    <span class="ansi-blue-fg">&#34;&#34;&#34;</span>
+<span class="ansi-blue-fg">    A class for clustering data in layers using KMeans. This class is mostly to demonstrate how one might write</span>
+<span class="ansi-blue-fg">    an alternative Clusterer to the ToponymyClusterer (which uses a variation of HDBCSCAN). We recommend using the</span>
+<span class="ansi-blue-fg">    ToponymyClusterer in practice.</span>
+
+<span class="ansi-blue-fg">    Parameters</span>
+<span class="ansi-blue-fg">    ----------</span>
+<span class="ansi-blue-fg">    min_clusters : int, optional</span>
+<span class="ansi-blue-fg">        The minimum number of clusters to form in a layer (default is 6).</span>
+<span class="ansi-blue-fg">    base_n_clusters : int, optional</span>
+<span class="ansi-blue-fg">        The initial number of clusters for the most fine-grained cluster layer (default is 1024).</span>
+
+<span class="ansi-blue-fg">    Attributes</span>
+<span class="ansi-blue-fg">    ----------</span>
+<span class="ansi-blue-fg">    cluster_layers_ : List[ClusterLayer]</span>
+<span class="ansi-blue-fg">        A list of the created cluster layers.</span>
+<span class="ansi-blue-fg">    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]</span>
+<span class="ansi-blue-fg">        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of</span>
+<span class="ansi-blue-fg">        tuples representing child clusters.</span>
+<span class="ansi-blue-fg">    &#34;&#34;&#34;</span>
+
+    <span class="ansi-green-fg">def</span> __init__<span class="ansi-blue-fg">(</span>
+        self<span class="ansi-blue-fg">,</span> min_clusters<span class="ansi-blue-fg">:</span> int <span class="ansi-blue-fg">=</span> <span class="ansi-cyan-fg">6</span><span class="ansi-blue-fg">,</span> base_n_clusters<span class="ansi-blue-fg">:</span> int <span class="ansi-blue-fg">=</span> <span class="ansi-cyan-fg">1024</span><span class="ansi-blue-fg">,</span> verbose<span class="ansi-blue-fg">=</span><span class="ansi-green-fg">False</span>
+    <span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">:</span>
+        super<span class="ansi-blue-fg">(</span><span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">.</span>__init__<span class="ansi-blue-fg">(</span><span class="ansi-blue-fg">)</span>
+        self<span class="ansi-blue-fg">.</span>min_clusters <span class="ansi-blue-fg">=</span> min_clusters
+        self<span class="ansi-blue-fg">.</span>base_n_clusters <span class="ansi-blue-fg">=</span> base_n_clusters
+        self<span class="ansi-blue-fg">.</span>verbose <span class="ansi-blue-fg">=</span> verbose
+
+    <span class="ansi-green-fg">def</span> fit<span class="ansi-blue-fg">(</span>
+        self<span class="ansi-blue-fg">,</span>
+        clusterable_vectors<span class="ansi-blue-fg">:</span> np<span class="ansi-blue-fg">.</span>ndarray<span class="ansi-blue-fg">,</span>
+        embedding_vectors<span class="ansi-blue-fg">:</span> np<span class="ansi-blue-fg">.</span>ndarray<span class="ansi-blue-fg">,</span>
+        layer_class<span class="ansi-blue-fg">:</span> Type<span class="ansi-blue-fg">[</span>ClusterLayer<span class="ansi-blue-fg">]</span><span class="ansi-blue-fg">,</span>
+        show_progress_bar<span class="ansi-blue-fg">:</span> bool <span class="ansi-blue-fg">=</span> <span class="ansi-green-fg">False</span><span class="ansi-blue-fg">,</span>
+    <span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">:</span>
+        n_clusters <span class="ansi-blue-fg">=</span> self<span class="ansi-blue-fg">.</span>base_n_clusters
+        cluster_label_layers <span class="ansi-blue-fg">=</span> <span class="ansi-blue-fg">[</span><span class="ansi-blue-fg">]</span>
+
+        <span class="ansi-green-fg">while</span> n_clusters <span class="ansi-blue-fg">&gt;=</span> self<span class="ansi-blue-fg">.</span>min_clusters<span class="ansi-blue-fg">:</span>
+            <span class="ansi-green-fg">if</span> self<span class="ansi-blue-fg">.</span>verbose<span class="ansi-blue-fg">:</span>
+                print<span class="ansi-blue-fg">(</span><span class="ansi-blue-fg">f&#34;</span><span class="ansi-blue-fg">Layer </span><span class="ansi-blue-fg">{</span>len<span class="ansi-blue-fg">(</span>cluster_label_layers<span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">}</span><span class="ansi-blue-fg"> found </span><span class="ansi-blue-fg">{</span>n_clusters<span class="ansi-blue-fg">}</span><span class="ansi-blue-fg"> clusters</span><span class="ansi-blue-fg">&#34;</span><span class="ansi-blue-fg">)</span>
+            kmeans <span class="ansi-blue-fg">=</span> KMeans<span class="ansi-blue-fg">(</span>n_clusters<span class="ansi-blue-fg">=</span>n_clusters<span class="ansi-blue-fg">)</span>
+            cluster_labels <span class="ansi-blue-fg">=</span> kmeans<span class="ansi-blue-fg">.</span>fit_predict<span class="ansi-blue-fg">(</span>clusterable_vectors<span class="ansi-blue-fg">)</span>
+            cluster_label_layers<span class="ansi-blue-fg">.</span>append<span class="ansi-blue-fg">(</span>cluster_labels<span class="ansi-blue-fg">)</span>
+            n_clusters <span class="ansi-blue-fg">//=</span> <span class="ansi-cyan-fg">4</span>
+
+        self<span class="ansi-blue-fg">.</span>cluster_tree_ <span class="ansi-blue-fg">=</span> build_cluster_tree<span class="ansi-blue-fg">(</span>cluster_label_layers<span class="ansi-blue-fg">)</span>
+        self<span class="ansi-blue-fg">.</span>cluster_layers_ <span class="ansi-blue-fg">=</span> <span class="ansi-blue-fg">[</span>
+            layer_class<span class="ansi-blue-fg">(</span>
+                labels<span class="ansi-blue-fg">,</span>
+                centroids_from_labels<span class="ansi-blue-fg">(</span>labels<span class="ansi-blue-fg">,</span> embedding_vectors<span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">,</span>
+                layer_id<span class="ansi-blue-fg">=</span>i<span class="ansi-blue-fg">,</span>
+                show_progress_bar<span class="ansi-blue-fg">=</span>show_progress_bar<span class="ansi-blue-fg">,</span>
+            <span class="ansi-blue-fg">)</span>
+            <span class="ansi-green-fg">for</span> i<span class="ansi-blue-fg">,</span> labels <span class="ansi-green-fg">in</span> enumerate<span class="ansi-blue-fg">(</span>cluster_label_layers<span class="ansi-blue-fg">)</span>
+        <span class="ansi-blue-fg">]</span>
+        <span class="ansi-green-fg">return</span> self
+
+    <span class="ansi-green-fg">def</span> fit_predict<span class="ansi-blue-fg">(</span>
+        self<span class="ansi-blue-fg">,</span>
+        clusterable_vectors<span class="ansi-blue-fg">:</span> np<span class="ansi-blue-fg">.</span>ndarray<span class="ansi-blue-fg">,</span>
+        embedding_vectors<span class="ansi-blue-fg">:</span> np<span class="ansi-blue-fg">.</span>ndarray<span class="ansi-blue-fg">,</span>
+        layer_class<span class="ansi-blue-fg">:</span> Type<span class="ansi-blue-fg">[</span>ClusterLayer<span class="ansi-blue-fg">]</span><span class="ansi-blue-fg">,</span>
+    <span class="ansi-blue-fg">)</span><span class="ansi-blue-fg">:</span>
+        self<span class="ansi-blue-fg">.</span>fit<span class="ansi-blue-fg">(</span>clusterable_vectors<span class="ansi-blue-fg">,</span> embedding_vectors<span class="ansi-blue-fg">,</span> layer_class<span class="ansi-blue-fg">=</span>layer_class<span class="ansi-blue-fg">)</span>
+        <span class="ansi-green-fg">return</span> self<span class="ansi-blue-fg">.</span>cluster_layers_<span class="ansi-blue-fg">,</span> self<span class="ansi-blue-fg">.</span>cluster_tree_
+</pre></div></div>
+</div>
+<p>As you can see, there is not a lot to this. We need to provide an <code class="docutils literal notranslate"><span class="pre">__init__</span></code> method (calling the base class <code class="docutils literal notranslate"><span class="pre">__init__</span></code>) to get out parameters set, and then a <code class="docutils literal notranslate"><span class="pre">fit</span></code> method, and a <code class="docutils literal notranslate"><span class="pre">fit_predict</span></code> method. The <code class="docutils literal notranslate"><span class="pre">fit_predict</span></code> method is also easy – just call fit, and return a list of cluster layers and a cluster tree. All the complexity (what little of it there is) lies in the <code class="docutils literal notranslate"><span class="pre">fit</span></code> method. We need to to generate multiple layers of clusterign at different resolutions. How to determine
+resolutions is up to you. For the example KMeans clusterer we start with aa base number of custers and use the previous number of clusters divided by four for the next layer and so on. Having built all the layers we also need to generate a tree. We can do that via the existing function <code class="docutils literal notranslate"><span class="pre">toponymy.clustering.build_cluster_tree</span></code> that will do the job (it is designed to work with the ToponymyClusterer that ensures more tree like-structure over layers, but it will wuffice in this case). Lastly we
+need to create a list of layers instatiated according to the <code class="docutils literal notranslate"><span class="pre">layer_class</span></code> that was passed in. This follows a standard pattern that you can just follow.</p>
+<p>Having built a new clusterer, let’s try it out:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[15]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+    <span class="n">clusterable_vectors</span><span class="o">=</span><span class="n">clusterable_vectors</span><span class="p">,</span>
+    <span class="n">embedding_vectors</span><span class="o">=</span><span class="n">document_vectors</span><span class="p">,</span>
+    <span class="n">layer_class</span><span class="o">=</span><span class="n">ClusterLayerText</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[15]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;toponymy.clustering.KMeansClusterer at 0x7f72c2dff440&gt;
+</pre></div></div>
+</div>
+<p>We can use the existing plotting routine to view the results:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[16]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">plot_cluster_layers</span><span class="p">(</span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_layers_</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="_images/clusterers_39_0.png" src="_images/clusterers_39_0.png" />
+</div>
+</div>
+<p>Alternatively we can pass in the high dimensional vectors and let KMeans try to work there. This will not be ideal for labelling the map, but it will work:</p>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[21]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">clusterer</span><span class="o">.</span><span class="n">fit</span><span class="p">(</span>
+    <span class="n">clusterable_vectors</span><span class="o">=</span><span class="n">document_vectors</span><span class="p">,</span>
+    <span class="n">embedding_vectors</span><span class="o">=</span><span class="n">document_vectors</span><span class="p">,</span>
+    <span class="n">layer_class</span><span class="o">=</span><span class="n">ClusterLayerText</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[21]:
+</pre></div>
+</div>
+<div class="output_area docutils container">
+<div class="highlight"><pre>
+&lt;toponymy.clustering.KMeansClusterer at 0x7f72c366b050&gt;
+</pre></div></div>
+</div>
+<div class="nbinput docutils container">
+<div class="prompt highlight-none notranslate"><div class="highlight"><pre><span></span>[22]:
+</pre></div>
+</div>
+<div class="input_area highlight-ipython3 notranslate"><div class="highlight"><pre><span></span><span class="n">plot_cluster_layers</span><span class="p">(</span><span class="n">clusterer</span><span class="o">.</span><span class="n">cluster_layers_</span><span class="p">)</span>
+</pre></div>
+</div>
+</div>
+<div class="nboutput nblast docutils container">
+<div class="prompt empty docutils container">
+</div>
+<div class="output_area docutils container">
+<img alt="_images/clusterers_42_0.png" src="_images/clusterers_42_0.png" />
+</div>
+</div>
+<p>Hopefully this gets you started on working withy clusterers in Toponymy. For more information you can consult the Clustering options tutorial, which goes into more detail about the various options and hyper-parameters available in the ToponymyClusterer.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="how_toponymy_works.html" class="btn btn-neutral float-left" title="How Toponymy Works" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="clustering_options.html" class="btn btn-neutral float-right" title="Clusterer Options" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Leland McInnes and John Healy.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

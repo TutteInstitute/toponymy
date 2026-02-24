@@ -39,9 +39,9 @@ Since these embeddings are used for comparison rather than absolute representati
 
 Most embedding wrappers in Toponymy process texts in batches of 96 items to balance API efficiency with memory usage. They include progress bars for long-running operations and handle API rate limiting and retry logic automatically. All wrappers return standardized numpy arrays, ensuring consistent interfaces regardless of the underlying embedding service.
 
------------------
+------------------
 Available Wrappers
------------------
+------------------
 
 API-Based Embedding Wrappers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -407,9 +407,9 @@ For memory-constrained environments, consider using smaller embedding models or 
     # Alternative: Even smaller model
     embedder = SentenceTransformer("paraphrase-MiniLM-L3-v2")  # ~60MB model
 
------------------------
+-------------------------
 Integration with Toponymy
------------------------
+-------------------------
 
 Embedding wrappers integrate seamlessly with Toponymy's main workflow. Here's how to use them effectively in different scenarios:
 
@@ -533,9 +533,9 @@ Most wrappers include automatic retry logic, but you can adjust batch sizes if n
     
     final_embeddings = np.vstack(all_embeddings)
 
------------------------
+--------------------------
 Recommended Configurations
------------------------
+--------------------------
 
 Based on common use cases and requirements, here are recommended embedding configurations:
 

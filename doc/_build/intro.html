@@ -1,0 +1,178 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="./">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Introduction to Toponymy &mdash; Toponymy 0.3 documentation</title>
+      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="_static/jquery.js?v=5d32c60e"></script>
+      <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="_static/documentation_options.js?v=b489f392"></script>
+      <script src="_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+      <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script src="_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Installation" href="installation.html" />
+    <link rel="prev" title="Toponymy: Topic Modelling in Embedding Space" href="index.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="index.html" class="icon icon-home">
+            Toponymy
+              <img src="_static/toponymy_logo_rtd.png" class="logo" alt="Logo"/>
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Getting Started:</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Introduction to Toponymy</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#why-use-toponymy">Why Use Toponymy?</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#how-it-works-conceptually">How It Works (Conceptually)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#who-is-this-for">Who Is This For?</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#next-steps">Next Steps</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="basic_usage.html">Getting Started with Toponymy</a></li>
+<li class="toctree-l1"><a class="reference internal" href="params_and_options.html">Parameters and Options</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Getting More out of Toponymy:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="how_toponymy_works.html">How Toponymy Works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="clusterers.html">Clusterers for Toponymy</a></li>
+<li class="toctree-l1"><a class="reference internal" href="clustering_options.html">Clusterer Options</a></li>
+<li class="toctree-l1"><a class="reference internal" href="keyphrases.html">Keyphrase extractors</a></li>
+<li class="toctree-l1"><a class="reference internal" href="exemplar_texts.html">Exemplar Text Selection</a></li>
+<li class="toctree-l1"><a class="reference internal" href="llm_wrappers.html">LLM Wrappers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="embedding_wrappers.html">Embedding Wrappers</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cluster_layers.html">Cluster_layers</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Sundries:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="api.html">Toponymy API Reference</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">Toponymy</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Introduction to Toponymy</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="_sources/intro.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="introduction-to-toponymy">
+<span id="intro"></span><h1>Introduction to Toponymy<a class="headerlink" href="#introduction-to-toponymy" title="Link to this heading"></a></h1>
+<p>In the modern world, we are often faced with vast collections of information – large corpora of documents, extensive image libraries, or streams of user feedback. While powerful tools exist to embed this data into semantic vector spaces where similar items are close together, understanding the <em>structure</em> within these spaces remains a challenge. Simple clustering can group the data, but often leaves us with abstract groups identified only by numbers or lists of keywords. How do we navigate this “information space” effectively? How do we understand <em>what</em> these discovered regions truly represent?</p>
+<p>This is the core problem <strong>Toponymy</strong> aims to solve. Inspired by the geographic practice of naming places (<em>topos</em> ‘place’ + <em>onuma</em> ‘name’), Toponymy seeks to place meaningful, human-readable names on the landmarks and regions within your data’s embedding space. Instead of just knowing <em>that</em> a group of documents or images exists, Toponymy tells you <em>what</em> that group is about, using concise and descriptive names generated by Large Language Models (LLMs).</p>
+<section id="why-use-toponymy">
+<h2>Why Use Toponymy?<a class="headerlink" href="#why-use-toponymy" title="Link to this heading"></a></h2>
+<p>Traditional topic modeling techniques often rely on bag-of-words models, potentially missing nuances captured by semantic embeddings, and typically produce topics represented as lists of weighted keywords. While useful, interpreting these keyword lists and synthesizing a coherent understanding can be time-consuming and subjective.</p>
+<p>Toponymy offers a different approach:</p>
+<ol class="arabic simple">
+<li><p><strong>Leverages Semantic Embeddings:</strong> It works directly with modern vector embeddings (from text, images, etc.), capturing deeper semantic relationships than raw word counts.</p></li>
+<li><p><strong>Provides Interpretable Names:</strong> The primary output is not a list of keywords, but well-formed topic names (e.g., “Computer Hardware and Storage”, “Space Exploration and Astronomy”) generated by LLMs, making interpretation faster and more intuitive.</p></li>
+<li><p><strong>Hierarchical Topic Discovery:</strong> Data rarely has structure at only one level. Toponymy discovers topics at multiple resolutions, from broad, high-level themes down to fine-grained sub-topics, presenting them as a navigable hierarchy. This allows you to zoom in and out on the structure of your data.</p></li>
+<li><p><strong>Flexibility and Scalability:</strong> Designed to handle large datasets, Toponymy allows plugging in different clustering algorithms, keyphrase extraction techniques, embedding models, and LLM providers to suit your specific needs and infrastructure.</p></li>
+</ol>
+</section>
+<section id="how-it-works-conceptually">
+<h2>How It Works (Conceptually)<a class="headerlink" href="#how-it-works-conceptually" title="Link to this heading"></a></h2>
+<p>At its heart, Toponymy follows a multi-stage process:</p>
+<ol class="arabic simple">
+<li><p><strong>Embedding:</strong> Assumes you have (or can generate) vector embeddings for your data items.</p></li>
+<li><p><strong>Dimensionality Reduction:</strong> Assumes you have reduced the dimensionality of the embeddings using techniques like UMAP or t-SNE to facilitate clustering and visualization.</p></li>
+<li><p><strong>Multi-Scale Clustering:</strong> Applies custom multiresolution clustering methods to identify groups of data points at various levels of granularity.</p></li>
+<li><p><strong>Information Extraction:</strong> For each cluster at each level, it identifies representative data points (exemplars), extracts relevant keyphrases, and identifies sub-topics.</p></li>
+<li><p><strong>LLM-Powered Naming:</strong> It synthesizes the exemplars, keyphrases, and potentially sub-topic names from finer levels, feeding them into an LLM with carefully crafted prompts to generate a concise, descriptive name for the cluster’s topic.</p></li>
+<li><p><strong>Refinement:</strong> Includes steps to disambiguate similar topic names and ensure coherence across the hierarchy.</p></li>
+</ol>
+<p>The result is a rich, multi-layered understanding of your dataset, complete with intuitive names that facilitate exploration and analysis.</p>
+</section>
+<section id="who-is-this-for">
+<h2>Who Is This For?<a class="headerlink" href="#who-is-this-for" title="Link to this heading"></a></h2>
+<p>Toponymy is designed for anyone needing to make sense of large, unstructured, or semi-structured datasets that can be represented via embeddings. This includes:</p>
+<ul class="simple">
+<li><p><strong>Data Scientists &amp; Analysts:</strong> Exploring large text corpora (customer reviews, news articles, scientific papers), image collections, or other embedded data to understand key themes.</p></li>
+<li><p><strong>Researchers:</strong> Analyzing experimental results, survey responses, or literature collections.</p></li>
+<li><p><strong>Developers:</strong> Building applications that require summarizing or navigating large amounts of content.</p></li>
+</ul>
+</section>
+<section id="next-steps">
+<h2>Next Steps<a class="headerlink" href="#next-steps" title="Link to this heading"></a></h2>
+<p>Ready to start placing names on your information landmarks?</p>
+<ul class="simple">
+<li><p>Head to the <a class="reference internal" href="installation.html#installation"><span class="std std-ref">Installation</span></a> guide to get Toponymy set up.</p></li>
+<li><p>Walk through the <a class="reference internal" href="basic_usage.html"><span class="doc">Getting Started with Toponymy</span></a> tutorial to see a practical example in action.</p></li>
+</ul>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="index.html" class="btn btn-neutral float-left" title="Toponymy: Topic Modelling in Embedding Space" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="installation.html" class="btn btn-neutral float-right" title="Installation" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2025, Leland McInnes and John Healy.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
