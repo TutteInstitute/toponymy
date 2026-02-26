@@ -35,6 +35,7 @@ dependencies = [
     "tenacity",
     "httpx",
     "apricot-select",
+    "pydantic",
 ]
 
 [project.urls]
