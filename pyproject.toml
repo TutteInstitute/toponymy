@@ -58,6 +58,12 @@ dev = [
     "traitlets",
 ]
 
+[tool.pytest.ini_options]
+markers = [
+    "canary: marks tests as canary tests that make live API calls"
+]
+addopts = "-m 'not canary'"
+
 [tool.setuptools]
 zip-safe = false
 packages = ["toponymy"]

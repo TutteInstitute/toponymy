@@ -659,6 +659,7 @@ try:
                     show_progress_bar=(
                         show_progress_bar if show_progress_bar is not None else False
                     ),
+                    **layer_kwargs,
                 )
                 for i, labels in enumerate(cluster_labels)
             ]

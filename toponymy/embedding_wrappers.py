@@ -124,7 +124,7 @@ try:
         def __init__(
             self,
             api_key,
-            model: str = "claude-3-haiku-20240307",
+            model: str = "claude-haiku-4-5-20251001",
             base_url: str = None,
             httpx_client: Optional[httpx.Client] = None,
         ):

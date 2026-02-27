@@ -4,7 +4,11 @@ from warnings import warn
 import tokenizers
 import transformers
 
-from toponymy.templates import GET_TOPIC_CLUSTER_NAMES_REGEX, GET_TOPIC_NAME_REGEX
+from toponymy.templates import (
+    GET_TOPIC_CLUSTER_NAMES_REGEX,
+    GET_TOPIC_NAME_REGEX,
+    default_extract_topic_names,
+)
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
@@ -15,6 +19,9 @@ import httpx
 import json
 import asyncio
 
+import logging
+logger = logging.getLogger(__name__)
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
@@ -23,9 +30,20 @@ class InvalidLLMInputError(ValueError):
 
     pass
 
+class FailFastLLMError(RuntimeError):
+    """
+    A non-retryable error that is not caused by invalid input, but by a configuration
+    or provider issue (e.g. bad API key, insufficient permissions, model not found).
+    Retrying will not resolve these errors.
+    """
+    def __init__(self, message: str = "", original_exception: Exception | None = None):
+        super().__init__(message)
+        self.original_exception = original_exception
 
 def _should_retry(e: Exception) -> bool:
     if isinstance(e, InvalidLLMInputError):
+        return False
+    if isinstance(e, FailFastLLMError):
         return False
     return True
 
@@ -83,6 +101,7 @@ def on_retry_error(retry_state):
 
 
 class LLMWrapper(ABC):
+    FAIL_FAST_EXCEPTIONS: tuple = ()
 
     @abstractmethod
     def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
@@ -102,6 +121,41 @@ class LLMWrapper(ABC):
         """
         pass
 
+    def _safe_call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        try:
+            return self._call_llm(prompt, temperature, max_tokens)
+        except Exception as e:
+            if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
+                raise FailFastLLMError(
+                    message=f"Non-retryable error for model '{self.model}': {e}",
+                    original_exception=e
+                ) from None
+            raise  # other exceptions propagate as-is, should also specify retry exceptions
+
+    def _safe_call_llm_with_system_prompt(
+        self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+    ) -> str:
+        try:
+            return self._call_llm_with_system_prompt(
+                system_prompt, user_prompt, temperature, max_tokens
+            )
+        except Exception as e:
+            if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
+                raise FailFastLLMError(
+                    message=f"Non-retryable error for model '{self.model}': {e}",
+                    original_exception=e
+                ) from None
+            raise  # other exceptions propagate as-is, should also specify retry exceptions
+
+    @staticmethod
+    def _topic_name_error_callback(retry_state):
+        """Callback function for when all retries are exhausted in generate_topic_name. Logs the error and returns an empty string."""
+        exc = retry_state.outcome.exception()
+        if isinstance(exc, (FailFastLLMError, InvalidLLMInputError)):
+            raise exc
+        warn(f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}")
+        return ""
+
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
@@ -110,44 +164,59 @@ class LLMWrapper(ABC):
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_name(
-        self, prompt: Union[str, Dict[str, str]], temperature: float = 0.4
+        self,
+        prompt: Union[str, Dict[str, str]],
+        temperature: float = 0.4,
+        topic_extraction_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
     ) -> str:
-        try:
-            if isinstance(prompt, str):
-                topic_name_info_raw = self._call_llm(
-                    prompt, temperature, max_tokens=128
-                )
-            elif isinstance(prompt, dict) and self.supports_system_prompts:
-                topic_name_info_raw = self._call_llm_with_system_prompt(
-                    system_prompt=prompt["system"],
-                    user_prompt=prompt["user"],
-                    temperature=temperature,
-                    max_tokens=128,
-                )
-            else:
-                raise InvalidLLMInputError(
-                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                )
-
-            topic_name_info = llm_output_to_result(
-                topic_name_info_raw, GET_TOPIC_NAME_REGEX
+        if isinstance(prompt, str):
+            topic_name_info_raw = self._safe_call_llm(
+                prompt, temperature, max_tokens=128
+            )
+        elif isinstance(prompt, dict) and self.supports_system_prompts:
+            topic_name_info_raw = self._safe_call_llm_with_system_prompt(
+                system_prompt=prompt["system"],
+                user_prompt=prompt["user"],
+                temperature=temperature,
+                max_tokens=128,
             )
             topic_name = str(topic_name_info["topic_name"])
         except Exception as e:
             raise ValueError(
                 f"Failed to generate topic name with {self.__class__.__name__}: {e}"
+        else:
+            raise InvalidLLMInputError(
+                f"Prompt must be a string or a dictionary, got {type(prompt)}"
             )
+
+        topic_name_info = llm_output_to_result(
+            topic_name_info_raw, get_topic_name_regex
+        )
+        topic_name = str(topic_extraction_function(topic_name_info))
         return topic_name
+
+    @staticmethod
+    def _topic_cluster_names_error_callback(retry_state):
+        exc = retry_state.outcome.exception()
+        if isinstance(exc, (FailFastLLMError, InvalidLLMInputError)):
+            raise exc
+        old_names = (
+            retry_state.args[2]  # args[0]=self, args[1]=prompt, args[2]=old_names
+            if len(retry_state.args) > 2 and isinstance(retry_state.args[2], list)
+            else []
+        )
+        warn(
+            f"All retries exhausted for generate_topic_cluster_names: "
+            f"{type(exc).__name__}: {exc}. Returning old names."
+        )
+        return old_names
 
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry_error_callback=lambda retry_state: (
-            retry_state.args[1]
-            if len(retry_state.args) > 1 and isinstance(retry_state.args[1], list)
-            else []
-        ),
+        retry_error_callback=_topic_cluster_names_error_callback,
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_cluster_names(
@@ -155,64 +224,65 @@ class LLMWrapper(ABC):
         prompt: Union[str, Dict[str, str]],
         old_names: List[str],
         temperature: float = 0.4,
+        extract_topic_names_function=default_extract_topic_names,
+        get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
     ) -> List[str]:
-        try:
-            if isinstance(prompt, str):
-                topic_name_info_raw = self._call_llm(
-                    prompt, temperature, max_tokens=1024
-                )
-            elif isinstance(prompt, dict) and self.supports_system_prompts:
-                topic_name_info_raw = self._call_llm_with_system_prompt(
-                    system_prompt=prompt["system"],
-                    user_prompt=prompt["user"],
-                    temperature=temperature,
-                    max_tokens=1024,
-                )
-            else:
-                raise InvalidLLMInputError(
-                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                )
 
-            topic_name_info = llm_output_to_result(
-                topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
+        if isinstance(prompt, str):
+            topic_name_info_raw = self._safe_call_llm(
+                prompt, temperature, max_tokens=1024
             )
-        except Exception as e:
-            warn(
-                f"Failed to generate topic cluster names with {self.__class__.__name__}: {e}"
+        elif isinstance(prompt, dict) and self.supports_system_prompts:
+            topic_name_info_raw = self._safe_call_llm_with_system_prompt(
+                system_prompt=prompt["system"],
+                user_prompt=prompt["user"],
+                temperature=temperature,
+                max_tokens=1024,
             )
-            return old_names
-
-        mapping = topic_name_info["new_topic_name_mapping"]
-        if len(mapping) == len(old_names):
-            result = []
-            for i, old_name_val in enumerate(old_names, start=1):
-                key_with_val = f"{i}. {old_name_val}"
-                key_just_index = f"{i}."
-                if key_with_val in mapping:
-                    result.append(mapping[key_with_val])
-                elif (
-                    key_just_index in mapping
-                ):  # This was `mapping.get(f"{n}.", name)` which is ambiguous
-                    result.append(mapping[key_just_index])
-                else:
-                    result.append(
-                        old_name_val
-                    )  # Fallback to old name to maintain length
-            return result
         else:
-            # Fallback to just parsing the string as best we can
-            mapping = re.findall(
-                r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                topic_name_info_raw,
-                re.DOTALL,
-            )[0]
-            new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
-            if len(new_names) == len(old_names):
-                return new_names
-            else:
-                raise ValueError(
-                    f"Failed to generate enough names when fixing {old_names}; got {mapping}"
-                )
+            raise InvalidLLMInputError(
+                f"Prompt must be a string or a dictionary, got {type(prompt)}"
+            )
+
+        topic_name_info = llm_output_to_result(
+            topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
+        )
+
+
+        return extract_topic_names_function(
+            topic_name_info, old_names, topic_name_info_raw
+        )
+        # mapping = topic_name_info["new_topic_name_mapping"]
+        # if len(mapping) == len(old_names):
+        #     result = []
+        #     for i, old_name_val in enumerate(old_names, start=1):
+        #         key_with_val = f"{i}. {old_name_val}"
+        #         key_just_index = f"{i}."
+        #         if key_with_val in mapping:
+        #             result.append(mapping[key_with_val])
+        #         elif (
+        #             key_just_index in mapping
+        #         ):  # This was `mapping.get(f"{n}.", name)` which is ambiguous
+        #             result.append(mapping[key_just_index])
+        #         else:
+        #             result.append(
+        #                 old_name_val
+        #             )  # Fallback to old name to maintain length
+        #     return result
+        # else:
+        #     # Fallback to just parsing the string as best we can
+        #     mapping = re.findall(
+        #         r'"new_topic_name_mapping":\s*\{(.*?)\}',
+        #         topic_name_info_raw,
+        #         re.DOTALL,
+        #     )[0]
+        #     new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
+        #     if len(new_names) == len(old_names):
+        #         return new_names
+        #     else:
+        #         raise ValueError(
+        #             f"Failed to generate enough names when fixing {old_names}; got {mapping}"
+        #         )
 
     @property
     def supports_system_prompts(self) -> bool:
@@ -222,16 +292,38 @@ class LLMWrapper(ABC):
         """
         return True
 
-    def test_llm_connectivity(
-        self,
-        prompt="Identify yourself and explain that you will be providing topic names for clusters",
-    ) -> str:
+    def test_llm_connectivity(self) -> str:
+        result = self.connectivity_status()
+        if result["success"]:
+            logger.info(f" Connected to {result['wrapper']} using {result['model']}")
+            return result["response"]
+        else:
+            logger.warning(f"  Failed to connect to {result['wrapper']} using {result['model']}")
+            logger.warning(f"  Cause:  {result['error_type']}: {result['error_message']}")
+            return "<error>"
+
+    def connectivity_status(
+       self,
+        prompt="Identify yourself and explain that you will be providing topic names for  in JSON format",
+    ) -> dict:
+        result = {
+            "success": False,
+            "model": self.model,
+            "wrapper": self.__class__.__name__,
+            "response": None,
+            "error_type": None,
+            "error_message": None,
+            "original_exception": None,
+        }
         try:
             response = self._call_llm(prompt, temperature=0.4, max_tokens=128)
-            return response
+            result["success"] = True
+            result["response"] = response
         except Exception as e:
-            warn(f"Failed to test LLM connectivity with {self.__class__.__name__}: {e}")
-            return "<error>"
+            result["error_type"] = type(e).__name__
+            result["error_message"] = str(e)
+            result["original_exception"] = e
+        return result
 
 
 class AsyncLLMWrapper(ABC):
@@ -261,7 +353,11 @@ class AsyncLLMWrapper(ABC):
         pass
 
     async def generate_topic_names(
-        self, prompts: List[Union[str, Dict[str, str]]], temperature: float = 0.4
+        self,
+        prompts: List[Union[str, Dict[str, str]]],
+        temperature: float = 0.4,
+        extract_topic_name_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
     ) -> List[str]:
         """
         Generate topic names for a batch of prompts.
@@ -293,8 +389,8 @@ class AsyncLLMWrapper(ABC):
 
             # Attempt to parse the response
             try:
-                topic_name_info = llm_output_to_result(response, GET_TOPIC_NAME_REGEX)
-                results.append(str(topic_name_info["topic_name"]))
+                topic_name_info = llm_output_to_result(response, get_topic_name_regex)
+                results.append(str(extract_topic_name_function(topic_name_info)))
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
@@ -308,6 +404,8 @@ class AsyncLLMWrapper(ABC):
         prompts: List[Union[str, Dict[str, str]]],
         old_names_list: List[List[str]],
         temperature: float = 0.4,
+        extract_topic_names_function=default_extract_topic_names,
+        get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
     ) -> List[List[str]]:
         """
         Generate topic cluster names for a batch of prompts.
@@ -338,42 +436,54 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response, old_names in zip(responses, old_names_list):
-            results.append(self._parse_cluster_response(response, old_names))
+            results.append(
+                self._parse_cluster_response(
+                    response,
+                    old_names,
+                    extract_topic_names_function,
+                    get_topic_names_regex,
+                )
+            )
 
         return results
 
-    def _parse_cluster_response(self, response: str, old_names: List[str]) -> List[str]:
+    def _parse_cluster_response(
+        self,
+        response: str,
+        old_names: List[str],
+        extract_topic_names_function,
+        get_topic_names_regex,
+    ) -> List[str]:
         """Parse a single cluster response."""
         try:
-            topic_name_info = llm_output_to_result(
-                response, GET_TOPIC_CLUSTER_NAMES_REGEX
-            )
-            mapping = topic_name_info["new_topic_name_mapping"]
+            topic_name_info = llm_output_to_result(response, get_topic_names_regex)
+            return extract_topic_names_function(topic_name_info, old_names, response)
+            # mapping = topic_name_info["new_topic_name_mapping"]
 
-            if len(mapping) == len(old_names):
-                result = []
-                for i, old_name_val in enumerate(old_names, start=1):
-                    key_with_val = f"{i}. {old_name_val}"
-                    key_just_index = f"{i}."
-                    if key_with_val in mapping:
-                        result.append(mapping[key_with_val])
-                    elif key_just_index in mapping:
-                        result.append(mapping[key_just_index])
-                    else:
-                        result.append(old_name_val)
-                return result
-            else:
-                # Fallback parsing
-                mapping_str = re.findall(
-                    r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                    response,
-                    re.DOTALL,
-                )[0]
-                new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping_str, re.DOTALL)
-                if len(new_names) == len(old_names):
-                    return new_names
-                else:
-                    raise ValueError(f"Failed to generate enough names; got {mapping}")
+            # if len(mapping) == len(old_names):
+            #     result = []
+            #     for i, old_name_val in enumerate(old_names, start=1):
+            #         key_with_val = f"{i}. {old_name_val}"
+            #         key_just_index = f"{i}."
+            #         if key_with_val in mapping:
+            #             result.append(mapping[key_with_val])
+            #         elif key_just_index in mapping:
+            #             result.append(mapping[key_just_index])
+            #         else:
+            #             result.append(old_name_val)
+            #     return result
+            # else:
+            #     # Fallback parsing
+            #     mapping_str = re.findall(
+            #         r'"new_topic_name_mapping":\s*\{(.*?)\}',
+            #         response,
+            #         re.DOTALL,
+            #     )[0]
+            #     new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping_str, re.DOTALL)
+            #     if len(new_names) == len(old_names):
+            #         return new_names
+            #     else:
+            #         raise ValueError(f"Failed to generate enough names; got {mapping}")
         except Exception as e:
             warn(f"Failed to parse cluster names: {e}")
             return old_names
@@ -1423,7 +1533,7 @@ try:
         """
         Provides access to Anthropic's LLMs with the Toponymy framework. For more information on Anthropic, see
         https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
-        The default model is "claude-3-haiku-20240307", which is the smallest model available, but is generally
+        The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
         more than sufficient for generating topic names and clusters. You can use more advanced
         models, but they have diminishing returns for this task, and are more expensive.
 
@@ -1433,7 +1543,7 @@ try:
             Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
 
         model: str, optional
-            The name of the Anthropic model to use. Default is "claude-3-haiku-20240307". You can use any model available
+            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
             in the Anthropic API, but this is a good balance of performance and cost.
 
         llm_specific_instructions: str, optional
@@ -1464,7 +1574,7 @@ try:
         def __init__(
             self,
             api_key: str,
-            model: str = "claude-3-haiku-20240307",
+            model: str = "claude-haiku-4-5-20251001",
             llm_specific_instructions=None,
         ):
             api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -1512,7 +1622,7 @@ try:
         """
         Provides access to Anthropic's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
         For more information on Anthropic, see https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
-        The default model is "claude-3-haiku-20240307", which is the smallest model available, but is generally
+        The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
         more than sufficient for generating topic names and clusters. You can use more advanced models, but they have diminishing returns for this task,
         and are more expensive.
 
@@ -1526,7 +1636,7 @@ try:
             Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
 
         model: str, optional
-            The name of the Anthropic model to use. Default is "claude-3-haiku-20240307". You can use any model available
+            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
             in the Anthropic API, but this is a good balance of performance and cost.
 
         llm_specific_instructions: str, optional
@@ -1555,7 +1665,7 @@ try:
         def __init__(
             self,
             api_key: str,
-            model: str = "claude-3-haiku-20240307",
+            model: str = "claude-haiku-4-5-20251001",
             llm_specific_instructions=None,
             max_concurrent_requests: int = 10,
         ):
@@ -1659,7 +1769,7 @@ try:
             Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
 
         model: str, optional
-            The name of the Anthropic model to use. Default is "claude-3-haiku-20240307". You can use any model available
+            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
             in the Anthropic API, but this is a good balance of performance and cost.
 
         llm_specific_instructions: str, optional
@@ -1694,7 +1804,7 @@ try:
         def __init__(
             self,
             api_key: str,
-            model: str = "claude-3-haiku-20240307",
+            model: str = "claude-haiku-4-5-20251001",
             llm_specific_instructions=None,
             polling_interval: int = 60,
             timeout: int = 7200,
@@ -2011,6 +2121,7 @@ except ImportError:
 
 try:
     import openai
+    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError
 
     class OpenAINamer(LLMWrapper):
         """
@@ -2058,6 +2169,7 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncOpenAI wrapper instead.
         """
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
 
         def __init__(
             self,

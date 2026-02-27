@@ -18,14 +18,23 @@ from toponymy.subtopics import (
     central_subtopics,
     information_weighted_subtopics,
     submodular_subtopics,
+    central_summary_subtopics,
+    information_weighted_summary_subtopics,
+    submodular_summary_subtopics,
 )
-from toponymy.templates import SUMMARY_KINDS
+from toponymy.templates import (
+    GET_TOPIC_CLUSTER_NAMES_REGEX,
+    GET_TOPIC_NAME_REGEX,
+    SUMMARY_KINDS,
+    default_extract_topic_names,
+)
 from toponymy.llm_wrappers import LLMWrapper, AsyncLLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.prompt_construction import (
     topic_name_prompt,
     cluster_topic_names_for_renaming,
     distinguish_topic_names_prompt,
+    topic_summary_prompt,
 )
 from tqdm.auto import tqdm
 import asyncio
@@ -122,6 +131,8 @@ class ClusterLayer(ABC):
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[TextEmbedderProtocol] = None,
+        all_topic_summaries: Optional[List[List[str]]] = None,
+        all_topic_explanations: Optional[List[List[str]]] = None,
     ) -> List[str]:
         pass
 
@@ -133,6 +144,10 @@ class ClusterLayer(ABC):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
+        prompt_format: str = None,
+        prompt_template: Optional[str] = None,
+        all_topic_summaries: Optional[List[List[str]]] = None,
+        all_topic_explanations: Optional[List[List[str]]] = None,
     ) -> List[str | Dict[str, str]]:
         pass
 
@@ -153,6 +168,9 @@ class ClusterLayer(ABC):
         topic_labels: np.ndarray,
         topic_vectors: Optional[np.ndarray] = None,
         embedding_model: Optional[TextEmbedderProtocol] = None,
+        method: str = "facility_location",
+        topic_summaries: Optional[List[str]] = None,
+        topic_explanations: Optional[List[str]] = None,
     ) -> List[List[str]]:
         pass
 
@@ -273,7 +291,20 @@ class ClusterLayer(ABC):
                 position=1,
             ):
                 new_names = llm.generate_topic_cluster_names(
-                    disambiguation_prompt, [self.topic_names[i] for i in topic_indices]
+                    disambiguation_prompt,
+                    [self.topic_names[i] for i in topic_indices],
+                    extract_topic_names_function=(
+                        self.prompt_template["extract_topic_names"]
+                        if self.prompt_template
+                        else default_extract_topic_names
+                    ),
+                    get_topic_names_regex=(
+                        self.prompt_template.get(
+                            "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
+                        )
+                        if self.prompt_template
+                        else GET_TOPIC_CLUSTER_NAMES_REGEX
+                    ),
                 )
                 if len(new_names) == len(topic_indices):
                     self._update_topic_names(new_names, topic_indices)
@@ -290,6 +321,18 @@ class ClusterLayer(ABC):
                         [self.topic_names[i] for i in topic_indices]
                         for topic_indices in self.dismbiguation_topic_indices
                     ],
+                    extract_topic_names_function=(
+                        self.prompt_template["extract_topic_names"]
+                        if self.prompt_template
+                        else default_extract_topic_names
+                    ),
+                    get_topic_names_regex=(
+                        self.prompt_template.get(
+                            "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
+                        )
+                        if self.prompt_template
+                        else GET_TOPIC_CLUSTER_NAMES_REGEX
+                    ),
                 )
             )
             for topic_indices, new_names in zip(
@@ -387,6 +430,8 @@ class ClusterLayerText(ClusterLayer):
         cluster_tree: Optional[dict] = None,
         prompt_format: Optional[str] = None,
         prompt_template: Optional[Dict[str, Any]] = None,
+        all_topic_summaries: Optional[List[List[str]]] = None,
+        all_topic_explanations: Optional[List[List[str]]] = None,
     ) -> List[str | Dict[str, str]]:
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
@@ -437,11 +482,27 @@ class ClusterLayerText(ClusterLayer):
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
         embedding_model: Optional[TextEmbedderProtocol] = None,
+        all_topic_summaries: Optional[List[List[str]]] = None,
+        all_topic_explanations: Optional[List[List[str]]] = None,
     ) -> List[str]:
         if isinstance(llm, LLMWrapper):
             self.topic_names = [
                 (
-                    llm.generate_topic_name(prompt)
+                    llm.generate_topic_name(
+                        prompt,
+                        topic_extraction_function=(
+                            self.prompt_template["layer"]["extract_topic_name"]
+                            if self.prompt_template
+                            else lambda json_response: json_response["topic_name"]
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template["layer"].get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                            )
+                            if self.prompt_template
+                            else GET_TOPIC_NAME_REGEX
+                        ),
+                    )
                     if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
                     else prompt.removeprefix("[!SKIP!]: ")
                 )
@@ -462,7 +523,21 @@ class ClusterLayerText(ClusterLayer):
                 if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
             ]
             llm_results = run_async(
-                llm.generate_topic_names([prompt for _, prompt in prompts_for_llm])
+                llm.generate_topic_names(
+                    [prompt for _, prompt in prompts_for_llm],
+                    extract_topic_name_function=(
+                        self.prompt_template["layer"]["extract_topic_name"]
+                        if self.prompt_template
+                        else lambda json_response: json_response["topic_name"]
+                    ),
+                    get_topic_name_regex=(
+                        self.prompt_template["layer"].get(
+                            "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                        )
+                        if self.prompt_template
+                        else GET_TOPIC_NAME_REGEX
+                    ),
+                )
             )
             llm_result_index = 0
             self.topic_names = []
@@ -500,7 +575,25 @@ class ClusterLayerText(ClusterLayer):
         if any([name == "" for name in self.topic_names]):
             if isinstance(llm, LLMWrapper):
                 self.topic_names = [
-                    llm.generate_topic_name(prompt) if name == "" else name
+                    (
+                        llm.generate_topic_name(
+                            prompt,
+                            topic_extraction_function=(
+                                self.prompt_template["layer"]["extract_topic_name"]
+                                if self.prompt_template
+                                else lambda json_response: json_response["topic_name"]
+                            ),
+                            get_topic_name_regex=(
+                                self.prompt_template["layer"].get(
+                                    "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                )
+                                if self.prompt_template
+                                else GET_TOPIC_NAME_REGEX
+                            ),
+                        )
+                        if name == ""
+                        else name
+                    )
                     for name, prompt in zip(self.topic_names, self.prompts)
                 ]
             elif isinstance(llm, AsyncLLMWrapper):
@@ -509,7 +602,23 @@ class ClusterLayerText(ClusterLayer):
                     for name, prompt in zip(self.topic_names, self.prompts)
                     if name == ""
                 ]
-                llm_results = run_async(llm.generate_topic_names(selected_prompts))
+                llm_results = run_async(
+                    llm.generate_topic_names(
+                        selected_prompts,
+                        extract_topic_name_function=(
+                            self.prompt_template["layer"]["extract_topic_name"]
+                            if self.prompt_template
+                            else lambda json_response: json_response["topic_name"]
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template["layer"].get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                            )
+                            if self.prompt_template
+                            else GET_TOPIC_NAME_REGEX
+                        ),
+                    )
+                )
                 for i in range(len(self.topic_names)):
                     if self.topic_names[i] == "":
                         self.topic_names[i] = llm_results.pop(0)
@@ -591,6 +700,8 @@ class ClusterLayerText(ClusterLayer):
         topic_vectors: Optional[np.ndarray] = None,
         embedding_model: Optional[TextEmbedderProtocol] = None,
         method: str = "facility_location",
+        topic_summaries: Optional[List[str]] = None,
+        topic_explanations: Optional[List[str]] = None,
     ) -> List[List[str]]:
         if method == "central":
             self.subtopics = central_subtopics(
@@ -680,6 +791,379 @@ class ClusterLayerText(ClusterLayer):
             )
 
         return self.exemplars, self.exemplar_indices
+
+    def make_topic_name_vector(self) -> np.ndarray:
+        self.topic_name_vector = np.full(
+            self.cluster_labels.shape[0], "Unlabelled", dtype=object
+        )
+        for i, name in enumerate(self.topic_names):
+            self.topic_name_vector[self.cluster_labels == i] = name
+
+        return self.topic_name_vector
+
+
+class ClusterLayerSummaryText(ClusterLayerText):
+    """
+    A cluster layer class for dealing with text data. A cluster layer is a layer of a cluster hierarchy.
+
+    Attributes:
+    cluster_labels: vector of numeric cluster labels for the clusters in the layer
+    centroid_vectors: list of centroid vectors of the clusters in the layer
+
+    Methods:
+    make_prompts: creates and stores a list of prompts for the clusters in the layer
+    make_keywords: generates and stores a list of keywords for each clusters in the layer
+    make_subtopics: generates and stores a list of subtopics for each clusters in the layer
+    make_sample_texts: generates and stores a list of sample texts for each clusters in the layer
+    """
+
+    def __init__(
+        self,
+        cluster_labels: np.ndarray,
+        centroid_vectors: np.ndarray,
+        layer_id: int,
+        text_embedding_model: Optional[TextEmbedderProtocol] = None,
+        n_keyphrases: int = 16,
+        keyphrase_diversify_alpha: float = 1.0,
+        n_exemplars: int = 8,
+        exemplars_diversify_alpha: float = 1.0,
+        n_subtopics: int = 16,
+        subtopic_diversify_alpha: float = 1.0,
+        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        prompt_format: str = "combined",
+        prompt_template: Optional[str | Dict[str, Any]] = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+        **kwargs: Any,
+    ):
+        super().__init__(
+            cluster_labels,
+            centroid_vectors,
+            layer_id,
+            text_embedding_model,
+            exemplar_delimiters=exemplar_delimiters,
+            prompt_format=prompt_format,
+            prompt_template=prompt_template,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+            **kwargs,
+        )
+        self.n_keyphrases = n_keyphrases
+        self.keyphrase_diversify_alpha = keyphrase_diversify_alpha
+        self.n_exemplars = n_exemplars
+        self.exemplars_diversify_alpha = exemplars_diversify_alpha
+        self.n_subtopics = n_subtopics
+        self.subtopic_diversify_alpha = subtopic_diversify_alpha
+        if text_embedding_model is not None:
+            self.embedding_model = text_embedding_model
+
+    def make_prompts(
+        self,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        prompt_format: str = None,
+        prompt_template: Optional[str] = None,
+        all_topic_summaries: Optional[List[List[str]]] = None,
+        all_topic_explanations: Optional[List[List[str]]] = None,
+    ) -> List[str | Dict[str, str]]:
+        summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
+        summary_kind = SUMMARY_KINDS[summary_level]
+
+        assert (
+            all_topic_summaries is not None
+        ), "all_topic_summaries must be provided to make_prompts in ClusterLayerSummaryText"
+        assert (
+            all_topic_explanations is not None
+        ), "all_topic_explanations must be provided to make_prompts in ClusterLayerSummaryText"
+
+        self.prompts = [
+            topic_summary_prompt(
+                topic_index,
+                self.layer_id,
+                all_topic_names,
+                all_topic_summaries,
+                all_topic_explanations,
+                exemplar_texts=self.exemplars,
+                keyphrases=self.keyphrases,
+                subtopics=self.subtopics,
+                cluster_tree=cluster_tree,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                summary_kind=summary_kind,
+                max_num_exemplars=self.n_exemplars,
+                max_num_keyphrases=self.n_keyphrases,
+                max_num_subtopics=self.n_subtopics,
+                exemplar_start_delimiter=self.exemplar_delimiters[0],
+                exemplar_end_delimiter=self.exemplar_delimiters[1],
+                prompt_format=(
+                    self.prompt_format if prompt_format is None else prompt_format
+                ),
+                prompt_template=(
+                    self.prompt_template if prompt_template is None else prompt_template
+                ),
+            )
+            for topic_index in tqdm(
+                range(self.centroid_vectors.shape[0]),
+                desc=f"Generating prompts for layer {self.layer_id}",
+                disable=not self.show_progress_bar,
+                unit="topic",
+                leave=False,
+                position=1,
+            )
+        ]
+
+        return self.prompts
+
+    # pragma: no cover
+    def name_topics(
+        self,
+        llm,
+        detail_level: float,
+        all_topic_names: List[List[str]],
+        object_description: str,
+        corpus_description: str,
+        cluster_tree: Optional[dict] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
+        all_topic_summaries: Optional[List[List[str]]] = None,
+        all_topic_explanations: Optional[List[List[str]]] = None,
+    ) -> List[str]:
+        assert (
+            all_topic_summaries is not None
+        ), "all_topic_summaries must be provided to name_topics in ClusterLayerSummaryText"
+        assert (
+            all_topic_explanations is not None
+        ), "all_topic_explanations must be provided to name_topics in ClusterLayerSummaryText"
+
+        if isinstance(llm, LLMWrapper):
+            self.topic_names, self.topic_summaries, self.topic_explanations = map(
+                list,
+                zip(
+                    *[
+                        (
+                            llm.generate_topic_name(
+                                prompt,
+                                topic_extraction_function=(
+                                    self.prompt_template["extract_topic_name"]
+                                    if self.prompt_template
+                                    else None
+                                ),
+                                get_topic_name_regex=(
+                                    self.prompt_template.get(
+                                        "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                    )
+                                    if self.prompt_template
+                                    else GET_TOPIC_NAME_REGEX
+                                ),
+                            )
+                            if isinstance(prompt, dict)
+                            or not prompt.startswith("[!SKIP!]: ")
+                            else prompt.removeprefix("[!SKIP!]: ")
+                        )
+                        for prompt in tqdm(
+                            self.prompts,
+                            desc=f"Generating topic names for layer {self.layer_id}",
+                            disable=not self.show_progress_bar,
+                            unit="topic",
+                            leave=False,
+                            position=1,
+                        )
+                    ]
+                ),
+            )
+        elif isinstance(llm, AsyncLLMWrapper):
+            # Filter out prompts that are marked to be skipped
+            prompts_for_llm = [
+                (index, prompt)
+                for index, prompt in enumerate(self.prompts)
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: ")
+            ]
+            llm_results = run_async(
+                llm.generate_topic_names(
+                    [prompt for _, prompt in prompts_for_llm],
+                    extract_topic_name_function=(
+                        self.prompt_template["extract_topic_name"]
+                        if self.prompt_template
+                        else None
+                    ),
+                    get_topic_name_regex=(
+                        self.prompt_template.get("get_topic_name_regex", None)
+                        if self.prompt_template
+                        else None
+                    ),
+                )
+            )
+            llm_result_index = 0
+            self.topic_names = []
+            self.topic_summaries = []
+            self.topic_explanations = []
+            for index, prompt in enumerate(self.prompts):
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
+                    name, summary, explanation = llm_results[llm_result_index]
+                    self.topic_names.append(name)
+                    self.topic_summaries.append(summary)
+                    self.topic_explanations.append(explanation)
+                    llm_result_index += 1
+                else:
+                    # If the prompt is marked to be skipped, use the original prompt text
+                    name, summary, explanation = prompt.removeprefix(
+                        "[!SKIP!]: "
+                    ).split("\n--\n")
+                    self.topic_names.append(name)
+                    self.topic_summaries.append(summary)
+                    self.topic_explanations.append(explanation)
+
+        all_topic_names[self.layer_id] = self.topic_names
+        all_topic_summaries[self.layer_id] = self.topic_summaries
+        all_topic_explanations[self.layer_id] = self.topic_explanations
+
+        self.disambiguate_topics(
+            llm=llm,
+            detail_level=detail_level,
+            all_topic_names=all_topic_names,
+            object_description=object_description,
+            corpus_description=corpus_description,
+            cluster_tree=cluster_tree,
+            embedding_model=embedding_model,
+        )
+        # Run an extra disambiguation pass if we still have significant duplication
+        if pd.Series(self.topic_names).value_counts().iloc[0] > 2:
+            self.disambiguate_topics(
+                llm=llm,
+                detail_level=detail_level,
+                all_topic_names=all_topic_names,
+                object_description=object_description,
+                corpus_description=corpus_description,
+                cluster_tree=cluster_tree,
+                embedding_model=embedding_model,
+            )  # pragma: no cover
+
+        # Try to fix any failures to generate a name
+        if any([name == "" for name in self.topic_names]):
+            if isinstance(llm, LLMWrapper):
+                self.topic_names = [
+                    (
+                        llm.generate_topic_name(
+                            prompt,
+                            topic_extraction_function=(
+                                self.prompt_template["extract_topic_name"]
+                                if self.prompt_template
+                                else lambda json_response: json_response["topic_name"]
+                            ),
+                            get_topic_name_regex=(
+                                self.prompt_template.get(
+                                    "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                )
+                                if self.prompt_template
+                                else GET_TOPIC_NAME_REGEX
+                            ),
+                        )
+                        if name == ""
+                        else name
+                    )
+                    for name, prompt in zip(self.topic_names, self.prompts)
+                ]
+            elif isinstance(llm, AsyncLLMWrapper):
+                selected_prompts = [
+                    prompt
+                    for name, prompt in zip(self.topic_names, self.prompts)
+                    if name == ""
+                ]
+                llm_results = run_async(
+                    llm.generate_topic_names(
+                        selected_prompts,
+                        extract_topic_name_function=(
+                            self.prompt_template["extract_topic_name"]
+                            if self.prompt_template
+                            else lambda json_response: json_response["topic_name"]
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template.get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                            )
+                            if self.prompt_template
+                            else GET_TOPIC_NAME_REGEX
+                        ),
+                    )
+                )
+                for i in range(len(self.topic_names)):
+                    if self.topic_names[i] == "":
+                        self.topic_names[i] = llm_results.pop(0)
+            else:
+                raise ValueError(
+                    "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
+                )
+
+        return self.topic_names
+
+    def make_subtopics(
+        self,
+        topic_list: List[str],
+        topic_labels: np.ndarray,
+        topic_vectors: Optional[np.ndarray] = None,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
+        method: str = "facility_location",
+        topic_summaries: Optional[List[str]] = None,
+        topic_explanations: Optional[List[str]] = None,
+    ) -> List[List[str]]:
+        assert (
+            topic_summaries is not None
+        ), "topic_summaries must be provided to make_subtopics in ClusterLayerSummaryText"
+        assert (
+            topic_explanations is not None
+        ), "topic_explanations must be provided to make_subtopics in ClusterLayerSummaryText"
+
+        if method == "central":
+            self.subtopics = central_summary_subtopics(
+                cluster_label_vector=self.cluster_labels,
+                subtopics=topic_list,
+                summaries=topic_summaries,
+                explanations=topic_explanations,
+                subtopic_label_vector=topic_labels,
+                subtopic_vectors=topic_vectors,
+                diversify_alpha=self.subtopic_diversify_alpha,
+                n_subtopics=self.n_subtopics,
+                embedding_model=embedding_model,
+                verbose=self.verbose,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method == "information_weighted":
+            self.subtopics = information_weighted_summary_subtopics(
+                cluster_label_vector=self.cluster_labels,
+                subtopics=topic_list,
+                summaries=topic_summaries,
+                explanations=topic_explanations,
+                subtopic_label_vector=topic_labels,
+                subtopic_vectors=topic_vectors,
+                diversify_alpha=self.subtopic_diversify_alpha,
+                n_subtopics=self.n_subtopics,
+                embedding_model=embedding_model,
+                verbose=self.verbose,
+                show_progress_bar=self.show_progress_bar,
+            )
+        elif method in ("saturated_coverage", "facility_location"):
+            self.subtopics = submodular_summary_subtopics(
+                cluster_label_vector=self.cluster_labels,
+                subtopics=topic_list,
+                summaries=topic_summaries,
+                explanations=topic_explanations,
+                subtopic_label_vector=topic_labels,
+                subtopic_vectors=topic_vectors,
+                n_subtopics=self.n_subtopics,
+                embedding_model=embedding_model,
+                submodular_function=method,
+                verbose=self.verbose,
+                show_progress_bar=self.show_progress_bar,
+            )
+        else:
+            raise ValueError(
+                f"Unknown subtopic generation method: {method}. "
+                "Use 'central' or 'information_weighted'."
+            )
+
+        return self.subtopics
 
     def make_topic_name_vector(self) -> np.ndarray:
         self.topic_name_vector = np.full(
