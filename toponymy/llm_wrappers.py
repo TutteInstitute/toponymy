@@ -182,9 +182,6 @@ class LLMWrapper(ABC):
                 max_tokens=128,
             )
             topic_name = str(topic_name_info["topic_name"])
-        except Exception as e:
-            raise ValueError(
-                f"Failed to generate topic name with {self.__class__.__name__}: {e}"
         else:
             raise InvalidLLMInputError(
                 f"Prompt must be a string or a dictionary, got {type(prompt)}"
