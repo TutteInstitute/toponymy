@@ -8,11 +8,6 @@ Toponymy is available on PyPI, so you can install it using pip:
 
     pip install toponymy
 
-If you are using conda, you can also install Toponymy using conda-forge (coming soon):
-
-.. code-block:: shell
-
-    conda install -c conda-forge toponymy
 
 To get the latest and greatest version of Toponymy, you can also install it from source.
 
@@ -20,8 +15,15 @@ To get the latest and greatest version of Toponymy, you can also install it from
 
     git clone https://github.com/TutteInstitute/toponymy.git
     cd toponymy
-    pip install -r requirements.txt
-    pip install -e .
+    pip install .
+
+If you would like all the optional dependencies, you can install Toponymy with 
+the ``dev`` extra:
+
+.. code-block:: shell
+
+    pip install .[dev]
+
 
 This provides the basics to get started, but Toponymy makes use of LLMs and embedding models as well. Instead 
 of havign a very large dependency list, we allow you to install what you need, and different options 
