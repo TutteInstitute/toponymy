@@ -103,12 +103,12 @@ stages:
           displayName: 'Install uv'
 
         - script: |
-            uv sync --python $(python.version)
+            uv sync --python $(python.version) --extra dev
           displayName: 'Install dependencies'
           condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
 
         - script: |
-            uv sync --python $(python.version) --prerelease allow
+            uv sync --python $(python.version) --extra dev --prerelease allow
           displayName: 'Install dependencies (allow pre-releases)'
           condition: ${{ eq(parameters.includeReleaseCandidates, true) }}
 
@@ -236,7 +236,7 @@ stages:
         - script: |
             python -m pip install --upgrade pip
             python -m pip install -U uv
-            uv sync --python "$(python -c 'import sys; print(sys.executable)')" --no-dev
+            uv sync --python "$(python -c 'import sys; print(sys.executable)')"
           displayName: 'Install dependencies'
         
         - script: |

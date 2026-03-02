@@ -74,7 +74,7 @@ Toponymy uses `pytest`. The tests live under `toponymy/tests/`.
 Install the project dependencies from the repo root:
 ```shell
 pip install --upgrade uv
-uv sync
+uv sync --extra dev
 ```
 Run all tests:
 ```shell
