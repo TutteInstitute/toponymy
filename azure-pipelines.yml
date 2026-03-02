@@ -99,25 +99,18 @@ stages:
 
         - script: |
             python -m pip install --upgrade pip
-          displayName: 'Upgrade pip'
+            python -m pip install -U uv
+          displayName: 'Install uv'
 
         - script: |
-            pip install -r requirements.txt
-            pip install -r tests-requirements.txt
+            uv sync --python $(python.version)
           displayName: 'Install dependencies'
           condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
 
         - script: |
-            pip install --pre -r requirements.txt
-            pip install --pre -r tests-requirements.txt
+            uv sync --python $(python.version) --prerelease allow
           displayName: 'Install dependencies (allow pre-releases)'
           condition: ${{ eq(parameters.includeReleaseCandidates, true) }}
-
-        - script: |
-            pip install -e .
-            pip install pytest  pytest-azurepipelines
-            pip install pytest-cov
-          displayName: 'Install package'
 
         - script: |
             # Optional Ollama setup for integration tests (Linux only)
@@ -201,7 +194,7 @@ stages:
             INSTALL_OLLAMA: $(INSTALL_OLLAMA)  # Set this pipeline variable to enable Ollama
 
         - script: |
-            pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
+            uv run pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
           displayName: 'Run tests'
           env:
             # Set CI environment variable to help tests understand they're running in CI
@@ -242,21 +235,16 @@ stages:
 
         - script: |
             python -m pip install --upgrade pip
-            pip install wheel
-            pip install -r requirements.txt
+            python -m pip install -U uv
+            uv sync --python "$(python -c 'import sys; print(sys.executable)')" --no-dev
           displayName: 'Install dependencies'
-
-        - script: |
-            pip install -e .
-          displayName: 'Install package locally'
         
         - script: |
-            pip install build
-            python -m build --wheel --sdist --outdir dist/ .
+            uv build --no-sources --sdist --wheel
           displayName: 'Build package'
 
         - bash: |
-            export PACKAGE_VERSION="$(python setup.py --version)"
+            export PACKAGE_VERSION="$(uv version --short)"
             echo "Package Version: ${PACKAGE_VERSION}"
             echo "##vso[task.setvariable variable=packageVersionFormatted;]release-${PACKAGE_VERSION}"
           displayName: 'Get package version'
@@ -274,7 +262,7 @@ stages:
             secureFile: 'pypirc'  
 
         - script: |
-            pip install twine
-            twine upload --repository pypi --config-file $(PYPIRC_CONFIG.secureFilePath) dist/* 
+            uvx twine check dist/*
+            uvx twine upload --repository pypi --config-file $(PYPIRC_CONFIG.secureFilePath) dist/* 
           displayName: 'Upload to PyPI'
           condition: and(succeeded(), eq(variables['Build.SourceBranchName'], variables['packageVersionFormatted']))

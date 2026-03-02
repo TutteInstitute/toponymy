@@ -66,3 +66,28 @@ black .
 ```
 
 in the root of the project.
+
+### Running the Tests
+
+Toponymy uses `pytest`. The tests live under `toponymy/tests/`.
+
+Install the project dependencies from the repo root:
+```shell
+pip install --upgrade uv
+uv sync
+```
+Run all tests:
+```shell
+uv run pytest toponymy/tests -v
+```
+Run a specific test file:
+```shell
+uv run pytest toponymy/tests/test_toponymy.py -v
+```
+Run tests with coverage:
+```shell
+uv run pytest toponymy/tests --show-capture=no -v --disable-warnings \
+  --junitxml=junit/test-results.xml \
+  --cov=toponymy/ --cov-report=xml --cov-report=html
+```
+
