@@ -93,6 +93,12 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
 
     return result
 
+def on_retry_error(retry_state):
+    exc = retry_state.outcome.exception()
+    attempts = retry_state.attempt_number
+    warn(f"Calling the LLM failed after {attempts} attempts. Last error: {exc.args[0]}")
+    return ""
+
 
 class LLMWrapper(ABC):
     FAIL_FAST_EXCEPTIONS: tuple = ()
@@ -154,7 +160,7 @@ class LLMWrapper(ABC):
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=4, max=10),
-        retry_error_callback=_topic_name_error_callback,
+        retry_error_callback=on_retry_error,
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_name(
@@ -175,6 +181,7 @@ class LLMWrapper(ABC):
                 temperature=temperature,
                 max_tokens=128,
             )
+            topic_name = str(topic_name_info["topic_name"])
         else:
             raise InvalidLLMInputError(
                 f"Prompt must be a string or a dictionary, got {type(prompt)}"
