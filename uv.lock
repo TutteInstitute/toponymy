@@ -4315,7 +4315,7 @@ dependencies = [
     { name = "vectorizers" },
 ]
 
-[package.dev-dependencies]
+[package.optional-dependencies]
 dev = [
     { name = "anthropic" },
     { name = "anywidget" },
@@ -4352,53 +4352,50 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anthropic", marker = "extra == 'dev'" },
+    { name = "anywidget", marker = "extra == 'dev'" },
     { name = "apricot-select" },
+    { name = "azure-ai-inference", marker = "extra == 'dev'" },
+    { name = "black", marker = "extra == 'dev'" },
+    { name = "bm25s", marker = "extra == 'dev'" },
+    { name = "cohere", marker = "extra == 'dev'" },
     { name = "dataclasses" },
     { name = "datasets" },
+    { name = "evoc", marker = "extra == 'dev'" },
     { name = "fast-hdbscan", specifier = ">=0.2.2" },
+    { name = "google-generativeai", marker = "extra == 'dev'" },
     { name = "httpx" },
+    { name = "huggingface-hub", marker = "extra == 'dev'", specifier = "<1.0" },
+    { name = "isort", marker = "extra == 'dev'" },
+    { name = "llama-cpp-python", marker = "extra == 'dev'" },
+    { name = "mistralai", marker = "extra == 'dev'" },
     { name = "numba", specifier = ">=0.56" },
     { name = "numpy", specifier = ">=1.21" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "ollama", marker = "extra == 'dev'" },
+    { name = "openai", marker = "extra == 'dev'" },
     { name = "pandas", specifier = ">=1.0" },
+    { name = "pandas", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "psutil", marker = "extra == 'dev'" },
+    { name = "pylint", marker = "extra == 'dev'" },
+    { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'" },
+    { name = "pytest-azurepipelines", marker = "extra == 'dev'" },
+    { name = "pytest-cov", marker = "extra == 'dev'" },
+    { name = "replicate", marker = "extra == 'dev'" },
+    { name = "requests", marker = "extra == 'dev'" },
     { name = "scikit-learn", specifier = ">=1.6" },
     { name = "scipy" },
+    { name = "sentence-transformers", marker = "extra == 'dev'", specifier = "<=5.1.2" },
     { name = "tenacity" },
+    { name = "together", marker = "extra == 'dev'" },
     { name = "tqdm" },
+    { name = "traitlets", marker = "extra == 'dev'" },
+    { name = "transformers", marker = "extra == 'dev'", specifier = ">=4.41.0,<5.0.0" },
+    { name = "umap-learn", marker = "extra == 'dev'" },
     { name = "vectorizers" },
 ]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "anthropic" },
-    { name = "anywidget" },
-    { name = "azure-ai-inference" },
-    { name = "black" },
-    { name = "bm25s" },
-    { name = "cohere" },
-    { name = "evoc" },
-    { name = "google-generativeai" },
-    { name = "huggingface-hub", specifier = "<1.0" },
-    { name = "isort" },
-    { name = "llama-cpp-python" },
-    { name = "mistralai" },
-    { name = "numpy", specifier = ">=2.0" },
-    { name = "ollama" },
-    { name = "openai" },
-    { name = "pandas", specifier = ">=1.0" },
-    { name = "psutil" },
-    { name = "pylint" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-azurepipelines", specifier = ">=1.0.5" },
-    { name = "pytest-cov", specifier = ">=7.0.0" },
-    { name = "replicate" },
-    { name = "requests" },
-    { name = "sentence-transformers", specifier = "<=5.1.2" },
-    { name = "together" },
-    { name = "traitlets" },
-    { name = "transformers", specifier = ">=4.41.0,<5.0.0" },
-    { name = "umap-learn" },
-]
+provides-extras = ["dev"]
 
 [[package]]
 name = "torch"

@@ -36,7 +36,27 @@ dependencies = [
     "apricot-select",
 ]
 
-[dependency-groups]
+[project.urls]
+Homepage = "https://github.com/TutteInstitute/toponymy"
+
+[tool.pytest.ini_options]
+markers = [
+    "canary: marks tests as canary tests that make live API calls"
+]
+addopts = "-m 'not canary'"
+
+[tool.setuptools]
+zip-safe = false
+packages = ["toponymy"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+toponymy = [
+    "widgets/*/dist/*.js",
+    "widgets/*/dist/*.css",
+]
+
+[project.optional-dependencies]
 dev = [
     "anthropic",
     "anywidget",
@@ -67,24 +87,4 @@ dev = [
     "traitlets",
     "transformers>=4.41.0,<5.0.0",
     "umap-learn",
-]
-
-[project.urls]
-Homepage = "https://github.com/TutteInstitute/toponymy"
-
-[tool.pytest.ini_options]
-markers = [
-    "canary: marks tests as canary tests that make live API calls"
-]
-addopts = "-m 'not canary'"
-
-[tool.setuptools]
-zip-safe = false
-packages = ["toponymy"]
-include-package-data = true
-
-[tool.setuptools.package-data]
-toponymy = [
-    "widgets/*/dist/*.js",
-    "widgets/*/dist/*.css",
 ]
