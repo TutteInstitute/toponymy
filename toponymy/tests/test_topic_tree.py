@@ -781,7 +781,7 @@ def test_unfitted_toponymy_fails(null_llm, embedder, clusterer):
         corpus_description = "collection of sentences",
         lowest_detail_level = 0.8,
         highest_detail_level = 1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     with pytest.raises(NotFittedError, match="This Toponymy instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator."):
         model.topic_tree_
