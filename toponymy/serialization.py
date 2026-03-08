@@ -44,8 +44,8 @@ class TopicModel:
     cluster_tree: dict
     cluster_layers: list
     embedding_vectors: np.ndarray 
+    document_df: pd.DataFrame
     reduced_vectors: np.ndarray = None
-    document_df: pd.DataFrame = None
 
     def __repr__(self):
         n_samples = self.embedding_vectors.shape[0]

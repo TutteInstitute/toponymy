@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 
 from toponymy import TopicModel
 from toponymy.serialization import topic_uid
