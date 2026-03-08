@@ -44,8 +44,8 @@ class TopicModel:
     cluster_tree: dict
     cluster_layers: list
     embedding_vectors: np.ndarray 
-    document_df: pd.DataFrame
     reduced_vectors: np.ndarray = None
+    document_df: pd.DataFrame = None
 
     def __repr__(self):
         n_samples = self.embedding_vectors.shape[0]
@@ -76,7 +76,10 @@ class TopicModel:
             for cluster in unique_labels[unique_labels >= 0]:
                 rows.append({
                     "uid": topic_uid((layer_idx, int(cluster))),
-                    # TODO: add name, keywords, exemplars from toponymy metadata
+                    "layer": layer_idx,
+                    "cluster": cluster,
+                    "name": toponymy.topic_names_[layer_idx][cluster],
+                    "keyphrases" : toponymy.cluster_layers_[layer_idx].keyphrases[cluster]
                 })
         topic_df = pd.DataFrame(rows)
         if document_df is None:
@@ -335,11 +338,13 @@ class TopicModel:
     def topic_name_vectors(self):
         vectors = []
         for layer, matrix in enumerate(self.cluster_layers):
+            matrix = matrix.todense()
             vector_layer = np.full(matrix.shape[0], "Unlabelled")
             for cluster in range(matrix.shape[1]):
                 cluster_uid = topic_uid((layer, cluster))
-                cluster_name = self.topic_df.loc[cluster_uid]['name']
-                cluster_index = np.where(matrix[:,cluster]==1).nonzero()
+                cluster_name = self.topic_df[self.topic_df['uid']==cluster_uid]['name'].values[0]
+                column = matrix[:,cluster]
+                cluster_index = (column==255).nonzero()[0]
                 vector_layer[cluster_index] = cluster_name
             vectors.append(vector_layer)
         return vectors
@@ -351,7 +356,7 @@ class TopicModel:
             layer_names = []
             for cluster in range(matrix.shape[1]):
                 cluster_uid = topic_uid((layer, cluster))
-                cluster_name = self.topic_df.loc[cluster_uid]['name']
+                cluster_name = self.topic_df[self.topic_df['uid']==cluster_uid]['name'].values[0]
                 layer_names.append(cluster_name)
             all_names.append(layer_names)
         return all_names
