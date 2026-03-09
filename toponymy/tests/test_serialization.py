@@ -105,3 +105,13 @@ def test_round_trip_zip():
     model.to_file(path)
     model2 = model.from_file(path)
     assert is_equal(model, model2)
+
+def test_topic_names():
+    model = mock_data_model()
+    topics = [
+        ["Subtopic C1", "Subtopic C2", "Subtopic C3", "Subtopic C4",
+         "Subtopic C5", "Subtopic C6", "Subtopic C7", "Subtopic C8"],
+        ["Subtopic A1", "Subtopic A2", "Subtopic B1", "Subtopic B2"],
+        ["Topic A", "Topic B"],
+    ]
+    assert model.topic_names == topics

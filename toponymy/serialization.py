@@ -337,9 +337,10 @@ class TopicModel:
     @property
     def topic_name_vectors(self):
         vectors = []
+        max_len = max([len(x) for x in self.topic_df['name'].values])
         for layer, matrix in enumerate(self.cluster_layers):
             matrix = matrix.todense()
-            vector_layer = np.full(matrix.shape[0], "Unlabelled")
+            vector_layer = np.full(matrix.shape[0], "Unlabelled", dtype=f'<U{max_len}')
             for cluster in range(matrix.shape[1]):
                 cluster_uid = topic_uid((layer, cluster))
                 cluster_name = self.topic_df[self.topic_df['uid']==cluster_uid]['name'].values[0]
