@@ -113,20 +113,22 @@ class LLMWrapper(ABC):
         temperature: float = 0.4,
         topic_extraction_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        max_tokens: int = 128,
     ) -> str:
         try:
             if isinstance(prompt, str):
                 topic_name_info_raw = self._call_llm(
-                    prompt, temperature, max_tokens=128
+                    prompt, temperature, max_tokens=max_tokens
                 )
             elif isinstance(prompt, dict) and self.supports_system_prompts:
                 topic_name_info_raw = self._call_llm_with_system_prompt(
                     system_prompt=prompt["system"],
                     user_prompt=prompt["user"],
                     temperature=temperature,
-                    max_tokens=128,
+                    max_tokens=max_tokens,
                 )
             else:
+                warn(f"Prompt must be a string or a dictionary, got {type(prompt)}")
                 raise InvalidLLMInputError(
                     f"Prompt must be a string or a dictionary, got {type(prompt)}"
                 )
@@ -134,8 +136,12 @@ class LLMWrapper(ABC):
             topic_name_info = llm_output_to_result(
                 topic_name_info_raw, get_topic_name_regex
             )
-            topic_name = str(topic_extraction_function(topic_name_info))
+            topic_name = topic_extraction_function(topic_name_info)
         except Exception as e:
+            warn(
+                f"Failed to generate topic name with {self.__class__.__name__}"
+                f": {e}, raw_response: {topic_name_info_raw if 'topic_name_info_raw' in locals() else 'N/A'}"
+            )
             raise ValueError(
                 f"Failed to generate topic name with {self.__class__.__name__}"
             )
@@ -159,18 +165,19 @@ class LLMWrapper(ABC):
         temperature: float = 0.4,
         extract_topic_names_function=default_extract_topic_names,
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
+        max_tokens: int = 1024,
     ) -> List[str]:
         try:
             if isinstance(prompt, str):
                 topic_name_info_raw = self._call_llm(
-                    prompt, temperature, max_tokens=1024
+                    prompt, temperature, max_tokens=max_tokens
                 )
             elif isinstance(prompt, dict) and self.supports_system_prompts:
                 topic_name_info_raw = self._call_llm_with_system_prompt(
                     system_prompt=prompt["system"],
                     user_prompt=prompt["user"],
                     temperature=temperature,
-                    max_tokens=1024,
+                    max_tokens=max_tokens,
                 )
             else:
                 raise InvalidLLMInputError(
@@ -273,6 +280,7 @@ class AsyncLLMWrapper(ABC):
         temperature: float = 0.4,
         extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        max_tokens: int = 128,
     ) -> List[str]:
         """
         Generate topic names for a batch of prompts.
@@ -283,12 +291,14 @@ class AsyncLLMWrapper(ABC):
 
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
-            responses = await self._call_llm_batch(prompts, temperature, max_tokens=128)
+            responses = await self._call_llm_batch(
+                prompts, temperature, max_tokens=max_tokens
+            )
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [p["system"] for p in prompts]
             user_prompts = [p["user"] for p in prompts]
             responses = await self._call_llm_with_system_prompt_batch(
-                system_prompts, user_prompts, temperature, max_tokens=128
+                system_prompts, user_prompts, temperature, max_tokens=max_tokens
             )
         else:
             raise InvalidLLMInputError(
@@ -305,7 +315,7 @@ class AsyncLLMWrapper(ABC):
             # Attempt to parse the response
             try:
                 topic_name_info = llm_output_to_result(response, get_topic_name_regex)
-                results.append(str(extract_topic_name_function(topic_name_info)))
+                results.append(extract_topic_name_function(topic_name_info))
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
@@ -321,6 +331,7 @@ class AsyncLLMWrapper(ABC):
         temperature: float = 0.4,
         extract_topic_names_function=default_extract_topic_names,
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
+        max_tokens: int = 1024,
     ) -> List[List[str]]:
         """
         Generate topic cluster names for a batch of prompts.
@@ -335,13 +346,13 @@ class AsyncLLMWrapper(ABC):
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
             responses = await self._call_llm_batch(
-                prompts, temperature, max_tokens=1024
+                prompts, temperature, max_tokens=max_tokens
             )
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [prompt["system"] for prompt in prompts]
             user_prompts = [prompt["user"] for prompt in prompts]
             responses = await self._call_llm_with_system_prompt_batch(
-                system_prompts, user_prompts, temperature, max_tokens=1024
+                system_prompts, user_prompts, temperature, max_tokens=max_tokens
             )
         else:
             raise InvalidLLMInputError(

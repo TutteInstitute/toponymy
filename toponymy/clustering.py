@@ -131,11 +131,14 @@ def build_raw_cluster_layers(
     n_samples = data.shape[0]
     cluster_layers: List[np.ndarray] = []
     min_cluster_size: np.signedinteger = np.intp(base_min_cluster_size)
+    n_threads = numba.get_num_threads()
 
     sklearn_tree = KDTree(data)
     numba_tree = kdtree_to_numba(sklearn_tree)
     edges, _, _ = parallel_boruvka(
-        numba_tree, min_samples=min_cluster_size if min_samples is None else min_samples
+        numba_tree,
+        n_threads=n_threads,
+        min_samples=min_cluster_size if min_samples is None else min_samples,
     )
     sorted_mst = edges[np.argsort(edges.T[2])]
     uncondensed_tree = mst_to_linkage_tree(sorted_mst)
