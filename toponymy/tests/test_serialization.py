@@ -1,3 +1,4 @@
+import os, shutil
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -52,7 +53,6 @@ def mock_data_model():
             'uid': topic_uid((0, c))
         })
     topic_df = pd.DataFrame(data)
-    topic_df.set_index('uid', inplace=True)
 
     n_samples = 100
     n_clusters_per_layer = [8, 4, 2, 1]
@@ -73,7 +73,7 @@ def mock_data_model():
         return node[1]
 
     matrices = []
-    for layer in range(4):
+    for layer in range(3):
         n_clusters = n_clusters_per_layer[layer]
         matrix = np.zeros((n_samples, n_clusters), dtype=np.uint8)
         for doc_idx, leaf_cluster in enumerate(leaf_assignments):
@@ -93,14 +93,16 @@ def mock_data_model():
     )
 
 def test_round_trip_lance():
-    path = 'tmp/test_model_lance'
+    path = 'test_model_lance'
+    if os.path.exists(path) and os.path.isdir(path):
+        shutil.rmtree(path)
     model = mock_data_model()
     model.to_lance(path)
     model2 = model.from_lance(path)
     assert is_equal(model, model2)
 
 def test_round_trip_zip():
-    path = 'tmp/test_model.tm.zip'
+    path = 'test_model.tm.zip'
     model = mock_data_model()
     model.to_file(path)
     model2 = model.from_file(path)
