@@ -12,7 +12,6 @@ readme = "README.rst"
 keywords = ["topic modeing", "representation", "cluster", "clustering", "large language models", "LLM", "topic naming"]
 license = "MIT"
 classifiers = [
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -20,7 +19,7 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Operating System :: OS Independent",
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "numpy>=1.21",
     "pandas>=1.0",
@@ -40,22 +39,11 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/TutteInstitute/toponymy"
 
-[project.optional-dependencies]
-dev = [
-    "black",
-    "isort",
-    "pylint",
-    "pytest",
-    "anthropic",
-    "cohere",
-    "azure-ai-inference",
-    "llama-cpp-python",
-    "openai",
-    "transformers",
-    "bm25s",
-    "anywidget",
-    "traitlets",
+[tool.pytest.ini_options]
+markers = [
+    "canary: marks tests as canary tests that make live API calls"
 ]
+addopts = "-m 'not canary'"
 
 [tool.setuptools]
 zip-safe = false
@@ -66,4 +54,37 @@ include-package-data = true
 toponymy = [
     "widgets/*/dist/*.js",
     "widgets/*/dist/*.css",
+]
+
+[project.optional-dependencies]
+dev = [
+    "anthropic",
+    "anywidget",
+    "azure-ai-inference",
+    "black",
+    "bm25s",
+    "cohere",
+    "evoc",
+    "google-generativeai",
+    "huggingface-hub<1.0",
+    "isort",
+    "llama-cpp-python",
+    "mistralai",
+    "numpy>=2.0",
+    "ollama",
+    "openai",
+    "pandas>=1.0",
+    "psutil",
+    "pylint",
+    "pytest",
+    "pytest-asyncio",
+    "pytest-azurepipelines",
+    "pytest-cov",
+    "replicate",
+    "requests",
+    "sentence-transformers<=5.1.2",
+    "together",
+    "traitlets",
+    "transformers>=4.41.0,<5.0.0",
+    "umap-learn",
 ]

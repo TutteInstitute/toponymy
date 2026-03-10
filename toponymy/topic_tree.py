@@ -3,6 +3,7 @@ import html
 from typing import Dict, List, Tuple, NewType
 from typing_extensions import Literal
 import copy
+from toponymy.treemap import treemap_dataframe
 
 ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
 
@@ -574,3 +575,37 @@ class TopicTree:
             cluster_percentage=cluster_percentage,
             show_topic_id=show_topic_id,
         )
+
+    def treemap(
+        self,
+        margin: dict=dict(t=10, l=10, r=10, b=10)
+    ):
+        """
+        Draws a hierarchical treemap of the TopicTree using plotly.express.treemap
+
+        Returns:
+        --------
+        fig
+            A `plotly.graph_objects.Figure` containing a tree map.
+        """
+        fig = None
+        # The reason I wrap with this try/except block is
+        # to avoid adding plotly as a dependency to Toponymy
+        # while failing gracefully if plotly is not installed
+        try: 
+            from plotly.express import treemap
+            df = treemap_dataframe(self)
+            fig = treemap(
+                df,
+                ids="id",
+                parents="parent",
+                names="label",
+                values="value",
+            )
+            fig.update_layout(
+                margin=margin,
+            )
+        except ImportError as e:
+            print(f"Failed to import plotly: {e}")
+
+        return fig
