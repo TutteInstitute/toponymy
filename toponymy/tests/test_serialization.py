@@ -135,7 +135,7 @@ def test_topic_names():
     assert model.topic_names == topics
 
 
-def test_from_toponymy():
+def test_from_toponymy(premade_topic_model_path):
     newsgroups_df = pd.read_parquet("hf://datasets/lmcinnes/20newsgroups_embedded/data/train-00000-of-00001.parquet")
     embeddings = np.stack(newsgroups_df["embedding"].values)
     projection = np.stack(newsgroups_df["map"].values)
@@ -165,5 +165,5 @@ def test_from_toponymy():
     toponymy.topic_names_ = topic_names
     
     test_model = TopicModel.from_toponymy(toponymy, document_df=metadata)
-    good_model = TopicModel.from_file('mock-20ng.tm.zip')
+    good_model = TopicModel.from_file(premade_topic_model_path)
     assert is_equal(test_model, good_model)
