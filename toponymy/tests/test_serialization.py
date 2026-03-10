@@ -3,18 +3,30 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 
-from toponymy import TopicModel
+from toponymy import TopicModel, Toponymy, ToponymyClusterer, KeyphraseBuilder
 from toponymy.serialization import topic_uid
 
 def is_equal(model1, model2):
-  equal = np.allclose(model1.embedding_vectors,model2.embedding_vectors)
-  equal &= np.allclose(model1.reduced_vectors,model2.reduced_vectors)
-  equal &= model1.cluster_tree==model2.cluster_tree
-  for layer in range(len(model1.cluster_layers)):
+    equal = np.allclose(model1.embedding_vectors,model2.embedding_vectors)
+    if not equal:
+        print("embedding vectors not equal")
+    equal &= np.allclose(model1.reduced_vectors,model2.reduced_vectors)
+    if not equal:
+      print("reduced vectors not equal")
+    equal &= model1.cluster_tree==model2.cluster_tree
+    if not equal:
+      print("cluster trees not equal")
+    for layer in range(len(model1.cluster_layers)):
         equal &= ((model1.cluster_layers[layer] != model2.cluster_layers[layer]).nnz == 0)
-  equal &= model1.topic_df.equals(model2.topic_df)
-  equal &= model1.document_df.equals(model2.document_df)
-  return equal
+    if not equal:
+      print("cluster layers not equal")
+    equal &= model1.topic_df.equals(model2.topic_df)
+    if not equal:
+      print("topic_dfs not equal")
+    equal &= model1.document_df.equals(model2.document_df)
+    if not equal:
+      print("document_dfs not equal")
+    return equal
 
 def mock_data_model():
     tree_dict = {
@@ -99,6 +111,8 @@ def test_round_trip_lance():
     model = mock_data_model()
     model.to_lance(path)
     model2 = model.from_lance(path)
+    if os.path.exists(path) and os.path.isdir(path):
+        shutil.rmtree(path)
     assert is_equal(model, model2)
 
 def test_round_trip_zip():
@@ -106,6 +120,8 @@ def test_round_trip_zip():
     model = mock_data_model()
     model.to_file(path)
     model2 = model.from_file(path)
+    if os.path.exists(path):
+        os.remove(path)
     assert is_equal(model, model2)
 
 def test_topic_names():
@@ -117,3 +133,37 @@ def test_topic_names():
         ["Topic A", "Topic B"],
     ]
     assert model.topic_names == topics
+
+
+def test_from_toponymy():
+    newsgroups_df = pd.read_parquet("hf://datasets/lmcinnes/20newsgroups_embedded/data/train-00000-of-00001.parquet")
+    embeddings = np.stack(newsgroups_df["embedding"].values)
+    projection = np.stack(newsgroups_df["map"].values)
+    metadata = newsgroups_df[['post','newsgroup']]
+    clusterer = ToponymyClusterer(verbose=True, base_min_cluster_size=25)
+
+    toponymy = Toponymy(
+        llm_wrapper=None,
+        text_embedding_model=None,
+        clusterer=clusterer,
+        object_description="newsgroup posts",
+        corpus_description="20-newsgroups dataset",
+        exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"],
+    )
+    toponymy.cluster_layers_, toponymy.cluster_tree_ = clusterer.fit_predict(projection, embeddings)
+    toponymy.embedding_vectors_ = embeddings
+    toponymy.clusterable_vectors_ = projection
+    topic_names = []
+    for layer in range(len(toponymy.cluster_layers_)):
+        layer_names = []
+        keyphrases = []
+        for cluster in np.unique(toponymy.cluster_layers_[layer].cluster_labels):
+            layer_names.append(f"{layer},{cluster}")
+            keyphrases.append(np.array(["lorem","ipsum"],dtype=object))
+        toponymy.cluster_layers_[layer].keyphrases = keyphrases
+        topic_names.append(layer_names)
+    toponymy.topic_names_ = topic_names
+    
+    test_model = TopicModel.from_toponymy(toponymy, document_df=metadata)
+    good_model = TopicModel.from_file('mock-20ng.tm.zip')
+    assert is_equal(test_model, good_model)
