@@ -294,12 +294,14 @@ class ClusterLayer(ABC):
                     disambiguation_prompt,
                     [self.topic_names[i] for i in topic_indices],
                     extract_topic_names_function=(
-                        self.prompt_template["extract_topic_names"]
+                        self.prompt_template["disambiguate_topics"][
+                            "extract_topic_names"
+                        ]
                         if self.prompt_template
                         else default_extract_topic_names
                     ),
                     get_topic_names_regex=(
-                        self.prompt_template.get(
+                        self.prompt_template["disambiguate_topics"].get(
                             "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
                         )
                         if self.prompt_template
@@ -322,12 +324,14 @@ class ClusterLayer(ABC):
                         for topic_indices in self.dismbiguation_topic_indices
                     ],
                     extract_topic_names_function=(
-                        self.prompt_template["extract_topic_names"]
+                        self.prompt_template["disambiguate_topics"][
+                            "extract_topic_names"
+                        ]
                         if self.prompt_template
                         else default_extract_topic_names
                     ),
                     get_topic_names_regex=(
-                        self.prompt_template.get(
+                        self.prompt_template["disambiguate_topics"].get(
                             "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
                         )
                         if self.prompt_template
@@ -493,7 +497,7 @@ class ClusterLayerText(ClusterLayer):
                         topic_extraction_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
-                            else lambda json_response: json_response["topic_name"]
+                            else lambda json_response: str(json_response["topic_name"])
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
@@ -581,7 +585,9 @@ class ClusterLayerText(ClusterLayer):
                             topic_extraction_function=(
                                 self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
-                                else lambda json_response: json_response["topic_name"]
+                                else lambda json_response: str(
+                                    json_response["topic_name"]
+                                )
                             ),
                             get_topic_name_regex=(
                                 self.prompt_template["layer"].get(
@@ -608,7 +614,7 @@ class ClusterLayerText(ClusterLayer):
                         extract_topic_name_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
-                            else lambda json_response: json_response["topic_name"]
+                            else lambda json_response: str(json_response["topic_name"])
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
@@ -946,17 +952,22 @@ class ClusterLayerSummaryText(ClusterLayerText):
                             llm.generate_topic_name(
                                 prompt,
                                 topic_extraction_function=(
-                                    self.prompt_template["extract_topic_name"]
+                                    self.prompt_template["layer"]["extract_topic_name"]
                                     if self.prompt_template
-                                    else None
+                                    else lambda json_response: (
+                                        json_response["topic_name"],
+                                        json_response["topic_summary"],
+                                        json_response["topic_explanation"],
+                                    )
                                 ),
                                 get_topic_name_regex=(
-                                    self.prompt_template.get(
+                                    self.prompt_template["layer"].get(
                                         "get_topic_name_regex", GET_TOPIC_NAME_REGEX
                                     )
                                     if self.prompt_template
                                     else GET_TOPIC_NAME_REGEX
                                 ),
+                                max_tokens=2048,
                             )
                             if isinstance(prompt, dict)
                             or not prompt.startswith("[!SKIP!]: ")
@@ -984,15 +995,20 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 llm.generate_topic_names(
                     [prompt for _, prompt in prompts_for_llm],
                     extract_topic_name_function=(
-                        self.prompt_template["extract_topic_name"]
+                        self.prompt_template["layer"]["extract_topic_name"]
                         if self.prompt_template
-                        else None
+                        else lambda json_response: (
+                            json_response["topic_name"],
+                            json_response["topic_summary"],
+                            json_response["topic_explanation"],
+                        )
                     ),
                     get_topic_name_regex=(
-                        self.prompt_template.get("get_topic_name_regex", None)
+                        self.prompt_template["layer"].get("get_topic_name_regex", None)
                         if self.prompt_template
                         else None
                     ),
+                    max_tokens=2048,
                 )
             )
             llm_result_index = 0
@@ -1001,7 +1017,10 @@ class ClusterLayerSummaryText(ClusterLayerText):
             self.topic_explanations = []
             for index, prompt in enumerate(self.prompts):
                 if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
-                    name, summary, explanation = llm_results[llm_result_index]
+                    if llm_results[llm_result_index] == "":
+                        name, summary, explanation = "", "", ""
+                    else:
+                        name, summary, explanation = llm_results[llm_result_index]
                     self.topic_names.append(name)
                     self.topic_summaries.append(summary)
                     self.topic_explanations.append(explanation)
@@ -1048,7 +1067,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         llm.generate_topic_name(
                             prompt,
                             topic_extraction_function=(
-                                self.prompt_template["extract_topic_name"]
+                                self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
                                 else lambda json_response: json_response["topic_name"]
                             ),
@@ -1075,12 +1094,12 @@ class ClusterLayerSummaryText(ClusterLayerText):
                     llm.generate_topic_names(
                         selected_prompts,
                         extract_topic_name_function=(
-                            self.prompt_template["extract_topic_name"]
+                            self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
                             else lambda json_response: json_response["topic_name"]
                         ),
                         get_topic_name_regex=(
-                            self.prompt_template.get(
+                            self.prompt_template["layer"].get(
                                 "get_topic_name_regex", GET_TOPIC_NAME_REGEX
                             )
                             if self.prompt_template
@@ -1096,7 +1115,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                     "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
                 )
 
-        return self.topic_names
+        return self.topic_names, self.topic_summaries, self.topic_explanations
 
     def make_subtopics(
         self,

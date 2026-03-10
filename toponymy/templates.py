@@ -160,7 +160,7 @@ The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specifi
 where SCORE is a value in the range 0 to 1.
 """
         ),
-        "extract_topic_name": lambda json_response: json_response["topic_name"],
+        "extract_topic_name": lambda json_response: str(json_response["topic_name"]),
         "get_topic_name_regex": GET_TOPIC_NAME_REGEX,
     },
     "disambiguate_topics": {
