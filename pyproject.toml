@@ -41,9 +41,9 @@ Homepage = "https://github.com/TutteInstitute/toponymy"
 
 [tool.pytest.ini_options]
 markers = [
-    "canary: marks tests as canary tests that make live API calls"
+    "external: marks tests that make live external API calls"
 ]
-addopts = "-m 'not canary'"
+addopts = "-m 'not external'"
 
 [tool.setuptools]
 zip-safe = false
