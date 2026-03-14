@@ -119,6 +119,7 @@ stages:
         parameters:
           pytestMarker: external
           includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
+          showCapture: 'stdout'
 
   - stage: BuildPublishArtifact
     dependsOn: RunAllTests

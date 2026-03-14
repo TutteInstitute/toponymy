@@ -364,7 +364,7 @@ def test_openai_connectivity_canary():
     """
     Canary test to verify live connectivity to OpenAI API. Tests the default parameters.
     """
-    namer = OpenAINamer(api_key='badapikey')#os.getenv("OPENAI_API_KEY"))
+    namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
     result = namer.connectivity_status()
     assert result["success"], (
         f"Canary test failed for OpenAI:\n"
