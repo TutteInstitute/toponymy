@@ -11,7 +11,10 @@ from toponymy.templates import (
 )
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
+from dataclasses import dataclass
+from typing import Generic, Optional, TypeVar
+
 
 import re
 import os
@@ -23,7 +26,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+T = TypeVar("T")
 
+
+
+@dataclass
+class CallResult(Generic[T]):
+    value: Optional[T] = None
+    error: Optional[Exception] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 class InvalidLLMInputError(ValueError):
     """A custom exception for invalid LLM input. In these cases we do not want to retry, as the input will not change."""
@@ -47,6 +61,100 @@ def _should_retry(e: Exception) -> bool:
         return False
     return True
 
+class LLMErrorHandlingMixin:
+    """
+    A mixin class that provides standardized error handling for LLM wrappers.
+
+    This mixin centralizes error detection and safe async call patterns,
+    ensuring consistent behavior across synchronous and asynchronous LLM wrappers.
+    Subclasses should declare FAIL_FAST_EXCEPTIONS to specify which exceptions
+    should trigger an immediate failure without retrying.
+
+    Attributes:
+    -----------
+    FAIL_FAST_EXCEPTIONS: tuple
+        A tuple of exception types that should trigger an immediate failure without
+        retrying. These are typically configuration or provider-level errors such as
+        invalid API keys, insufficient permissions, or model not found errors.
+        Default is an empty tuple, meaning no exceptions are treated as fail-fast.
+    """
+
+    FAIL_FAST_EXCEPTIONS: tuple = ()
+
+    def _handle_exception(self, e: Exception) -> None:
+        if isinstance(e, InvalidLLMInputError):
+            raise
+
+        if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
+            raise FailFastLLMError(
+                message=(
+                    f"Non-retryable error for model "
+                    f"'{getattr(self, 'model', '<unknown>')}': {e}"
+                ),
+                original_exception=e,
+            ) from None
+
+        raise
+
+    async def _call_with_retry_result(
+        self,
+        fn,
+        *args,
+        result_extractor=None,
+        **kwargs,
+    ) -> CallResult:
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_random_exponential(multiplier=1, min=1, max=10),
+                retry=retry_if_exception(_should_retry),
+                reraise=True,
+            ):
+                with attempt:
+                    response = await fn(*args, **kwargs)
+                    value = (
+                        result_extractor(response)
+                        if result_extractor is not None
+                        else response
+                    )
+                    return CallResult(value=value)
+        except Exception as e:
+            if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
+                self._handle_exception(e)
+
+            # For other exceptions, we log a warning and return the error in the CallResult for potential handling by the caller.
+            logger.warning(
+                "%s exhausted retries for LLM call (%s): %s",
+                self.__class__.__name__,
+                type(e).__name__,
+                str(e)[:200],
+            )
+            return CallResult(error=e)
+
+    def _raise_fail_fast_from_batch_error(self, error) -> None:
+        """
+        Handle a provider-level error surfaced from a batch response item.
+
+        Some provider batch APIs return errors inline as response fields rather than raising.
+        This method provides a hook for subclasses to inspect those inline errors
+        and raise FailFastLLMError if appropriate.
+
+        A subclass that uses a batch API should override this method to handle
+        provider-specific error formats. Subclasses that do not use a batch API
+        do not need to override this method.
+
+        Parameters:
+        -----------
+        error:
+            The provider-specific error object from a batch response item.
+            If None, the method returns immediately.
+        """
+        if error is None:
+            return
+        warn(
+            f"{self.__class__.__name__} received a batch item error but did not "
+            f"override _raise_fail_fast_from_batch_error: {error}"
+        )
 
 def repair_json_string_backslashes(s: str) -> str:
     """
@@ -94,7 +202,7 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
     return result
 
 
-class LLMWrapper(ABC):
+class LLMWrapper(LLMErrorHandlingMixin, ABC):
     FAIL_FAST_EXCEPTIONS: tuple = ()
 
     @abstractmethod
@@ -119,12 +227,7 @@ class LLMWrapper(ABC):
         try:
             return self._call_llm(prompt, temperature, max_tokens)
         except Exception as e:
-            if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
-                raise FailFastLLMError(
-                    message=f"Non-retryable error for model '{self.model}': {e}",
-                    original_exception=e
-                ) from None
-            raise  # other exceptions propagate as-is, should also specify retry exceptions
+            self._handle_exception(e)
 
     def _safe_call_llm_with_system_prompt(
         self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
@@ -134,12 +237,7 @@ class LLMWrapper(ABC):
                 system_prompt, user_prompt, temperature, max_tokens
             )
         except Exception as e:
-            if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
-                raise FailFastLLMError(
-                    message=f"Non-retryable error for model '{self.model}': {e}",
-                    original_exception=e
-                ) from None
-            raise  # other exceptions propagate as-is, should also specify retry exceptions
+            self._handle_exception(e)
 
     @staticmethod
     def _topic_name_error_callback(retry_state):
@@ -153,7 +251,7 @@ class LLMWrapper(ABC):
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
+        wait=wait_random_exponential(multiplier=1, min=4, max=10),
         retry_error_callback=_topic_name_error_callback,
         retry=retry_if_exception(_should_retry),
     )
@@ -205,7 +303,7 @@ class LLMWrapper(ABC):
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
+        wait=wait_random_exponential(multiplier=1, min=4, max=10),
         retry_error_callback=_topic_cluster_names_error_callback,
         retry=retry_if_exception(_should_retry),
     )
@@ -316,7 +414,7 @@ class LLMWrapper(ABC):
         return result
 
 
-class AsyncLLMWrapper(ABC):
+class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
 
     @abstractmethod
     async def _call_llm_batch(
@@ -373,13 +471,25 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response in responses:
-            if not response:
+            if isinstance(response, CallResult):
+                if not response.ok:
+                    warn(
+                        f"Failed to generate topic name with "
+                        f"{self.__class__.__name__}: {response.error}"
+                    )
+                    results.append("")
+                    continue
+                response_text = response.value
+            else:
+                response_text = response
+
+            if not response_text:
                 results.append("")
                 continue
 
             # Attempt to parse the response
             try:
-                topic_name_info = llm_output_to_result(response, get_topic_name_regex)
+                topic_name_info = llm_output_to_result(response_text, get_topic_name_regex)
                 results.append(str(extract_topic_name_function(topic_name_info)))
             except Exception as e:
                 warn(
@@ -426,9 +536,24 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response, old_names in zip(responses, old_names_list):
+            if isinstance(response, CallResult):
+                if not response.ok:
+                    warn(
+                        f"Failed to generate cluster names with "
+                        f"{self.__class__.__name__}: {response.error}"
+                    )
+                    results.append(old_names)
+                    continue
+                response_text = response.value
+            else:
+                response_text = response
+
+            if not response_text:
+                results.append(old_names)
+                continue
             results.append(
                 self._parse_cluster_response(
-                    response,
+                    response_text,
                     old_names,
                     extract_topic_names_function,
                     get_topic_names_regex,
@@ -2266,6 +2391,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
 
         def __init__(
             self,
@@ -2290,24 +2416,24 @@ try:
             self.semaphore = asyncio.Semaphore(max_concurrent_requests)
 
         async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int
+        ) -> CallResult[str]:
             """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        response_format={"type": "json_object"},
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"OpenAI API call failed: {str(e)[:100]}...")
-                return ""
+            async with self.semaphore:
+                return await self._call_with_retry_result(
+                    self.client.chat.completions.create,
+                    model=self.model,
+                    messages=[
+                        {"role": "user", "content": prompt + self.extra_prompting}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    result_extractor=lambda r: r.choices[0].message.content,
+                )
 
         async def _call_single_llm_with_system(
             self,
@@ -2315,31 +2441,28 @@ try:
             user_prompt: str,
             temperature: float,
             max_tokens: int,
-        ) -> str:
+        ) -> CallResult[str]:
             """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        response_format={"type": "json_object"},
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"OpenAI API call failed: {str(e)[:100]}...")
-                return ""
+            async with self.semaphore:
+                return await self._call_with_retry_result(
+                    self.client.chat.completions.create,
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": user_prompt + self.extra_prompting,
+                        },
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                    result_extractor=lambda r: r.choices[0].message.content,
+                )
 
         async def _call_llm_batch(
             self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
+        ) -> List[CallResult[str]]:
             """Process a batch of prompts concurrently."""
             tasks = [
                 self._call_single_llm(prompt, temperature, max_tokens)
@@ -2353,7 +2476,7 @@ try:
             user_prompts: List[str],
             temperature: float,
             max_tokens: int,
-        ) -> List[str]:
+        ) -> List[CallResult[str]]:
             """Process a batch of prompts with system prompts concurrently."""
             if len(system_prompts) != len(user_prompts):
                 raise ValueError(
