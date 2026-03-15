@@ -8,13 +8,15 @@ import pytest_asyncio
 
 from toponymy.llm_wrappers import (
     AsyncCohereNamer, AsyncAnthropicNamer, BatchAnthropicNamer, AsyncOpenAINamer, AsyncAzureAINamer,
-    AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether
+    AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether, FailFastLLMError
 )
 from toponymy.tests.test_llm_wrappers import (
     MockLLMResponse, VALID_TOPIC_NAME_RESPONSE, VALID_CLUSTER_NAMES_RESPONSE,
     MALFORMED_JSON_RESPONSE, MALFORMED_MAPPING_RESPONSE, validate_topic_name,
     validate_cluster_names
 )
+from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
+
 
 
 @pytest.fixture
@@ -387,6 +389,79 @@ async def test_async_openai_generate_topic_cluster_names_malformed_mapping(async
     assert len(result) == 1
     validate_cluster_names(result[0])
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", OPENAI_FAIL_FAST)
+async def test_async_openai_generate_topic_names_fail_fast_raises(async_openai_wrapper, error_class):
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=make_openai_error(error_class)
+    )
+
+    with pytest.raises(FailFastLLMError):
+        await async_openai_wrapper.generate_topic_names(["test prompt"])
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", OPENAI_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_openai_generate_topic_names_retryable_returns_empty(
+    async_openai_wrapper,
+    error_class,
+):
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    result = await async_openai_wrapper.generate_topic_names(["test prompt"])
+
+    assert result == [""]
+    assert async_openai_wrapper.client.chat.completions.create.call_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", OPENAI_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_openai_generate_topic_cluster_names_retryable_returns_old_names(
+    async_openai_wrapper,
+    mock_data,
+    error_class,
+):
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    result = await async_openai_wrapper.generate_topic_cluster_names(
+        ["test prompt"],
+        [mock_data["old_names"]],
+    )
+
+    assert result == [mock_data["old_names"]]
+
+@pytest.mark.asyncio
+async def test_async_openai_retries_per_item_not_whole_batch( async_openai_wrapper, mock_data):
+    good_response = MockAsyncResponse.create_openai_response( mock_data["valid_topic_name"] )
+    error_class = OPENAI_RETRYABLE[0]
+    call_counts = {"prompt1": 0, "prompt2": 0}
+    async def mock_create(*args, **kwargs): 
+        prompt_text = kwargs["messages"][0]["content"]
+        call_counts[prompt_text] += 1
+        if prompt_text == "prompt1":
+            return good_response
+        elif prompt_text == "prompt2":
+            raise make_openai_error(error_class)
+        raise AssertionError(f"Unexpected prompt: {prompt_text}")
+
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=mock_create
+    )
+    with pytest.warns(UserWarning, match="Failed to generate topic name"):
+        result = await async_openai_wrapper.generate_topic_names(
+            ["prompt1", "prompt2"]
+        )
+
+    assert len(result) == 2
+    validate_topic_name(result[0])
+    assert result[1] == ""
+    assert call_counts["prompt1"] == 1
+    assert call_counts["prompt2"] == 3
 
 # AsyncAzureAI Tests
 @pytest_asyncio.fixture
