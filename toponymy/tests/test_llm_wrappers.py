@@ -414,17 +414,17 @@ def test_openai_generate_cluster_names_success_on_malformed_mapping(openai_wrapp
     validate_cluster_names(result)
 
 def test_openai_generate_topic_name_failure(openai_wrapper):
-    openai_wrapper.llm.messages.create = Mock(side_effect=Exception("API Error"))
+    openai_wrapper.llm.chat.completions.create = Mock(side_effect=Exception("API Error"))
     result = openai_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
 def test_openai_generate_topic_name_failure_malformed_json(openai_wrapper, mock_data):
-    openai_wrapper.llm.messages.create = Mock(mock_data["malformed_json"])
+    openai_wrapper.llm.chat.completions.create = Mock(mock_data["malformed_json"])
     result = openai_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
 def test_openai_generate_cluster_names_failure(openai_wrapper, mock_data):
-    openai_wrapper.llm.messages.create = Mock(side_effect=Exception("API Error"))
+    openai_wrapper.llm.chat.completions.create = Mock(side_effect=Exception("API Error"))
     result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     assert result == mock_data["old_names"]
 

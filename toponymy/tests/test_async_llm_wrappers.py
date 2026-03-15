@@ -436,6 +436,7 @@ async def test_async_openai_generate_topic_cluster_names_retryable_returns_old_n
     assert result == [mock_data["old_names"]]
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
 async def test_async_openai_retries_per_item_not_whole_batch( async_openai_wrapper, mock_data):
     good_response = MockAsyncResponse.create_openai_response( mock_data["valid_topic_name"] )
     error_class = OPENAI_RETRYABLE[0]
@@ -452,16 +453,44 @@ async def test_async_openai_retries_per_item_not_whole_batch( async_openai_wrapp
     async_openai_wrapper.client.chat.completions.create = AsyncMock(
         side_effect=mock_create
     )
-    with pytest.warns(UserWarning, match="Failed to generate topic name"):
-        result = await async_openai_wrapper.generate_topic_names(
-            ["prompt1", "prompt2"]
-        )
+    result = await async_openai_wrapper.generate_topic_names(
+        ["prompt1", "prompt2"]
+    )
 
     assert len(result) == 2
     validate_topic_name(result[0])
     assert result[1] == ""
     assert call_counts["prompt1"] == 1
     assert call_counts["prompt2"] == 3
+
+@pytest.mark.asyncio
+async def test_async_openai_generate_topic_names_retry_exhausted_warns(async_openai_wrapper):
+    error_class = OPENAI_RETRYABLE[0]
+
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    with pytest.warns(UserWarning, match="Failed to generate topic name"):
+        result = await async_openai_wrapper.generate_topic_names(["test prompt"])
+
+    assert result == [""]
+
+@pytest.mark.asyncio
+async def test_async_openai_generate_topic_cluster_names_retry_exhausted_warns(async_openai_wrapper, mock_data):
+    error_class = OPENAI_RETRYABLE[0]
+
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    with pytest.warns(UserWarning):
+        result = await async_openai_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert result == [mock_data["old_names"]]
 
 # AsyncAzureAI Tests
 @pytest_asyncio.fixture
