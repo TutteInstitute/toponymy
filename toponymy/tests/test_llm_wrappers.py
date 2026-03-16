@@ -5,7 +5,7 @@ import json
 import os
 from typing import List, Optional
 
-from toponymy.llm_wrappers import repair_json_string_backslashes, FailFastLLMError
+from toponymy.llm_wrappers import LLMWrapper, repair_json_string_backslashes, FailFastLLMError
 from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
 from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
 
@@ -156,6 +156,83 @@ def mock_data():
         "malformed_json": MALFORMED_JSON_RESPONSE,
         "recoverable_malformed_json": RECOVERABLE_MALFORMED_JSON_RESPONSE,
     }
+
+# General LLMWrapper tests
+class DummySingleWrapper(LLMWrapper):
+    model = "dummy-model"
+
+    def _call_llm(self, prompt, temperature, max_tokens):
+        return "single-ok"
+
+    def _call_llm_with_system_prompt(
+        self, system_prompt, user_prompt, temperature, max_tokens
+    ):
+        return "single-system-ok"
+
+
+class DummyFailureWrapper(LLMWrapper):
+    model = "dummy-model"
+
+    def _call_llm(self, prompt, temperature, max_tokens):
+        raise RuntimeError("error")
+
+    def _call_llm_with_system_prompt(
+        self, system_prompt, user_prompt, temperature, max_tokens
+    ):
+        raise RuntimeError("error")
+
+
+def test_sync_connectivity_status_uses_single_call():
+    wrapper = DummySingleWrapper()
+
+    result = wrapper.connectivity_status()
+
+    assert result["success"] is True
+    assert result["response"] == "single-ok"
+    assert result["wrapper"] == "DummySingleWrapper"
+    assert result["model"] == "dummy-model"
+
+
+def test_sync_connectivity_status_uses_single_call_with_system():
+    wrapper = DummySingleWrapper()
+
+    result = wrapper.connectivity_status(
+        prompt="user prompt",
+        system_prompt="system prompt",
+    )
+
+    assert result["success"] is True
+    assert result["response"] == "single-system-ok"
+    assert result["wrapper"] == "DummySingleWrapper"
+    assert result["model"] == "dummy-model"
+
+
+def test_sync_connectivity_status_failure():
+    wrapper = DummyFailureWrapper()
+
+    result = wrapper.connectivity_status()
+
+    assert result["success"] is False
+    assert result["response"] is None
+    assert result["error_type"] == "RuntimeError"
+    assert result["error_message"] == "error"
+    assert isinstance(result["original_exception"], RuntimeError)
+
+
+def test_sync_test_llm_connectivity_success():
+    wrapper = DummySingleWrapper()
+
+    result = wrapper.test_llm_connectivity()
+
+    assert result == "single-ok"
+
+
+def test_sync_test_llm_connectivity_failure():
+    wrapper = DummyFailureWrapper()
+
+    result = wrapper.test_llm_connectivity()
+
+    assert result == "<error>"
 
 # LlamaCpp Tests
 @pytest.fixture
