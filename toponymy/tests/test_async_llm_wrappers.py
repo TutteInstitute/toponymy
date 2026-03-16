@@ -428,7 +428,9 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
 # AsyncOpenAI Tests
 @pytest_asyncio.fixture
 async def async_openai_wrapper():
-    with patch('openai.AsyncOpenAI'):
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch('openai.AsyncOpenAI', return_value=mock_client):
         wrapper = AsyncOpenAINamer(api_key="dummy")
         try:
             yield wrapper
