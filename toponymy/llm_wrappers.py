@@ -100,7 +100,6 @@ class LLMErrorHandlingMixin:
         self,
         fn,
         *args,
-        result_extractor=None,
         **kwargs,
     ) -> CallResult:
         try:
@@ -111,12 +110,7 @@ class LLMErrorHandlingMixin:
                 reraise=True,
             ):
                 with attempt:
-                    response = await fn(*args, **kwargs)
-                    value = (
-                        result_extractor(response)
-                        if result_extractor is not None
-                        else response
-                    )
+                    value = await fn(*args, **kwargs)
                     return CallResult(value=value)
         except Exception as e:
             if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
@@ -392,7 +386,7 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
 
     def connectivity_status(
        self,
-        prompt="Identify yourself and explain that you will be providing topic names for  in JSON format",
+        prompt="Identify yourself and explain that you will be providing topic names for clusters in JSON format",
     ) -> dict:
         result = {
             "success": False,
@@ -416,29 +410,189 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
 
 class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
 
-    @abstractmethod
+    async def _call_single_llm(
+        self, prompt: str, temperature: float, max_tokens: int
+    ) -> str:
+        """
+        Execute a single provider request for one user prompt and return the raw
+        text result from the model.
+
+        Subclasses should implement this method when their provider interaction
+        follows the common pattern of issuing one request per prompt.
+
+        This method should contain only provider-specific mechanics, such as:
+            - constructing the provider request
+            - calling the async SDK/API
+            - extracting the returned text from the provider response
+            - applying provider-specific concurrency controls (e.g., semaphores)
+
+        This method should NOT implement:
+            - retry logic
+            - fail-fast handling
+            - fallback behavior
+            - batching or orchestration across prompts
+
+        Those responsibilities are handled by the base class through
+        `_call_with_retry_result` and the batch orchestration methods.
+
+        Override this method for most new async wrappers.
+
+        To support true provider-managed batch jobs, subclasses may
+        leave this unimplemented and instead override `_call_llm_batch` directly.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement either _call_single_llm "
+            f"or override _call_llm_batch"
+        )
+
+
+    async def _call_single_llm_with_system(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """
+        Execute a single provider request for one system prompt + user prompt pair
+        and return the raw text result from the model.
+
+        Subclasses should implement this method when the provider supports system
+        prompts and uses a one-request-per-prompt execution model.
+
+        This method should contain only provider-specific mechanics, such as:
+            - formatting the provider request with system and user prompts
+            - calling the async SDK/API
+            - extracting the returned text from the provider response
+            - applying provider-specific concurrency controls (e.g., semaphores)
+
+        This method should NOT implement:
+            - retry logic
+            - fail-fast handling
+            - fallback behavior
+            - batching or orchestration across prompts
+
+        Those behaviors are handled by the base class through
+        `_call_with_retry_result` and `_call_llm_with_system_prompt_batch`.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement either "
+            f"_call_single_llm_with_system or override "
+            f"_call_llm_with_system_prompt_batch"
+        )
+
     async def _call_llm_batch(
         self, prompts: List[str], temperature: float, max_tokens: int
-    ) -> List[str]:
+    ) -> List[CallResult[str]]:
         """
-        Call the LLM with a batch of prompts and temperature.
-        This method should be implemented by subclasses.
-        """
-        pass
+        Process a batch of prompts and return one CallResult per prompt.
 
-    @abstractmethod
+        The default implementation wraps `_call_single_llm` with retry and error
+        handling via `_call_with_retry_result` and runs all prompts concurrently
+        using `asyncio.gather`.
+
+        This produces the standard async behavior used by most wrappers:
+
+            - retryable errors are retried per prompt
+            - fail-fast errors abort the entire batch/layer
+            - exhausted retryable errors return CallResult(error=...)
+            - successful calls return CallResult(value=<text>)
+
+        Subclasses normally should NOT override this method if their provider interaction model
+        is "one async request per prompt". Instead, implement `_call_single_llm`
+        and inherit this default batching behavior.
+
+        Override this method when using a fundamentally different batch
+        model than concurrent single-call execution, such as:
+
+            - provider-managed batch job APIs
+            - bulk endpoints accepting multiple prompts in one request
+            - server-side batching that must be coordinated as a unit
+
+        In the current architecture, such providers may still inherit from
+        AsyncLLMWrapper and override this method directly.
+
+        If a dedicated batch wrapper base class (for example LLMBatchWrapper) is
+        introduced in the future, these implementations may move there instead.
+
+        Note:
+            Some legacy wrapper implementations override `_call_llm_batch`
+            directly even with a "one async request per prompt". Those implementations
+            remain supported and will take precedence over this default method.
+        """
+        tasks = [
+            self._call_with_retry_result(
+                self._call_single_llm,
+                prompt,
+                temperature,
+                max_tokens,
+            )
+            for prompt in prompts
+        ]
+        return await asyncio.gather(*tasks)
+
     async def _call_llm_with_system_prompt_batch(
         self,
         system_prompts: List[str],
         user_prompts: List[str],
         temperature: float,
         max_tokens: int,
-    ) -> List[str]:
+    ) -> List[CallResult[str]]:
         """
-        Call the LLM with batches of system prompts and user prompts.
-        This method should be implemented by subclasses.
+        Process a batch of system prompt + user prompt pairs and return one CallResult
+        per pair.
+
+        The default implementation wraps `_call_single_llm_with_system` with retry and
+        error handling via `_call_with_retry_result` and executes all prompt pairs
+        concurrently using `asyncio.gather`.
+
+        This produces the standard async behavior used by most wrappers:
+
+            - retryable errors are retried per prompt pair
+            - fail-fast errors abort the entire batch/layer
+            - exhausted retryable errors return CallResult(error=...)
+            - successful calls return CallResult(value=<text>)
+
+        Subclasses normally should NOT override this method if their provider model is
+        "one async request per prompt pair". Instead, implement
+        `_call_single_llm_with_system` and inherit this default batching behavior.
+
+        Override this method when the provider uses a fundamentally different batch
+        model than concurrent single-call execution, such as:
+
+            - provider-managed batch job APIs
+            - bulk endpoints accepting multiple prompt pairs in one request
+            - server-side batching that must be coordinated as a unit
+
+        In the current architecture, such providers may still inherit from
+        AsyncLLMWrapper and override this method directly.
+
+        If a dedicated batch wrapper base class (for example LLMBatchWrapper) is
+        introduced in the future, these implementations may move there instead.
+
+        Note:
+            Some legacy wrapper implementations override `_call_llm_with_system_prompt_batch`
+            with a "one async request per prompt pair" model. Those implementations remain
+            supported and will take precedence over this default method.
         """
-        pass
+        if len(system_prompts) != len(user_prompts):
+            raise ValueError(
+                "Number of system prompts must match number of user prompts"
+            )
+
+        tasks = [
+            self._call_with_retry_result(
+                self._call_single_llm_with_system,
+                sys_prompt,
+                user_prompt,
+                temperature,
+                max_tokens,
+            )
+            for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+        ]
+
+        return await asyncio.gather(*tasks)
+
 
     async def generate_topic_names(
         self,
@@ -2420,20 +2574,19 @@ try:
             prompt: str,
             temperature: float,
             max_tokens: int
-        ) -> CallResult[str]:
+        ) -> str:
             """Call the LLM for a single prompt."""
             async with self.semaphore:
-                return await self._call_with_retry_result(
-                    self.client.chat.completions.create,
+                response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "user", "content": prompt + self.extra_prompting}
+                        {"role": "user", "content": prompt + self.extra_prompting},
                     ],
                     temperature=temperature,
                     max_tokens=max_tokens,
                     response_format={"type": "json_object"},
-                    result_extractor=lambda r: r.choices[0].message.content,
                 )
+            return response.choices[0].message.content
 
         async def _call_single_llm_with_system(
             self,
@@ -2441,11 +2594,10 @@ try:
             user_prompt: str,
             temperature: float,
             max_tokens: int,
-        ) -> CallResult[str]:
+        ) -> str:
             """Call the LLM for a single prompt with system prompt."""
             async with self.semaphore:
-                return await self._call_with_retry_result(
-                    self.client.chat.completions.create,
+                response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -2457,39 +2609,8 @@ try:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     response_format={"type": "json_object"},
-                    result_extractor=lambda r: r.choices[0].message.content,
                 )
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[CallResult[str]]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[CallResult[str]]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
+                return response.choices[0].message.content
 
         async def close(self):
             """Close the client connection."""
