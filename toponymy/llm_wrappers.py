@@ -10,11 +10,9 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Generic, TypeVar
 from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
 from dataclasses import dataclass
-from typing import Generic, Optional, TypeVar
-
 
 import re
 import os
