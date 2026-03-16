@@ -899,6 +899,12 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
 
         return result
 
+    async def close(self) -> None:
+        """
+        Optional cleanup hook for LLM wrappers that manage network clients or connection pools.
+        """
+        pass
+
 class LLMWrapperImportError(ImportError):
     """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
 

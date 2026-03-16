@@ -404,14 +404,34 @@ def openai_wrapper():
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 def test_openai_connectivity_canary():
     """
-    Canary test to verify live connectivity to OpenAI API. Tests the default parameters.
+    Canary test to verify live connectivity to OpenAI API. Tests the plain prompt path.
     """
     namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
     result = namer.connectivity_status()
     assert result["success"], (
-        f"Canary test failed for OpenAI:\n"
+        f"Sync plain canary test failed for OpenAI:\n"
         f"  Error: {result['error_type']}: {result['error_message']}"
     )
+
+@pytest.mark.external
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
+def test_openai_connectivity_canary_sync_system():
+    """
+    Canary test to verify live sync connectivity to the OpenAI API
+    using the system prompt path.
+    """
+    namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Sync system canary failed for OpenAI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
 
 def test_openai_llm_connectivity_status_success(openai_wrapper):
     with patch.object(openai_wrapper, '_call_llm', return_value="test response"):

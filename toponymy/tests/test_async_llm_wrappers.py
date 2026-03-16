@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 import json
@@ -428,12 +430,48 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
 async def async_openai_wrapper():
     with patch('openai.AsyncOpenAI'):
         wrapper = AsyncOpenAINamer(api_key="dummy")
-        yield wrapper
-        # Clean up any resources
         try:
+            yield wrapper
+        finally:
             await wrapper.close()
-        except:
-            pass
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
+async def test_openai_connectivity_canary_async_plain():
+    """
+    Canary test verifying live async connectivity to the OpenAI API
+    using the plain prompt path.
+    """
+    namer = AsyncOpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for OpenAI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
+async def test_openai_connectivity_canary_async_system():
+    """
+    Canary test verifying live async connectivity to the OpenAI API
+    using the system prompt path.
+    """
+    namer = AsyncOpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for OpenAI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
 
 
 @pytest.mark.asyncio
