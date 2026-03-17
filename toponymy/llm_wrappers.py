@@ -96,7 +96,7 @@ class LLMErrorHandlingMixin:
 
         raise
 
-    async def _call_with_retry_result(
+    async def _safe_call_with_retry_result(
         self,
         fn,
         *args,
@@ -433,7 +433,7 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
             - batching or orchestration across prompts
 
         Those responsibilities are handled by the base class through
-        `_call_with_retry_result` and the batch orchestration methods.
+        `_safe_call_with_retry_result` and the batch orchestration methods.
 
         Override this method for most new async wrappers.
 
@@ -473,7 +473,7 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
             - batching or orchestration across prompts
 
         Those behaviors are handled by the base class through
-        `_call_with_retry_result` and `_call_llm_with_system_prompt_batch`.
+        `_safe_call_with_retry_result` and `_call_llm_with_system_prompt_batch`.
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement either "
@@ -488,7 +488,7 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
         Process a batch of prompts and return one CallResult per prompt.
 
         The default implementation wraps `_call_single_llm` with retry and error
-        handling via `_call_with_retry_result` and runs all prompts concurrently
+        handling via `_safe_call_with_retry_result` and runs all prompts concurrently
         using `asyncio.gather`.
 
         This produces the standard async behavior used by most wrappers:
@@ -521,7 +521,7 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
             remain supported and will take precedence over this default method.
         """
         tasks = [
-            self._call_with_retry_result(
+            self._safe_call_with_retry_result(
                 self._call_single_llm,
                 prompt,
                 temperature,
@@ -543,7 +543,7 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
         per pair.
 
         The default implementation wraps `_call_single_llm_with_system` with retry and
-        error handling via `_call_with_retry_result` and executes all prompt pairs
+        error handling via `_safe_call_with_retry_result` and executes all prompt pairs
         concurrently using `asyncio.gather`.
 
         This produces the standard async behavior used by most wrappers:
@@ -581,7 +581,7 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
             )
 
         tasks = [
-            self._call_with_retry_result(
+            self._safe_call_with_retry_result(
                 self._call_single_llm_with_system,
                 sys_prompt,
                 user_prompt,
