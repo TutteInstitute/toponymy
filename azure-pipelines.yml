@@ -1,14 +1,16 @@
-# Trigger a build when there is a push to the main branch or a tag starts with release-
+# Note that external tests will run on manual triggers.
 #
 # Ollama Integration Testing:
-# To enable Ollama integration tests, create a pipeline variable named 'INSTALL_OLLAMA' 
+# To enable Ollama integration tests, create a pipeline variable named 'INSTALL_OLLAMA'
 # and set its value to 'true'. This will:
 #   1. Install Ollama on Linux agents
-#   2. Download a small model (qwen2.5:0.5b preferred, ~400MB)  
+#   2. Download a small model (qwen2.5:0.5b preferred, ~400MB)
 #   3. Run real LLM integration tests instead of mocks
 #   4. Add ~2-5 minutes to build time
 # If INSTALL_OLLAMA is not set or is 'false', tests use mock-based coverage.
 #
+
+# Trigger a build when there is a push to the main branch or a tag starts with release-
 trigger:
   branches:
     include:
@@ -26,6 +28,15 @@ pr:
     exclude:
     - doc/*
     - README.rst
+
+# Trigger nightly external tests at 4am UTC every day
+schedules:
+- cron: "0 4 * * *"  # 11pm EST/12am EDT
+  displayName: Nightly external tests to LLMs
+  branches:
+    include:
+    - main
+  always: true  # run even if no code changes
 
 parameters:
   - name: includeReleaseCandidates
@@ -49,182 +60,73 @@ stages:
   - stage: RunAllTests
     displayName: Run test suite
     jobs:
-      - job: run_platform_tests
-        strategy:
-          matrix:
-            # mac_py310:
-            #   imageName: 'macOS-latest'
-            #   python.version: '3.10'
-            linux_py310:
-              imageName: 'ubuntu-latest'
-              python.version: '3.10'
-            # windows_py310:
-            #   imageName: 'windows-latest'
-            #   python.version: '3.10'
-            # mac_py311:
-            #   imageName: 'macOS-latest'
-            #   python.version: '3.11'
-            linux_py311:
-              imageName: 'ubuntu-latest'
-              python.version: '3.11'
-            # windows_py311:
-            #   imageName: 'windows-latest'
-            #   python.version: '3.11'
-            # mac_py312:
-            #   imageName: 'macOS-latest'
-            #   python.version: '3.12'
-            linux_py312:
-              imageName: 'ubuntu-latest'
-              python.version: '3.12'
-            # windows_py312:
-            #   imageName: 'windows-latest'
-            #   python.version: '3.12'
-            # linux_py313:
-            #   imageName: 'ubuntu-latest'
-            #   python.version: '3.13'
-            # windows_py313:
-            #   imageName: 'windows-latest'
-            #   python.version: '3.13'
-            # mac_py313:
-            #   imageName: 'macOS-latest'
-            #   python.version: '3.13'
-        pool:
-          vmImage: $(imageName)
+    - job: Tests
+      pool:
+        vmImage: $(imageName)
+      strategy:
+        matrix:
+          linux_py310:
+            imageName: 'ubuntu-latest'
+            python.version: '3.10'
+          # windows_py310:
+          #   imageName: 'windows-latest'
+          #   python.version: '3.10'
+          # mac_py311:
+          #   imageName: 'macOS-latest'
+          #   python.version: '3.11'
+          linux_py311:
+            imageName: 'ubuntu-latest'
+            python.version: '3.11'
+          # windows_py311:
+          #   imageName: 'windows-latest'
+          #   python.version: '3.11'
+          # mac_py312:
+          #   imageName: 'macOS-latest'
+          #   python.version: '3.12'
+          linux_py312:
+            imageName: 'ubuntu-latest'
+            python.version: '3.12'
+          # windows_py312:
+          #   imageName: 'windows-latest'
+          #   python.version: '3.12'
+          # linux_py313:
+          #   imageName: 'ubuntu-latest'
+          #   python.version: '3.13'
+          # windows_py313:
+          #   imageName: 'windows-latest'
+          #   python.version: '3.13'
+          # mac_py313:
+          #   imageName: 'macOS-latest'
+          #   python.version: '3.13'
+      steps:
+      - template: .azure/templates/run-tests.yml
+        parameters:
+          pytestMarker: 'not external'
+          includeOllama: true
+          includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
 
-        steps:
-        - task: UsePythonVersion@0
-          inputs:
-            versionSpec: '$(python.version)'
-          displayName: 'Use Python $(python.version)'
-
-        - script: |
-            python -m pip install --upgrade pip
-            python -m pip install -U uv
-          displayName: 'Install uv'
-
-        - script: |
-            uv sync --python $(python.version) --extra dev
-          displayName: 'Install dependencies'
-          condition: ${{ eq(parameters.includeReleaseCandidates, false) }}
-
-        - script: |
-            uv sync --python $(python.version) --extra dev --prerelease allow
-          displayName: 'Install dependencies (allow pre-releases)'
-          condition: ${{ eq(parameters.includeReleaseCandidates, true) }}
-
-        - script: |
-            # Optional Ollama setup for integration tests (Linux only)
-            # This is optional - tests will fall back to mocks if Ollama is not available
-            # Set INSTALL_OLLAMA pipeline variable to 'true' to enable Ollama integration tests
-            if [ "$AGENT_OS" = "Linux" ] && [ "${INSTALL_OLLAMA:-false}" = "true" ]; then
-              echo "=== Installing Ollama for integration tests ==="
-              echo "System info:"
-              free -h || echo "free command not available"
-              df -h / || echo "df command not available"
-              echo "Installing Ollama..."
-              
-              # Install Ollama with error handling
-              if curl -fsSL https://ollama.ai/install.sh | sh; then
-                echo "Ollama installed successfully"
-              else
-                echo "Ollama installation failed, will use mock tests"
-                exit 0
-              fi
-              
-              # Check if Ollama is available
-              if command -v ollama >/dev/null 2>&1; then
-                echo "Starting Ollama service in background..."
-                nohup ollama serve > ollama.log 2>&1 &
-                OLLAMA_PID=$!
-                echo "Ollama PID: $OLLAMA_PID"
-                
-                # Wait for service to start with timeout
-                echo "Waiting for Ollama service to be ready..."
-                for i in {1..30}; do
-                  if ollama list >/dev/null 2>&1; then
-                    echo "Ollama service is ready"
-                    break
-                  fi
-                  sleep 1
-                done
-                
-                # Check if service is actually running
-                if ! ollama list >/dev/null 2>&1; then
-                  echo "Ollama service failed to start properly, will use mock tests"
-                  exit 0
-                fi
-                
-                # Try to pull the smallest available model with timeout and fallbacks
-                echo "Attempting to pull a small model for testing..."
-                echo "Available models to try (in priority order): qwen2.5:0.5b, qwen2:0.5b, tinydolphin:1.1b"
-                
-                # Set up timeout and try multiple small models
-                MODEL_PULLED=false
-                for model in "qwen2.5:0.5b" "qwen2:0.5b" "tinydolphin:1.1b" "gemma2:2b"; do
-                  echo "Trying to pull model: $model"
-                  if timeout 300 ollama pull "$model"; then
-                    echo "Successfully pulled model: $model"
-                    MODEL_PULLED=true
-                    break
-                  else
-                    echo "Failed to pull model: $model (timeout or error)"
-                  fi
-                done
-                
-                if [ "$MODEL_PULLED" = "false" ]; then
-                  echo "Could not pull any test model, will use mock tests"
-                else
-                  echo "Model pull successful! Available models:"
-                  ollama list || true
-                  echo "Ollama setup complete - integration tests can run"
-                fi
-              else
-                echo "Ollama command not found after installation, will use mock tests"
-              fi
-            else
-              echo "=== Skipping Ollama installation ==="
-              echo "Reason: INSTALL_OLLAMA not set to 'true' or not on Linux"
-              echo "Tests will use mock-based LLM wrapper coverage"
-              echo "To enable Ollama integration tests, set pipeline variable INSTALL_OLLAMA=true"
-            fi
-          displayName: 'Setup Ollama (optional for integration tests)'
-          condition: eq(variables['Agent.OS'], 'Linux')
-          continueOnError: true  # Never fail the build if Ollama setup fails
-          env:
-            INSTALL_OLLAMA: $(INSTALL_OLLAMA)  # Set this pipeline variable to enable Ollama
-
-        - script: |
-            uv run pytest toponymy/tests --show-capture=no -v --disable-warnings --junitxml=junit/test-results.xml --cov=toponymy/ --cov-report=xml --cov-report=html
-          displayName: 'Run tests'
-          env:
-            # Set CI environment variable to help tests understand they're running in CI
-            CI: 'true'
-            AZURE_PIPELINES: 'true'
-            INSTALL_OLLAMA: $(INSTALL_OLLAMA)
-
-        - script: |
-            # Clean up Ollama processes if they were started
-            if [ "${INSTALL_OLLAMA:-false}" = "true" ]; then
-              echo "Cleaning up Ollama processes..."
-              pkill -f "ollama serve" || echo "No Ollama processes to clean up"
-              echo "Ollama cleanup complete"
-            fi
-          displayName: 'Cleanup Ollama processes'
-          condition: and(always(), eq(variables['Agent.OS'], 'Linux'))
-          continueOnError: true
-
-        - task: PublishTestResults@2
-          inputs:
-            testResultsFiles: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
-            testRunTitle: '$(Agent.OS) - $(Build.BuildNumber)[$(Agent.JobName)] - Python $(python.version)'
-          condition: succeededOrFailed()
+    - job: ExternalTests
+      pool:
+        vmImage: $(imageName)
+      strategy:
+        matrix:
+          linux_py311:
+            imageName: 'ubuntu-latest'
+            python.version: '3.11'
+      condition: or(eq(variables['Build.Reason'], 'Schedule'), eq(variables['Build.Reason'], 'Manual'))
+      steps:
+      - template: .azure/templates/run-tests.yml
+        parameters:
+          pytestMarker: external
+          includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
+          showCapture: 'stdout'
 
   - stage: BuildPublishArtifact
     dependsOn: RunAllTests
     condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/release-'), eq(variables.triggeredByPullRequest, false))
     jobs:
       - job: BuildArtifacts
-        displayName: Build source dists and wheels    
+        displayName: Build source dists and wheels
         pool:
           vmImage: 'ubuntu-latest'
         steps:
@@ -238,7 +140,7 @@ stages:
             python -m pip install -U uv
             uv sync --python "$(python -c 'import sys; print(sys.executable)')"
           displayName: 'Install dependencies'
-        
+
         - script: |
             uv build --no-sources --sdist --wheel
           displayName: 'Build package'
@@ -259,10 +161,10 @@ stages:
           name: PYPIRC_CONFIG
           displayName: 'Download pypirc'
           inputs:
-            secureFile: 'pypirc'  
+            secureFile: 'pypirc'
 
         - script: |
             uvx twine check dist/*
-            uvx twine upload --repository pypi --config-file $(PYPIRC_CONFIG.secureFilePath) dist/* 
+            uvx twine upload --repository pypi --config-file $(PYPIRC_CONFIG.secureFilePath) dist/*
           displayName: 'Upload to PyPI'
           condition: and(succeeded(), eq(variables['Build.SourceBranchName'], variables['packageVersionFormatted']))
