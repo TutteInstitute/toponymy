@@ -323,7 +323,8 @@ def openai_wrapper():
         wrapper = OpenAINamer(api_key="dummy")
         return wrapper
 
-@pytest.mark.canary
+
+@pytest.mark.external
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 def test_openai_connectivity_canary():
     """
