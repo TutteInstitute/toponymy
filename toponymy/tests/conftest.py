@@ -171,3 +171,8 @@ def test_object_centroid_vectors(test_object_cluster_label_vector, topic_vectors
 def centroid_vectors(cluster_label_vector, topic_vectors):
     """Calculate centroid vectors for topics."""
     return centroids_from_labels(cluster_label_vector, topic_vectors)
+
+@pytest.fixture(scope="session")
+def premade_topic_model_path(): 
+    file_path = Path(__file__).parent / "mock-20ng.tm.zip"
+    return file_path
