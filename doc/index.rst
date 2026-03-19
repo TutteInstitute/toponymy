@@ -46,6 +46,7 @@ and a tour of some of the richer functionality and uses cases.
    installation
    basic_usage
    params_and_options
+   saving_loading
 
 .. toctree::
    :maxdepth: 1
