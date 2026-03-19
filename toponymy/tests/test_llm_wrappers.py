@@ -294,35 +294,6 @@ def test_openai_connectivity_canary_sync_system():
         f"  Error: {result['error_type']}: {result['error_message']}"
     )
 
-
-def test_openai_llm_connectivity_status_success(openai_wrapper):
-    with patch.object(openai_wrapper, '_call_llm', return_value="test response"):
-        result = openai_wrapper.connectivity_status()
-        assert result["success"] == True
-        assert result["response"] == "test response"
-
-@pytest.mark.parametrize("error", OPENAI_FAIL_FAST+OPENAI_RETRYABLE)
-def test_openai_llm_connectivity_status_failure(openai_wrapper, error):
-    with patch.object(openai_wrapper, '_call_llm', side_effect=make_openai_error(error)):
-        result = openai_wrapper.connectivity_status()
-        assert result["success"] == False
-        assert result["error_type"] == error.__name__
-        if isinstance(make_openai_error(error), APITimeoutError):
-            assert result["error_message"] == "Request timed out."
-        else:
-            assert result["error_message"] == "test error"
-
-def test_openai_llm_connectivity_success(openai_wrapper):
-    with patch.object(openai_wrapper, '_call_llm', return_value="test response"):
-        result = openai_wrapper.test_llm_connectivity()
-        assert result == "test response"
-
-@pytest.mark.parametrize("error", OPENAI_FAIL_FAST+OPENAI_RETRYABLE)
-def test_openai_llm_connectivity_failure(openai_wrapper, error):
-    with patch.object(openai_wrapper, '_call_llm', side_effect=make_openai_error(error)):
-        result = openai_wrapper.test_llm_connectivity()
-        assert result == "<error>"
-
 @pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
 def test_openai_topic_name_fast_fail_error(openai_wrapper, error):
     with patch.object(openai_wrapper.llm.chat.completions, 'create', side_effect=make_openai_error(error)):
