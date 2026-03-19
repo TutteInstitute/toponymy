@@ -143,3 +143,9 @@ def test_generate_topic_cluster_names_invalid_prompt_type_raises():
 def test_supports_system_prompts_defaults_true():
     wrapper = DummySingleWrapper()
     assert wrapper.supports_system_prompts is True
+
+def test_handle_exception_reraises_retryable_exception():
+    wrapper = DummySingleWrapper()
+
+    with pytest.raises(RuntimeError, match="retry me"):
+        wrapper._handle_exception(RuntimeError("retry me"))

@@ -81,7 +81,7 @@ class LLMErrorHandlingMixin:
 
     def _handle_exception(self, e: Exception) -> None:
         if isinstance(e, InvalidLLMInputError):
-            raise
+            raise e
 
         if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
             raise FailFastLLMError(
@@ -92,7 +92,7 @@ class LLMErrorHandlingMixin:
                 original_exception=e,
             ) from None
 
-        raise
+        raise e
 
     async def _safe_call_with_retry_result(
         self,
