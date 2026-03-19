@@ -2,35 +2,20 @@ import os
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
-import json
-from typing import List
 
-import asyncio
+#import asyncio
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
     AsyncCohereNamer, AsyncAnthropicNamer, BatchAnthropicNamer, AsyncOpenAINamer, AsyncAzureAINamer,
-    AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether, FailFastLLMError, AsyncLLMWrapper, CallResult
+    AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether, FailFastLLMError, CallResult
 )
-from toponymy.tests.test_llm_wrappers import (
-    MockLLMResponse, VALID_TOPIC_NAME_RESPONSE, VALID_CLUSTER_NAMES_RESPONSE,
-    MALFORMED_JSON_RESPONSE, MALFORMED_MAPPING_RESPONSE, validate_topic_name,
+from toponymy.tests.helpers.make_llm_data import (
+    validate_topic_name,
     validate_cluster_names
 )
 from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
 
-
-
-@pytest.fixture
-def mock_data():
-    return {
-        "valid_topic_name": json.dumps(VALID_TOPIC_NAME_RESPONSE),
-        "valid_cluster_names": json.dumps(VALID_CLUSTER_NAMES_RESPONSE),
-        "old_names": ["data", "ml", "ai"],
-        "old_names_list": [["data", "ml", "ai"], ["x", "y", "z"]],
-        "malformed_mapping": MALFORMED_MAPPING_RESPONSE,
-        "malformed_json": MALFORMED_JSON_RESPONSE,
-    }
 
 
 # Helper for async tests
@@ -103,109 +88,6 @@ class MockCallResult:
     def failure(error: Exception | None = None) -> CallResult[str]:
         return CallResult(error=error or RuntimeError("temporary failure"))
 
-# Base class Tests
-
-class DummySingleWrapper(AsyncLLMWrapper):
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
-
-    async def _call_single_llm_with_system(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        return "single-system-ok"
-
-
-class DummyBatchWrapper(AsyncLLMWrapper):
-    async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return ["batch-ok"]
-
-    async def _call_llm_with_system_prompt_batch(
-        self, system_prompts, user_prompts, temperature, max_tokens
-    ):
-        return ["batch-system-ok"]
-
-
-class DummyBatchCallResultWrapper(AsyncLLMWrapper):
-    async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return [CallResult(value="batch-ok")]
-
-
-class DummyBatchErrorWrapper(AsyncLLMWrapper):
-    async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return [CallResult(error=RuntimeError("batch failed"))]
-
-
-@pytest.mark.asyncio
-async def test_async_connectivity_status_uses_single_call():
-    wrapper = DummySingleWrapper()
-    wrapper.model = "dummy-model"
-
-    result = await wrapper.connectivity_status()
-
-    assert result["success"] is True
-    assert result["response"] == "single-ok"
-
-
-@pytest.mark.asyncio
-async def test_async_connectivity_status_uses_single_call_with_system():
-    wrapper = DummySingleWrapper()
-    wrapper.model = "dummy-model"
-
-    result = await wrapper.connectivity_status(
-        prompt="user prompt",
-        system_prompt="system prompt",
-    )
-
-    assert result["success"] is True
-    assert result["response"] == "single-system-ok"
-
-
-@pytest.mark.asyncio
-async def test_async_connectivity_status_falls_back_to_batch():
-    wrapper = DummyBatchWrapper()
-    wrapper.model = "dummy-model"
-
-    result = await wrapper.connectivity_status()
-
-    assert result["success"] is True
-    assert result["response"] == "batch-ok"
-
-
-@pytest.mark.asyncio
-async def test_async_connectivity_status_falls_back_to_system_batch():
-    wrapper = DummyBatchWrapper()
-    wrapper.model = "dummy-model"
-
-    result = await wrapper.connectivity_status(
-        prompt="user prompt",
-        system_prompt="system prompt",
-    )
-
-    assert result["success"] is True
-    assert result["response"] == "batch-system-ok"
-
-
-@pytest.mark.asyncio
-async def test_async_connectivity_status_unwraps_call_result_from_batch():
-    wrapper = DummyBatchCallResultWrapper()
-    wrapper.model = "dummy-model"
-
-    result = await wrapper.connectivity_status()
-
-    assert result["success"] is True
-    assert result["response"] == "batch-ok"
-
-
-@pytest.mark.asyncio
-async def test_async_connectivity_status_batch_call_result_error():
-    wrapper = DummyBatchErrorWrapper()
-    wrapper.model = "dummy-model"
-
-    result = await wrapper.connectivity_status()
-
-    assert result["success"] is False
-    assert result["error_type"] == "RuntimeError"
-    assert result["error_message"] == "batch failed"
 
 # AsyncCohere Tests
 @pytest_asyncio.fixture
@@ -304,7 +186,6 @@ async def test_async_cohere_batch_processing(async_cohere_wrapper, mock_data):
     result = await async_cohere_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
-
 
 # AsyncAnthropic Tests
 @pytest_asyncio.fixture

@@ -1,57 +1,16 @@
 import pytest
 from unittest.mock import Mock, patch
-import httpx
-import json
 import os
-from typing import List, Optional
 
-from toponymy.llm_wrappers import LLMWrapper, repair_json_string_backslashes, FailFastLLMError
+
+from toponymy.llm_wrappers import repair_json_string_backslashes, FailFastLLMError
 from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
 from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
-
+from toponymy.tests.helpers.make_llm_data import (validate_cluster_names, validate_topic_name)
 import logging
 logger = logging.getLogger(__name__)
 
-from openai import (
-    AuthenticationError,
-    PermissionDeniedError,
-    BadRequestError,
-    NotFoundError,
-    RateLimitError,
-    APITimeoutError,
-    APIConnectionError,
-    APIError,
-)
-
-# Mock responses for different scenarios
-VALID_TOPIC_NAME_RESPONSE = {
-    "topic_name": "Machine Learning",
-    "topic_specificity": 0.6
-}
-
-VALID_CLUSTER_NAMES_RESPONSE = {
-    "new_topic_name_mapping": {
-        "1. data": "Data Science",
-        "2. ml": "Machine Learning\\ML",
-        "3. ai": "Artificial Intelligence"
-    },
-    "topic_specificities": [
-        0.6,
-        0.8,
-        0.7,
-    ]
-}
-
-MALFORMED_JSON_RESPONSE = "{"  # Incomplete JSON
-RECOVERABLE_MALFORMED_JSON_RESPONSE = """
-the topic name is Machine Learning
-```json
-{"topic_name": "Machine Learning", "topic_specificity": 0.6}
-```
-postamble.
-"""
-EMPTY_MAPPING_RESPONSE = {"new_topic_name_mapping": {}}
-MALFORMED_MAPPING_RESPONSE = """{"new_topic_name_mapping": {"data science": "Data Science", "data science": "Machine Learning\\ML", "data science": "Artificial Intelligence"} , "topic_specificities": [0.6, 0.8, 0.7]}"""
+from openai import (APITimeoutError)
 
 class MockLLMResponse:
     """Mock response object that mimics different LLM service response structures"""
@@ -136,103 +95,6 @@ class MockLLMResponse:
                 self.model.generate_content = Mock(return_value=MockText(text))
 
         return MockResponse(content)
-
-
-# Helper functions for validation
-def validate_topic_name(result: str):
-    assert result == "Machine Learning"
-
-def validate_cluster_names(result: List[str]):
-    expected = ["Data Science", "Machine Learning\\ML", "Artificial Intelligence"]
-    assert result == expected
-
-@pytest.fixture
-def mock_data():
-    return {
-        "valid_topic_name": json.dumps(VALID_TOPIC_NAME_RESPONSE),
-        "valid_cluster_names": json.dumps(VALID_CLUSTER_NAMES_RESPONSE),
-        "old_names": ["data", "ml", "ai"],
-        "malformed_mapping": MALFORMED_MAPPING_RESPONSE,
-        "malformed_json": MALFORMED_JSON_RESPONSE,
-        "recoverable_malformed_json": RECOVERABLE_MALFORMED_JSON_RESPONSE,
-    }
-
-# General LLMWrapper tests
-class DummySingleWrapper(LLMWrapper):
-    model = "dummy-model"
-
-    def _call_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
-
-    def _call_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        return "single-system-ok"
-
-
-class DummyFailureWrapper(LLMWrapper):
-    model = "dummy-model"
-
-    def _call_llm(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-    def _call_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        raise RuntimeError("error")
-
-
-def test_sync_connectivity_status_uses_single_call():
-    wrapper = DummySingleWrapper()
-
-    result = wrapper.connectivity_status()
-
-    assert result["success"] is True
-    assert result["response"] == "single-ok"
-    assert result["wrapper"] == "DummySingleWrapper"
-    assert result["model"] == "dummy-model"
-
-
-def test_sync_connectivity_status_uses_single_call_with_system():
-    wrapper = DummySingleWrapper()
-
-    result = wrapper.connectivity_status(
-        prompt="user prompt",
-        system_prompt="system prompt",
-    )
-
-    assert result["success"] is True
-    assert result["response"] == "single-system-ok"
-    assert result["wrapper"] == "DummySingleWrapper"
-    assert result["model"] == "dummy-model"
-
-
-def test_sync_connectivity_status_failure():
-    wrapper = DummyFailureWrapper()
-
-    result = wrapper.connectivity_status()
-
-    assert result["success"] is False
-    assert result["response"] is None
-    assert result["error_type"] == "RuntimeError"
-    assert result["error_message"] == "error"
-    assert isinstance(result["original_exception"], RuntimeError)
-
-
-def test_sync_test_llm_connectivity_success():
-    wrapper = DummySingleWrapper()
-
-    result = wrapper.test_llm_connectivity()
-
-    assert result == "single-ok"
-
-
-def test_sync_test_llm_connectivity_failure():
-    wrapper = DummyFailureWrapper()
-
-    result = wrapper.test_llm_connectivity()
-
-    assert result == "<error>"
 
 # LlamaCpp Tests
 @pytest.fixture
