@@ -7,6 +7,15 @@ from toponymy.tests.helpers.make_llm_data import (
     validate_cluster_names,
 )
 
+class MockCallResult:
+    @staticmethod
+    def success(value: str) -> CallResult[str]:
+        return CallResult(value=value)
+
+    @staticmethod
+    def failure(error: Exception | None = None) -> CallResult[str]:
+        return CallResult(error=error or RuntimeError("temporary failure"))
+
 class DummyAsyncProviderError(Exception):
     pass
 
@@ -44,12 +53,12 @@ class DummyBatchWrapper(AsyncLLMWrapper):
 
 class DummyBatchCallResultWrapper(AsyncLLMWrapper):
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return [CallResult(value="batch-ok")]
+        return [MockCallResult.success("batch-ok")]
 
 
 class DummyBatchErrorWrapper(AsyncLLMWrapper):
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return [CallResult(error=RuntimeError("batch failed"))]
+        return [MockCallResult.failure(RuntimeError("batch failed"))]
 
 
 @pytest.mark.asyncio
@@ -247,19 +256,19 @@ async def test_async_generate_topic_names_routes_dict_prompts_to_call_with_syste
     )
 
 @pytest.mark.asyncio
-async def test_async_generate_topic_names_partial_success_preserves_successful_items(
+async def test_async_generate_topic_names_partial_success(
     mock_data,
 ):
     wrapper = DummySingleWrapper()
     wrapper._call_llm_batch = AsyncMock(
         return_value=[
-            CallResult(value=mock_data["valid_topic_name"]),
-            CallResult(error=RuntimeError("temporary failure")),
-            CallResult(value=mock_data["valid_topic_name"]),
+            MockCallResult.success(mock_data["valid_topic_name"]),
+            MockCallResult.failure(),
+            MockCallResult.success(mock_data["valid_topic_name"]),
         ]
     )
 
-    result = await wrapper.generate_topic_names(["p1", "p2", "p3"])
+    result = await wrapper.generate_topic_names(["prompt 1", "prompt 2", "prompt 3"])
 
     validate_topic_name(result[0])
     assert result[1] == ""
@@ -267,26 +276,27 @@ async def test_async_generate_topic_names_partial_success_preserves_successful_i
 
 
 @pytest.mark.asyncio
-async def test_async_generate_topic_cluster_names_partial_success_preserves_successful_items(
+async def test_async_generate_topic_cluster_names_partial_success(
     mock_data,
 ):
     wrapper = DummySingleWrapper()
     wrapper._call_llm_batch = AsyncMock(
         return_value=[
-            CallResult(value=mock_data["valid_cluster_names"]),
-            CallResult(error=RuntimeError("temporary failure")),
-            CallResult(value=mock_data["valid_cluster_names"]),
+            MockCallResult.success(mock_data["valid_cluster_names"]),
+            MockCallResult.failure(),
+            MockCallResult.success(mock_data["valid_cluster_names"]),
         ]
     )
 
     fallback_old_names = ["old_x", "old_y", "old_z"]
-    result = await wrapper.generate_topic_cluster_names(
-        ["p1", "p2", "p3"],
-        [
+    old_names =  [
             mock_data["old_names"],
             fallback_old_names,
             mock_data["old_names"],
-        ],
+    ]
+    result = await wrapper.generate_topic_cluster_names(
+        ["prompt 1", "prompt 2", "prompt 3"],
+        old_names,
     )
 
     validate_cluster_names(result[0])

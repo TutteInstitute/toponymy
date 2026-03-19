@@ -79,15 +79,6 @@ class MockAsyncResponse:
 
         return Response(content)
 
-class MockCallResult:
-    @staticmethod
-    def success(value: str) -> CallResult[str]:
-        return CallResult(value=value)
-
-    @staticmethod
-    def failure(error: Exception | None = None) -> CallResult[str]:
-        return CallResult(error=error or RuntimeError("temporary failure"))
-
 
 # AsyncCohere Tests
 @pytest_asyncio.fixture
@@ -525,68 +516,6 @@ async def test_async_openai_generate_topic_cluster_names_retry_exhausted_warns(a
         )
 
     assert result == [mock_data["old_names"]]
-
-
-@pytest.mark.asyncio
-async def test_async_openai_generate_topic_names_partial_success(
-    async_openai_wrapper, mock_data
-):
-    prompts = ["prompt 1", "prompt 2", "prompt 3"]
-
-    async_openai_wrapper._call_llm_batch = AsyncMock(
-        return_value=[
-            MockCallResult.success(mock_data["valid_topic_name"]),
-            MockCallResult.failure(),
-            MockCallResult.success(mock_data["valid_topic_name"]),
-        ]
-    )
-
-    result = await async_openai_wrapper.generate_topic_names(prompts)
-
-    validate_topic_name(result[0])
-    assert result[1] == ""
-    validate_topic_name(result[2])
-
-    async_openai_wrapper._call_llm_batch.assert_awaited_once_with(
-        prompts,
-        0.4,
-        max_tokens=128,
-    )
-
-@pytest.mark.asyncio
-async def test_async_openai_generate_topic_cluster_names_partial_success(
-    async_openai_wrapper, mock_data
-):
-    prompts = ["prompt 1", "prompt 2", "prompt 3"]
-    fallback_old_names = ["old_c", "old_d", "old_e"]
-    old_names_list = [
-        mock_data["old_names"],
-        fallback_old_names,
-        mock_data["old_names"],
-    ]
-
-    async_openai_wrapper._call_llm_batch = AsyncMock(
-        return_value=[
-            MockCallResult.success(mock_data["valid_cluster_names"]),
-            MockCallResult.failure(),
-            MockCallResult.success(mock_data["valid_cluster_names"]),
-        ]
-    )
-
-    result = await async_openai_wrapper.generate_topic_cluster_names(
-        prompts,
-        old_names_list,
-    )
-
-    validate_cluster_names(result[0])
-    assert result[1] == fallback_old_names
-    validate_cluster_names(result[2])
-
-    async_openai_wrapper._call_llm_batch.assert_awaited_once_with(
-        prompts,
-        0.4,
-        max_tokens=1024,
-    )
 
 # AsyncAzureAI Tests
 @pytest_asyncio.fixture
