@@ -41,7 +41,7 @@ class DummyFailFastWrapper(LLMWrapper):
         raise DummyFailFastProviderError("bad config")
 
 
-def test_sync_connectivity_status_uses_single_call():
+def test_sync_connectivity_status_uses_plain_call():
     wrapper = DummySingleWrapper()
 
     result = wrapper.connectivity_status()
@@ -52,7 +52,7 @@ def test_sync_connectivity_status_uses_single_call():
     assert result["model"] == "dummy-model"
 
 # Connectivity Tests
-def test_sync_connectivity_status_uses_single_call_with_system():
+def test_sync_connectivity_status_uses_system_call():
     wrapper = DummySingleWrapper()
 
     result = wrapper.connectivity_status(
