@@ -25,8 +25,7 @@ logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 T = TypeVar("T")
-
-
+_json_mode_support_cache: dict[str, bool] = {}
 
 @dataclass
 class CallResult(Generic[T]):
@@ -2514,7 +2513,8 @@ except ImportError:
 
 try:
     import openai
-    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError
+    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
+
 
     class OpenAINamer(LLMWrapper):
         """
@@ -2562,7 +2562,7 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncOpenAI wrapper instead.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
 
         def __init__(
             self,
@@ -2669,7 +2669,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
 
         def __init__(
             self,
@@ -4062,5 +4062,395 @@ except ImportError:
             super().__init__(*args, **kwds)
 
     class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+
+try:
+    import litellm
+    from litellm.exceptions import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
+    class LiteLLMNamer(LLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM using a unified interface.
+        LiteLLM supports 100+ providers including OpenAI, Anthropic, Cohere, HuggingFace,
+        Together, Replicate, and more. For more information, see https://docs.litellm.ai.
+
+        Parameters
+        ----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str, optional
+            The LiteLLM model string, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-3-5-sonnet-20241022", etc.
+
+        api_base: str, optional
+            Optional LiteLLM/OpenAI-compatible API base. Alias-style convenience.
+
+        llm_specific_instructions: str, optional
+            Additional instructions appended to the user prompt.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by making a minimal probe call
+            to the model on initialization. Set to True to force JSON object mode, or False to
+            disable it. Explicitly setting this avoids the probe call overhead at initialization.
+
+        Attributes
+        ----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. This wrapper does.
+
+        use_response_format: bool
+            Whether response_format={"type": "json_object"} will be sent.
+        """
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions=None,
+            use_json_object: bool = None,
+        ):
+
+            self.api_key = api_key # falls through to LiteLLM's internal handling, which checks env vars
+            self.model = model
+            self.api_base = api_base
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+
+            if use_json_object is None:
+                try:
+                    self.use_json_object = self._probe_json_object_support()
+                except Exception:
+                    # Fail-safe: don't break init on probe issues
+                    self.use_json_object = False
+            else:
+                self.use_json_object = use_json_object
+
+        def _json_mode_cache_key(self) -> str:
+            return f"{self.model}|{self.api_base or 'default'}"
+
+        def _probe_json_object_support(self) -> bool:
+            """
+            Make a minimal call to test if json_object is supported.
+            Cached after first attempt.
+            """
+            key = self._json_mode_cache_key()
+
+            if key in _json_mode_support_cache:
+                return _json_mode_support_cache[key]
+
+            try:
+                response = litellm.completion(
+                    model=self.model,
+                    messages=[{"role": "user", "content": "Return {}"}],
+                    max_tokens=5,
+                    temperature=0,
+                    api_key=self.api_key,
+                    api_base=self.api_base,
+                    response_format={"type": "json_object"},
+                )
+
+                # If we got here without exception → assume json_objectsupported
+                _json_mode_support_cache[key] = True
+                return True
+
+            except Exception as e:
+                # Only treat "unsupported param" style errors as False
+                msg = str(e).lower()
+
+                unsupported_signals = [
+                    "response_format",
+                    "json_object",
+                    "not supported",
+                    "invalid param",
+                    "unexpected keyword",
+                ]
+
+                if any(s in msg for s in unsupported_signals):
+                    _json_mode_support_cache[key] = False
+                    return False
+
+                # Otherwise: real failure (rate limit, auth, etc.)
+                raise
+
+        def _completion_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "api_key": self.api_key,
+            }
+
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
+
+            if self.use_json_object:
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = litellm.completion(
+                **self._completion_kwargs(
+                    messages=[
+                        {"role": "user", "content": prompt + self.extra_prompting}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            )
+            return response.choices[0].message.content
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            response = litellm.completion(
+                **self._completion_kwargs(
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt + self.extra_prompting},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            )
+            return response.choices[0].message.content
+
+
+    class AsyncLiteLLMNamer(AsyncLLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM with asynchronous support.
+        This allows for concurrent processing of multiple prompts across 100+ providers
+        including OpenAI, Anthropic, Cohere, HuggingFace, Together, Replicate, and more.
+        For more information, see https://docs.litellm.ai.
+
+        As an asynchronous wrapper this will potentially speed up topic naming, particularly
+        when you have a large number of topics. If, however, there are quirks in your data,
+        or bugs in Toponymy's prompt generation, you will potentially quickly spend money on
+        API calls.
+
+        Uses litellm.acompletion() and an asyncio semaphore for bounded
+        concurrency. Since this wrapper does not create a persistent SDK client,
+        close() is a no-op.
+
+
+        Parameters:
+        -----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str
+            The model to use in LiteLLM format, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-3-haiku-20240307", "together_ai/mistralai/Mixtral-8x7B-v0.1".
+            See https://docs.litellm.ai/docs/providers for the full list.
+
+        api_base: str, optional
+            The base URL for the provider API. Useful for self-hosted models or proxies.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the provider API. Default is 10.
+            This can be adjusted based on your application's needs and the rate limits of
+            the provider. Higher values may improve throughput but could lead to rate limiting.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by making a minimal probe call
+            to the model on initialization. Set to True to force JSON object mode, or False to
+            disable it. Explicitly setting this avoids the probe call on the first call.
+
+        Attributes:
+        -----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the model supports system prompts, detected automatically
+            via LiteLLM's model info.
+        """
+
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions=None,
+            max_concurrent_requests: int = 10,
+            use_json_object: bool = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+            self.use_json_object = use_json_object
+            self._json_mode_checked = False
+
+        def _json_mode_cache_key(self) -> str:
+            return f"{self.model}|{self.api_base or 'default'}"
+
+        async def _probe_json_object_support_async(self) -> bool:
+            key = self._json_mode_cache_key()
+
+            if key in _json_mode_support_cache:
+                return _json_mode_support_cache[key]
+
+            try:
+                await litellm.acompletion(
+                    model=self.model,
+                    messages=[{"role": "user", "content": "Return {}"}],
+                    max_tokens=5,
+                    temperature=0,
+                    api_key=self.api_key,
+                    api_base=self.api_base,
+                    response_format={"type": "json_object"},
+                )
+                _json_mode_support_cache[key] = True
+                return True
+
+            except Exception as e:
+                msg = str(e).lower()
+                if "response_format" in msg or "not supported" in msg:
+                    _json_mode_support_cache[key] = False
+                    return False
+                raise
+
+        async def _ensure_json_mode_checked(self):
+            if self.use_json_object is not None or self._json_mode_checked:
+                return
+
+            try:
+                self.use_json_object = await self._probe_json_object_support_async()
+            except Exception:
+                self.use_json_object = False
+
+            self._json_mode_checked = True
+
+        def _completion_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "api_key": self.api_key,
+            }
+
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
+
+            if self.use_json_object:
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+        async def _call_single_llm(
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            await self._ensure_json_mode_checked()
+
+            async with self.semaphore:
+                response = await litellm.acompletion(
+                    **self._completion_kwargs(
+                        messages=[
+                            {"role": "user", "content": prompt + self.extra_prompting}
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            return response.choices[0].message.content
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            await self._ensure_json_mode_checked()
+
+            async with self.semaphore:
+                response = await litellm.acompletion(
+                    **self._completion_kwargs(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": user_prompt + self.extra_prompting,
+                            },
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            return response.choices[0].message.content
+
+        async def close(self):
+            """No-op for parity with other async wrappers."""
+            return None
+
+except Exception as e:
+
+    class LiteLLMNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncLiteLLMNamer(FailedImportAsyncLLMWrapper):
+
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
