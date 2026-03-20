@@ -14,7 +14,14 @@ from toponymy.tests.helpers.make_llm_data import (
     validate_topic_name,
     validate_cluster_names
 )
-from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
+from toponymy.tests.helpers.errors import (
+    ANTHROPIC_FAIL_FAST,
+    ANTHROPIC_RETRYABLE,
+    make_anthropic_error,
+    OPENAI_FAIL_FAST,
+    OPENAI_RETRYABLE,
+    make_openai_error
+)
 
 
 
@@ -181,9 +188,46 @@ async def test_async_cohere_batch_processing(async_cohere_wrapper, mock_data):
 # AsyncAnthropic Tests
 @pytest_asyncio.fixture
 async def async_anthropic_wrapper():
-    with patch('anthropic.AsyncAnthropic'):
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch("anthropic.AsyncAnthropic", return_value=mock_client):
         wrapper = AsyncAnthropicNamer(api_key="dummy")
-        yield wrapper
+        try:
+            yield wrapper
+        finally:
+            await wrapper.close()
+
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
+async def test_anthropic_connectivity_async_plain_canary():
+    namer = AsyncAnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Anthropic:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
+async def test_anthropic_connectivity_async_system_canary():
+    namer = AsyncAnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for Anthropic:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
 
 
 @pytest.mark.asyncio
@@ -242,6 +286,144 @@ async def test_async_anthropic_generate_topic_cluster_names_malformed_mapping(as
     assert len(result) == 1
     validate_cluster_names(result[0])
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", ANTHROPIC_FAIL_FAST)
+async def test_async_anthropic_generate_topic_names_fail_fast_raises(async_anthropic_wrapper, error_class):
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=make_anthropic_error(error_class)
+    )
+
+    with pytest.raises(FailFastLLMError):
+        await async_anthropic_wrapper.generate_topic_names(
+            ["test prompt"]
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", ANTHROPIC_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_anthropic_generate_topic_names_retryable_returns_empty(
+    async_anthropic_wrapper,
+    error_class,
+):
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    result = await async_anthropic_wrapper.generate_topic_names(
+        ["test prompt"]
+    )
+
+    assert result == [""]
+    assert async_anthropic_wrapper.client.messages.create.call_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", ANTHROPIC_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_anthropic_generate_topic_cluster_names_retryable_returns_old_names(
+    async_anthropic_wrapper,
+    mock_data,
+    error_class,
+):
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    result = await async_anthropic_wrapper.generate_topic_cluster_names(
+        ["test prompt"],
+        [mock_data["old_names"]],
+    )
+
+    assert result == [mock_data["old_names"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_anthropic_retries_per_item_not_whole_batch(
+    async_anthropic_wrapper, mock_data
+):
+    good_response = MockAsyncResponse.create_anthropic_response(
+        mock_data["valid_topic_name"]
+    )
+    error_class = ANTHROPIC_RETRYABLE[0]
+
+    call_counts = {"prompt1": 0, "prompt2": 0}
+
+    async def mock_create(*args, **kwargs):
+        prompt_text = kwargs["messages"][0]["content"]
+        call_counts[prompt_text] += 1
+
+        if prompt_text == "prompt1":
+            return good_response
+        if prompt_text == "prompt2":
+            raise make_anthropic_error(error_class)
+
+        raise AssertionError(f"Unexpected prompt: {prompt_text}")
+
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=mock_create
+    )
+
+    result = await async_anthropic_wrapper.generate_topic_names(
+        ["prompt1", "prompt2"]
+    )
+
+    assert len(result) == 2
+    validate_topic_name(result[0])
+    assert result[1] == ""
+
+    assert call_counts["prompt1"] == 1
+    assert call_counts["prompt2"] == 3
+
+
+@pytest.mark.asyncio
+async def test_async_anthropic_generate_topic_names_retry_exhausted_warns(
+    async_anthropic_wrapper,
+):
+    error_class = ANTHROPIC_RETRYABLE[0]
+
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    with pytest.warns(
+        UserWarning,
+        match="Failed to generate topic name",
+    ):
+        result = await async_anthropic_wrapper.generate_topic_names(
+            ["test prompt"]
+        )
+
+    assert result == [""]
+
+
+@pytest.mark.asyncio
+async def test_async_anthropic_generate_topic_cluster_names_retry_exhausted_warns(
+    async_anthropic_wrapper, mock_data
+):
+    error_class = ANTHROPIC_RETRYABLE[0]
+
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    with pytest.warns(UserWarning):
+        result = await async_anthropic_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert result == [mock_data["old_names"]]
 
 # BatchAnthropic Tests
 @pytest_asyncio.fixture
@@ -322,7 +504,7 @@ async def async_openai_wrapper():
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-async def test_openai_connectivity_canary_async_plain():
+async def test_openai_connectivity_async_plain_canary():
     """
     Canary test verifying live async connectivity to the OpenAI API
     using the plain prompt path.
@@ -340,7 +522,7 @@ async def test_openai_connectivity_canary_async_plain():
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-async def test_openai_connectivity_canary_async_system():
+async def test_openai_connectivity_async_system_canary():
     """
     Canary test verifying live async connectivity to the OpenAI API
     using the system prompt path.
