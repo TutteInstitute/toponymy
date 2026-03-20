@@ -3,14 +3,12 @@ from unittest.mock import Mock, patch
 import os
 
 
-from toponymy.llm_wrappers import repair_json_string_backslashes, FailFastLLMError
+from toponymy.llm_wrappers import LiteLLMNamer, repair_json_string_backslashes, FailFastLLMError
 from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
 from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
-from toponymy.tests.helpers.make_llm_data import (validate_cluster_names, validate_topic_name)
+from toponymy.tests.helpers.llm_test_config import (validate_cluster_names, validate_topic_name, LITELLM_PROVIDER_CASES)
 import logging
 logger = logging.getLogger(__name__)
-
-from openai import (APITimeoutError)
 
 class MockLLMResponse:
     """Mock response object that mimics different LLM service response structures"""
@@ -793,3 +791,41 @@ def test_replicate_generate_cluster_names_failure(replicate_wrapper, mock_data):
     with patch('replicate.run', side_effect=Exception("API Error")):
         result = replicate_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
         assert result == mock_data["old_names"]
+
+# LiteLLM Tests
+@pytest.mark.external
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+def test_litellm_connectivity_canary(provider_cfg):
+    """
+    Canary test to verify live connectivity to LiteLLM. Tests the plain prompt path.
+    """
+    namer = LiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = namer.connectivity_status()
+
+    assert result["success"], (
+        f"Sync plain canary test failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+@pytest.mark.external
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+def test_litellm_connectivity_canary_sync_system(provider_cfg):
+    """
+    Canary test to verify live sync connectivity to LiteLLM using the system prompt path.
+    """
+    namer = LiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Sync system canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )

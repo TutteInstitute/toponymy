@@ -7,12 +7,13 @@ from unittest.mock import Mock, patch, AsyncMock
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
-    AsyncCohereNamer, AsyncAnthropicNamer, BatchAnthropicNamer, AsyncOpenAINamer, AsyncAzureAINamer,
+    AsyncCohereNamer, AsyncAnthropicNamer, AsyncLiteLLMNamer, BatchAnthropicNamer, AsyncOpenAINamer, AsyncAzureAINamer,
     AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether, FailFastLLMError, CallResult
 )
-from toponymy.tests.helpers.make_llm_data import (
+from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
-    validate_cluster_names
+    validate_cluster_names,
+    LITELLM_PROVIDER_CASES
 )
 from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
 
@@ -870,3 +871,44 @@ async def test_async_wrapper_invalid_input(async_openai_wrapper):
             ["prompt1", "prompt2"],
             [["name1", "name2"]]
         )  # Mismatched lengths
+
+
+# LiteLLM Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+async def test_litellm_connectivity_canary_async_plain(provider_cfg):
+    """
+    Canary test verifying live async connectivity to LiteLLM using the plain prompt path.
+    """
+    namer = AsyncLiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+async def test_litellm_connectivity_canary_async_system(provider_cfg):
+    """
+    Canary test verifying live async connectivity to LiteLLM using the system prompt path.
+    """
+    namer = AsyncLiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )

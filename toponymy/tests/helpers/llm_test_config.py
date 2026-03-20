@@ -1,5 +1,7 @@
 import json
 from typing import List
+import os
+import pytest
 
 
 # Mock responses for different scenarios
@@ -52,3 +54,20 @@ def validate_topic_name(result: str):
 def validate_cluster_names(result: List[str]):
     expected = ["Data Science", "Machine Learning\\ML", "Artificial Intelligence"]
     assert result == expected
+
+LITELLM_PROVIDER_CASES = [
+    pytest.param(
+        {
+            "provider_name": "OpenAI",
+            "model": "openai/gpt-4o-mini",
+        },
+        id="openai",
+    ),
+    pytest.param(
+        {
+            "provider_name": "Anthropic",
+            "model": "anthropic/claude-haiku-4-5-20251001",
+        },
+        id="anthropic",
+    ),
+]
