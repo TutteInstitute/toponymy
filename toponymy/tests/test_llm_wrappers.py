@@ -124,16 +124,20 @@ def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(llamacpp_w
     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = llamacpp_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_llamacpp_generate_topic_name_failure_malformed_json(llamacpp_wrapper, mock_data):
-    llamacpp_wrapper.llm = Mock(mock_data["malformed_json"])
+    response = MockLLMResponse.create_llama_response(mock_data["malformed_json"])
+    llamacpp_wrapper.llm = Mock(return_value=response)
     result = llamacpp_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = llamacpp_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -182,16 +186,20 @@ def test_huggingface_generate_cluster_names_success_on_malformed_mapping(hugging
     result = huggingface_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_huggingface_generate_topic_name_failure(huggingface_wrapper):
     huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = huggingface_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_huggingface_generate_topic_name_failure_malformed_json(huggingface_wrapper, mock_data):
-    huggingface_wrapper.llm = Mock(mock_data["malformed_json"])
+    response = MockLLMResponse.create_huggingface_response(mock_data["malformed_json"])
+    huggingface_wrapper.llm = Mock(return_value=response)
     result = huggingface_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_data):
     huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = huggingface_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -240,16 +248,20 @@ def test_anthropic_generate_cluster_names_success_on_malformed_mapping(anthropic
     result = anthropic_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_anthropic_generate_topic_name_failure(anthropic_wrapper):
     anthropic_wrapper.llm.messages.create = Mock(side_effect=Exception("API Error"))
     result = anthropic_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_anthropic_generate_topic_name_failure_malformed_json(anthropic_wrapper, mock_data):
-    anthropic_wrapper.llm.messages.create = Mock(mock_data["malformed_json"])
+    response = MockLLMResponse.create_anthropic_response(mock_data["malformed_json"])
+    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
     result = anthropic_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_anthropic_generate_cluster_names_failure(anthropic_wrapper, mock_data):
     anthropic_wrapper.llm.messages.create = Mock(side_effect=Exception("API Error"))
     result = anthropic_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -343,20 +355,39 @@ def test_openai_generate_cluster_names_success_on_malformed_mapping(openai_wrapp
     result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
-def test_openai_generate_topic_name_failure(openai_wrapper):
-    openai_wrapper.llm.chat.completions.create = Mock(side_effect=Exception("API Error"))
+
+@pytest.mark.parametrize("error", OPENAI_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
+def test_openai_generate_topic_name_retry_exhausted_returns_empty(openai_wrapper, error):
+    openai_wrapper.llm.chat.completions.create = Mock(
+        side_effect=[make_openai_error(error) for _ in range(3)]
+    )
+
     result = openai_wrapper.generate_topic_name("test prompt")
+
     assert result == ""
+    assert openai_wrapper.llm.chat.completions.create.call_count == 3
 
 def test_openai_generate_topic_name_failure_malformed_json(openai_wrapper, mock_data):
-    openai_wrapper.llm.chat.completions.create = Mock(mock_data["malformed_json"])
+    response = MockLLMResponse.create_openai_response(mock_data["malformed_json"])
+    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
     result = openai_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
-def test_openai_generate_cluster_names_failure(openai_wrapper, mock_data):
-    openai_wrapper.llm.chat.completions.create = Mock(side_effect=Exception("API Error"))
-    result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+@pytest.mark.parametrize("error", OPENAI_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
+def test_openai_generate_cluster_names_retry_exhausted_returns_old_names(openai_wrapper, mock_data, error):
+    openai_wrapper.llm.chat.completions.create = Mock(
+        side_effect=[make_openai_error(error) for _ in range(3)]
+    )
+
+    result = openai_wrapper.generate_topic_cluster_names(
+        "test prompt",
+        mock_data["old_names"],
+    )
+
     assert result == mock_data["old_names"]
+    assert openai_wrapper.llm.chat.completions.create.call_count == 3
 
 # Cohere Tests
 @pytest.fixture
@@ -403,16 +434,20 @@ def test_cohere_generate_cluster_names_success_on_malformed_mapping(cohere_wrapp
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_cohere_generate_topic_name_failure(cohere_wrapper):
     cohere_wrapper.llm.chat = Mock(side_effect=Exception("API Error"))
     result = cohere_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_cohere_generate_topic_name_failure_malformed_json(cohere_wrapper, mock_data):
-    cohere_wrapper.llm.chat = Mock(mock_data["malformed_json"])
+    response = MockLLMResponse.create_cohere_response_v2(mock_data["malformed_json"])
+    cohere_wrapper.llm.chat = Mock(return_value=response)
     result = cohere_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_cohere_generate_cluster_names_failure(cohere_wrapper, mock_data):
     cohere_wrapper.llm.chat = Mock(side_effect=Exception("API Error"))
     result = cohere_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -461,16 +496,20 @@ def test_azureai_generate_cluster_names_success_on_malformed_mapping(azureai_wra
     result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_azureai_generate_topic_name_failure(azureai_wrapper):
     azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
     result = azureai_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_azureai_generate_topic_name_failure_malformed_json(azureai_wrapper, mock_data):
-    azureai_wrapper.llm.complete = Mock(mock_data["malformed_json"])
+    response = MockLLMResponse.create_azureai_response(mock_data["malformed_json"])
+    azureai_wrapper.llm.complete = Mock(return_value=response)
     result = azureai_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_azureai_generate_cluster_names_failure(azureai_wrapper, mock_data):
     azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
     result = azureai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -565,16 +604,20 @@ def test_ollama_generate_cluster_names_success_on_malformed_mapping(ollama_wrapp
     result = ollama_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_ollama_generate_topic_name_failure(ollama_wrapper):
     ollama_wrapper.client.generate = Mock(side_effect=Exception("API Error"))
     result = ollama_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_ollama_generate_topic_name_failure_malformed_json(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(return_value={'response': mock_data["malformed_json"]})
+    response = MockLLMResponse.create_ollama_response(mock_data["malformed_json"])
+    ollama_wrapper.client.generate = Mock(return_value=response)
     result = ollama_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_ollama_generate_cluster_names_failure(ollama_wrapper, mock_data):
     ollama_wrapper.client.generate = Mock(side_effect=Exception("API Error"))
     result = ollama_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -618,16 +661,20 @@ def test_google_gemini_generate_cluster_names_success_on_malformed_mapping(googl
     result = google_gemini_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_google_gemini_generate_topic_name_failure(google_gemini_wrapper):
     google_gemini_wrapper.model.generate_content = Mock(side_effect=Exception("API Error"))
     result = google_gemini_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_google_gemini_generate_topic_name_failure_malformed_json(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(return_value=Mock(text=mock_data["malformed_json"]))
+    response = MockLLMResponse.create_google_gemini_response(mock_data["malformed_json"])
+    google_gemini_wrapper.model.generate_content = Mock(return_value=response)
     result = google_gemini_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_google_gemini_generate_cluster_names_failure(google_gemini_wrapper, mock_data):
     google_gemini_wrapper.model.generate_content = Mock(side_effect=Exception("API Error"))
     result = google_gemini_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -690,11 +737,13 @@ def test_together_generate_cluster_names_success_on_malformed_mapping(together_w
     result = together_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_together_generate_topic_name_failure(together_wrapper):
     together_wrapper.client.chat.completions.create = Mock(side_effect=Exception("API Error"))
     result = together_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_together_generate_cluster_names_failure(together_wrapper, mock_data):
     together_wrapper.client.chat.completions.create = Mock(side_effect=Exception("API Error"))
     result = together_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -733,11 +782,13 @@ def test_replicate_generate_cluster_names_success_on_malformed_mapping(replicate
         result = replicate_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
         validate_cluster_names(result)
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_replicate_generate_topic_name_failure(replicate_wrapper):
     with patch('replicate.run', side_effect=Exception("API Error")):
         result = replicate_wrapper.generate_topic_name("test prompt")
         assert result == ""
 
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_replicate_generate_cluster_names_failure(replicate_wrapper, mock_data):
     with patch('replicate.run', side_effect=Exception("API Error")):
         result = replicate_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])

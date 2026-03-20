@@ -256,6 +256,7 @@ async def test_async_generate_topic_names_routes_dict_prompts_to_call_with_syste
     )
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
 async def test_async_generate_topic_names_partial_success(
     mock_data,
 ):
@@ -276,6 +277,7 @@ async def test_async_generate_topic_names_partial_success(
 
 
 @pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
 async def test_async_generate_topic_cluster_names_partial_success(
     mock_data,
 ):
