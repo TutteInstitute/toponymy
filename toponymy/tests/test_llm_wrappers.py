@@ -5,8 +5,20 @@ import os
 
 from toponymy.llm_wrappers import LiteLLMNamer, repair_json_string_backslashes, FailFastLLMError
 from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
+<<<<<<< HEAD
 from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
 from toponymy.tests.helpers.llm_test_config import (validate_cluster_names, validate_topic_name, LITELLM_PROVIDER_CASES)
+=======
+from toponymy.tests.helpers.errors import (
+    make_openai_error,
+    OPENAI_FAIL_FAST,
+    OPENAI_RETRYABLE,
+    ANTHROPIC_FAIL_FAST,
+    ANTHROPIC_RETRYABLE,
+    make_anthropic_error,
+)
+from toponymy.tests.helpers.make_llm_data import (validate_cluster_names, validate_topic_name)
+>>>>>>> main
 import logging
 logger = logging.getLogger(__name__)
 
@@ -211,6 +223,60 @@ def anthropic_wrapper():
         wrapper = AnthropicNamer(api_key="dummy")
         return wrapper
 
+@pytest.mark.external
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
+def test_anthropic_connectivity_plain_sync_canary():
+    namer = AnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    result = namer.connectivity_status()
+
+    assert result["success"], (
+        f"Sync plain canary test failed for Anthropic:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+@pytest.mark.external
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
+def test_anthropic_connectivity_sync_system_canary():
+    namer = AnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+@pytest.mark.parametrize("error", ANTHROPIC_FAIL_FAST)
+def test_anthropic_topic_name_fail_fast_error(anthropic_wrapper, error):
+    with patch.object(
+        anthropic_wrapper.llm.messages,
+        "create",
+        side_effect=make_anthropic_error(error),
+    ):
+        with pytest.raises(FailFastLLMError):
+            result = anthropic_wrapper.generate_topic_name("test prompt")
+            logger.error(f"No exception raised! Got result: {result!r}")
+
+
+@pytest.mark.parametrize("error", ANTHROPIC_FAIL_FAST)
+def test_anthropic_topic_cluster_names_fail_fast_error(
+    anthropic_wrapper, error, mock_data
+):
+    with patch.object(
+        anthropic_wrapper.llm.messages,
+        "create",
+        side_effect=make_anthropic_error(error),
+    ):
+        with pytest.raises(FailFastLLMError):
+            result = anthropic_wrapper.generate_topic_cluster_names(
+                "test prompt",
+                mock_data["old_names"],
+            )
+            logger.error(f"No exception raised! Got result: {result!r}")
+
 def test_anthropic_generate_topic_name_success(anthropic_wrapper, mock_data):
     response = MockLLMResponse.create_anthropic_response(mock_data["valid_topic_name"])
     anthropic_wrapper.llm.messages.create = Mock(return_value=response)
@@ -246,11 +312,20 @@ def test_anthropic_generate_cluster_names_success_on_malformed_mapping(anthropic
     result = anthropic_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
+@pytest.mark.parametrize("error", ANTHROPIC_RETRYABLE)
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_anthropic_generate_topic_name_failure(anthropic_wrapper):
-    anthropic_wrapper.llm.messages.create = Mock(side_effect=Exception("API Error"))
+def test_anthropic_generate_topic_name_retry_exhausted_returns_empty(
+    anthropic_wrapper, error
+):
+    anthropic_wrapper.llm.messages.create = Mock(
+        side_effect=[make_anthropic_error(error) for _ in range(3)]
+    )
+
     result = anthropic_wrapper.generate_topic_name("test prompt")
+
     assert result == ""
+    assert anthropic_wrapper.llm.messages.create.call_count == 3
+
 
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_anthropic_generate_topic_name_failure_malformed_json(anthropic_wrapper, mock_data):
@@ -259,11 +334,22 @@ def test_anthropic_generate_topic_name_failure_malformed_json(anthropic_wrapper,
     result = anthropic_wrapper.generate_topic_name("test prompt")
     assert result == ""
 
+@pytest.mark.parametrize("error", ANTHROPIC_RETRYABLE)
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_anthropic_generate_cluster_names_failure(anthropic_wrapper, mock_data):
-    anthropic_wrapper.llm.messages.create = Mock(side_effect=Exception("API Error"))
-    result = anthropic_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
+def test_anthropic_generate_cluster_names_retry_exhausted_returns_old_names(
+    anthropic_wrapper, mock_data, error
+):
+    anthropic_wrapper.llm.messages.create = Mock(
+        side_effect=[make_anthropic_error(error) for _ in range(3)]
+    )
+
+    result = anthropic_wrapper.generate_topic_cluster_names(
+        "test prompt",
+        mock_data["old_names"],
+    )
+
     assert result == mock_data["old_names"]
+    assert anthropic_wrapper.llm.messages.create.call_count == 3
 
 # OpenAI Tests
 @pytest.fixture
@@ -274,7 +360,7 @@ def openai_wrapper():
 
 @pytest.mark.external
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-def test_openai_connectivity_canary():
+def test_openai_connectivity_sync_plain_canary():
     """
     Canary test to verify live connectivity to OpenAI API. Tests the plain prompt path.
     """
@@ -287,7 +373,7 @@ def test_openai_connectivity_canary():
 
 @pytest.mark.external
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-def test_openai_connectivity_canary_sync_system():
+def test_openai_connectivity_sync_system_canary():
     """
     Canary test to verify live sync connectivity to the OpenAI API
     using the system prompt path.
@@ -305,14 +391,14 @@ def test_openai_connectivity_canary_sync_system():
     )
 
 @pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
-def test_openai_topic_name_fast_fail_error(openai_wrapper, error):
+def test_openai_topic_name_fail_fast_error(openai_wrapper, error):
     with patch.object(openai_wrapper.llm.chat.completions, 'create', side_effect=make_openai_error(error)):
         with pytest.raises(FailFastLLMError):
             result = openai_wrapper.generate_topic_name("test prompt")
             logger.error(f"No exception raised! Got result: {result!r}")
 
 @pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
-def test_openai_topic_cluster_names_fast_fail_error(openai_wrapper, error, mock_data):
+def test_openai_topic_cluster_names_fail_fast_error(openai_wrapper, error, mock_data):
     with patch.object(openai_wrapper.llm.chat.completions, 'create', side_effect=make_openai_error(error)):
         with pytest.raises(FailFastLLMError):
             result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])

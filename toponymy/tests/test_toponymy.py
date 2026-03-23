@@ -39,7 +39,7 @@ def test_toponymy(
         corpus_description="collection of sentences",
         lowest_detail_level=0.8,
         highest_detail_level=1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     model.fit(all_sentences, object_vectors, clusterable_vectors)
     embedded_topic_names = embedder.encode(model.topic_names_[1])
@@ -85,7 +85,7 @@ def test_toponymy_alternative_options(
         corpus_description="collection of sentences",
         lowest_detail_level=0.8,
         highest_detail_level=1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     topic_name_vectors = model.fit_predict(
         all_sentences,
@@ -137,7 +137,7 @@ def test_toponymy_alternative_options_2(
         corpus_description="collection of sentences",
         lowest_detail_level=0.8,
         highest_detail_level=1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     topic_name_vectors = model.fit_predict(
         all_sentences,
@@ -310,7 +310,7 @@ def test_toponymy_with_ollama(
                     corpus_description="collection of sentences",
                     lowest_detail_level=0.8,
                     highest_detail_level=1.0,
-                    show_progress_bars=True,
+                    verbose=True,
                 )
 
                 model.fit(all_sentences, object_vectors, clusterable_vectors)
@@ -505,7 +505,7 @@ def test_toponymy_async_ollama(
                     corpus_description="collection of sentences",
                     lowest_detail_level=0.8,
                     highest_detail_level=1.0,
-                    show_progress_bars=True,
+                    verbose=True,
                 )
 
                 topic_name_vectors = model.fit_predict(
@@ -839,7 +839,7 @@ def test_toponymy_with_mocked_ollama(
             corpus_description="collection of sentences",
             lowest_detail_level=0.8,
             highest_detail_level=1.0,
-            show_progress_bars=True,
+            verbose=True,
         )
 
         model.fit(all_sentences, object_vectors, clusterable_vectors)

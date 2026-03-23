@@ -10,8 +10,20 @@ from openai import (
     APIError,
 )
 
-## Open AI errors
+from anthropic import (
+    AuthenticationError as AnthropicAuthenticationError,
+    PermissionDeniedError as AnthropicPermissionDeniedError,
+    BadRequestError as AnthropicBadRequestError,
+    NotFoundError as AnthropicNotFoundError,
+    RateLimitError as AnthropicRateLimitError,
+    APITimeoutError as AnthropicAPITimeoutError,
+    APIConnectionError as AnthropicAPIConnectionError,
+    APIStatusError as AnthropicAPIStatusError,
+)
 
+TEST_ERROR_MESSAGE = "test error"
+
+## Open AI errors
 OPENAI_FAIL_FAST = (
     AuthenticationError,
     PermissionDeniedError,
@@ -26,7 +38,7 @@ OPENAI_RETRYABLE = (
     APIError,
 )
 
-STATUS_CODES = {
+OPENAI_STATUS_CODES = {
     BadRequestError: 400,
     AuthenticationError: 401,
     PermissionDeniedError: 403,
@@ -34,14 +46,22 @@ STATUS_CODES = {
     RateLimitError: 429,
 }
 
+def make_httpx_request(url: str) -> httpx.Request:
+    return httpx.Request("POST", url)
+
+
+def make_httpx_response(
+    status_code: int,
+    request: httpx.Request,
+) -> httpx.Response:
+    return httpx.Response(status_code, request=request)
+
 
 def make_openai_error(error_class):
     message = "test error"
-    request = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
-
-    status = STATUS_CODES.get(error_class, 500)
-
-    response = httpx.Response(status, request=request)
+    request = make_httpx_request("https://api.openai.com/v1/chat/completions")
+    status = OPENAI_STATUS_CODES.get(error_class, 500)
+    response = make_httpx_response(status, request)
 
     body = {
         "error": {
@@ -71,3 +91,62 @@ def make_openai_error(error_class):
 
     else:
         raise ValueError(f"Unknown error class: {error_class}")
+
+
+## Anthropic errors
+ANTHROPIC_FAIL_FAST = (
+    AnthropicAuthenticationError,
+    AnthropicPermissionDeniedError,
+    AnthropicBadRequestError,
+    AnthropicNotFoundError,
+)
+
+ANTHROPIC_RETRYABLE = (
+    AnthropicRateLimitError,
+    AnthropicAPITimeoutError,
+    AnthropicAPIConnectionError,
+    AnthropicAPIStatusError,
+)
+
+ANTHROPIC_STATUS_CODES = {
+    AnthropicBadRequestError: 400,
+    AnthropicAuthenticationError: 401,
+    AnthropicPermissionDeniedError: 403,
+    AnthropicNotFoundError: 404,
+    AnthropicRateLimitError: 429,
+}
+
+
+def make_anthropic_error(error_class):
+    message = TEST_ERROR_MESSAGE
+    request = make_httpx_request("https://api.anthropic.com/v1/messages")
+    status = ANTHROPIC_STATUS_CODES.get(error_class, 500)
+    response = make_httpx_response(status, request)
+
+    body = {
+        "type": "error",
+        "error": {
+            "type": "test_error",
+            "message": message,
+        },
+    }
+
+    if error_class in (
+        AnthropicAuthenticationError,
+        AnthropicPermissionDeniedError,
+        AnthropicBadRequestError,
+        AnthropicNotFoundError,
+        AnthropicRateLimitError,
+    ):
+        return error_class(message=message, response=response, body=body)
+
+    if error_class is AnthropicAPITimeoutError:
+        return error_class(request=request)
+
+    if error_class is AnthropicAPIConnectionError:
+        return error_class(message=message, request=request)
+
+    if error_class is AnthropicAPIStatusError:
+        return error_class(message=message, response=response, body=body)
+
+    raise ValueError(f"Unknown error class: {error_class}")
