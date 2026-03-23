@@ -1921,6 +1921,12 @@ except:
 try:
     import anthropic
     import time
+    from anthropic import (
+        AuthenticationError as AnthropicAuthenticationError,
+        PermissionDeniedError as AnthropicPermissionDeniedError,
+        BadRequestError as AnthropicBadRequestError,
+        NotFoundError as AnthropicNotFoundError
+    )
 
     class AnthropicNamer(LLMWrapper):
         """
@@ -1963,6 +1969,7 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncAnthropic wrapper instead.
         """
+        FAIL_FAST_EXCEPTIONS = (AnthropicAuthenticationError, AnthropicPermissionDeniedError, AnthropicBadRequestError, AnthropicNotFoundError)
 
         def __init__(
             self,
@@ -2054,6 +2061,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
         """
+        FAIL_FAST_EXCEPTIONS = (AnthropicAuthenticationError, AnthropicPermissionDeniedError, AnthropicBadRequestError, AnthropicNotFoundError)
 
         def __init__(
             self,
@@ -2111,36 +2119,6 @@ try:
                 )
                 return response.content[0].text
 
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
 
     class BatchAnthropicNamer(AsyncLLMWrapper):
         """
