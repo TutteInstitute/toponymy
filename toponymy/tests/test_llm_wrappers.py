@@ -5,10 +5,7 @@ import os
 
 from toponymy.llm_wrappers import LiteLLMNamer, repair_json_string_backslashes, FailFastLLMError
 from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
-<<<<<<< HEAD
-from toponymy.tests.helpers.errors import make_openai_error, OPENAI_FAIL_FAST, OPENAI_RETRYABLE
 from toponymy.tests.helpers.llm_test_config import (validate_cluster_names, validate_topic_name, LITELLM_PROVIDER_CASES)
-=======
 from toponymy.tests.helpers.errors import (
     make_openai_error,
     OPENAI_FAIL_FAST,
@@ -17,8 +14,6 @@ from toponymy.tests.helpers.errors import (
     ANTHROPIC_RETRYABLE,
     make_anthropic_error,
 )
-from toponymy.tests.helpers.make_llm_data import (validate_cluster_names, validate_topic_name)
->>>>>>> main
 import logging
 logger = logging.getLogger(__name__)
 
