@@ -10,6 +10,7 @@ import pytest
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
+from toponymy.tests.helpers.make_llm_data import make_mock_data
 
 @pytest.fixture(scope="function")
 def llm():
@@ -35,6 +36,10 @@ def async_llm():
     #     max_concurrent_requests=4,
     # )
 
+@pytest.fixture
+def mock_data():
+    """Make mock data for testing LLM responses."""
+    return make_mock_data()
 
 @pytest.fixture(scope="function")
 def embedder():

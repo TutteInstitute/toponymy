@@ -10,11 +10,9 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict
+from typing import List, Optional, Union, Dict, Generic, TypeVar
 from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
 from dataclasses import dataclass
-from typing import Generic, Optional, TypeVar
-
 
 import re
 import os
@@ -83,7 +81,7 @@ class LLMErrorHandlingMixin:
 
     def _handle_exception(self, e: Exception) -> None:
         if isinstance(e, InvalidLLMInputError):
-            raise
+            raise e
 
         if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
             raise FailFastLLMError(
@@ -94,7 +92,7 @@ class LLMErrorHandlingMixin:
                 original_exception=e,
             ) from None
 
-        raise
+        raise e
 
     async def _safe_call_with_retry_result(
         self,
@@ -374,19 +372,48 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
         """
         return True
 
-    def test_llm_connectivity(self) -> str:
-        result = self.connectivity_status()
+    def test_llm_connectivity(
+        self,
+        prompt: str = (
+            "Identify yourself and explain that you will be providing "
+            "topic names for clusters in JSON format"
+        ),
+        *,
+        system_prompt: str | None = None,
+    ) -> str:
+        result = self.connectivity_status(
+            prompt=prompt,
+            system_prompt=system_prompt,
+        )
+
         if result["success"]:
-            logger.info(f" Connected to {result['wrapper']} using {result['model']}")
+            logger.info(
+                " Connected to %s using %s",
+                result["wrapper"],
+                result["model"],
+            )
             return result["response"]
-        else:
-            logger.warning(f"  Failed to connect to {result['wrapper']} using {result['model']}")
-            logger.warning(f"  Cause:  {result['error_type']}: {result['error_message']}")
-            return "<error>"
+
+        logger.warning(
+            "  Failed to connect to %s using %s",
+            result["wrapper"],
+            result["model"],
+        )
+        logger.warning(
+            "  Cause:  %s: %s",
+            result["error_type"],
+            result["error_message"],
+        )
+        return "<error>"
 
     def connectivity_status(
-       self,
-        prompt="Identify yourself and explain that you will be providing topic names for clusters in JSON format",
+        self,
+        prompt: str = (
+            "Identify yourself and explain that you will be providing "
+            "topic names for clusters in JSON format"
+        ),
+        *,
+        system_prompt: str | None = None,
     ) -> dict:
         result = {
             "success": False,
@@ -397,16 +424,31 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
             "error_message": None,
             "original_exception": None,
         }
+
         try:
-            response = self._call_llm(prompt, temperature=0.4, max_tokens=128)
+            if system_prompt is None:
+                response = self._call_llm(
+                    prompt,
+                    temperature=0.4,
+                    max_tokens=128,
+                )
+            else:
+                response = self._call_llm_with_system_prompt(
+                    system_prompt,
+                    prompt,
+                    temperature=0.4,
+                    max_tokens=128,
+                )
+
             result["success"] = True
             result["response"] = response
+
         except Exception as e:
             result["error_type"] = type(e).__name__
             result["error_message"] = str(e)
             result["original_exception"] = e
-        return result
 
+        return result
 
 class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
 
@@ -765,19 +807,101 @@ class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
         """
         return True
 
-    def test_llm_connectivity(
-        self,
-        prompt="Identify yourself and explain that you will be providing topic names for clusters",
-    ) -> str:
-        try:
-            response = asyncio.run(
-                self._call_llm_batch([prompt], temperature=0.4, max_tokens=128)
-            )
-            return response[0]
-        except Exception as e:
-            warn(f"Failed to test LLM connectivity with {self.__class__.__name__}: {e}")
-            return "<error>"
+    async def test_llm_connectivity(self) -> str:
+        result = await self.connectivity_status()
 
+        if result["success"]:
+            logger.info(
+                " Connected to %s using %s",
+                result["wrapper"],
+                result["model"],
+            )
+            return result["response"]
+
+        logger.warning(
+            "  Failed to connect to %s using %s",
+            result["wrapper"],
+            result["model"],
+        )
+        logger.warning(
+            "  Cause:  %s: %s",
+            result["error_type"],
+            result["error_message"],
+        )
+
+        return "<error>"
+
+    async def connectivity_status(
+        self,
+        prompt: str = (
+            "Identify yourself and explain that you will be providing "
+            "topic names for clusters in JSON format"
+        ),
+        *,
+        system_prompt: str | None = None,
+    ) -> dict:
+        result = {
+            "success": False,
+            "model": self.model,
+            "wrapper": self.__class__.__name__,
+            "response": None,
+            "error_type": None,
+            "error_message": None,
+            "original_exception": None,
+        }
+
+        try:
+            if system_prompt is None:
+                try:
+                    response = await self._call_single_llm(
+                        prompt, temperature=0.4, max_tokens=128
+                    )
+                except NotImplementedError:
+                    responses = await self._call_llm_batch(
+                        [prompt], temperature=0.4, max_tokens=128
+                    )
+                    if not responses:
+                        raise RuntimeError("Connectivity probe returned no responses")
+                    response = responses[0]
+            else:
+                try:
+                    response = await self._call_single_llm_with_system(
+                        system_prompt,
+                        prompt,
+                        temperature=0.4,
+                        max_tokens=128,
+                    )
+                except NotImplementedError:
+                    responses = await self._call_llm_with_system_prompt_batch(
+                        [system_prompt],
+                        [prompt],
+                        temperature=0.4,
+                        max_tokens=128,
+                    )
+                    if not responses:
+                        raise RuntimeError("Connectivity probe returned no responses")
+                    response = responses[0]
+
+            if isinstance(response, CallResult):
+                if not response.ok:
+                    raise response.error
+                response = response.value
+
+            result["success"] = True
+            result["response"] = response
+
+        except Exception as e:
+            result["error_type"] = type(e).__name__
+            result["error_message"] = str(e)
+            result["original_exception"] = e
+
+        return result
+
+    async def close(self) -> None:
+        """
+        Optional cleanup hook for LLM wrappers that manage network clients or connection pools.
+        """
+        pass
 
 class LLMWrapperImportError(ImportError):
     """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
