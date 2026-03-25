@@ -1,5 +1,5 @@
 import string
-from warnings import warn
+from warnings import warn, filterwarnings
 
 import tokenizers
 import transformers
@@ -25,7 +25,14 @@ logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 T = TypeVar("T")
-_json_mode_support_cache: dict[str, bool] = {}
+
+# Ignore internal litellm warning
+filterwarnings(
+    "ignore",
+    message="Support for class-based `config` is deprecated",
+    category=DeprecationWarning,
+    module="litellm",
+)
 
 @dataclass
 class CallResult(Generic[T]):
@@ -3979,9 +3986,9 @@ try:
 
         use_json_object: bool, optional
             Whether to request JSON object output via response_format={"type": "json_object"}.
-            If None (default), support is detected automatically by making a minimal probe call
-            to the model on initialization. Set to True to force JSON object mode, or False to
-            disable it. Explicitly setting this avoids the probe call overhead at initialization.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
 
         Attributes
         ----------
@@ -4014,68 +4021,41 @@ try:
             use_json_object: bool = None,
         ):
 
-            self.api_key = api_key # falls through to LiteLLM's internal handling, which checks env vars
+            self.api_key = api_key
             self.model = model
             self.api_base = api_base
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
-
-            if use_json_object is None:
-                try:
-                    self.use_json_object = self._probe_json_object_support()
-                except Exception:
-                    # Fail-safe: don't break init on probe issues
-                    self.use_json_object = False
-            else:
-                self.use_json_object = use_json_object
-
-        def _json_mode_cache_key(self) -> str:
-            return f"{self.model}|{self.api_base or 'default'}"
-
-        def _probe_json_object_support(self) -> bool:
-            """
-            Make a minimal call to test if json_object is supported.
-            Cached after first attempt.
-            """
-            key = self._json_mode_cache_key()
-
-            if key in _json_mode_support_cache:
-                return _json_mode_support_cache[key]
-
+            self.use_json_object = use_json_object # set by user
+            self._resolved_use_json_object: bool | None = None # set internally
+            filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+                module="pydantic",
+            )
+            filterwarnings(
+                "ignore",
+                message="Use 'content=<...>' to upload raw bytes/text content",
+                category=DeprecationWarning,
+                module="httpx",
+            )
+        def _detect_json_object_support(self) -> bool:
             try:
-                response = litellm.completion(
-                    model=self.model,
-                    messages=[{"role": "user", "content": "Return {}"}],
-                    max_tokens=5,
-                    temperature=0,
-                    api_key=self.api_key,
-                    api_base=self.api_base,
-                    response_format={"type": "json_object"},
-                )
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                return False
 
-                # If we got here without exception → assume json_objectsupported
-                _json_mode_support_cache[key] = True
-                return True
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
 
-            except Exception as e:
-                # Only treat "unsupported param" style errors as False
-                msg = str(e).lower()
-
-                unsupported_signals = [
-                    "response_format",
-                    "json_object",
-                    "not supported",
-                    "invalid param",
-                    "unexpected keyword",
-                ]
-
-                if any(s in msg for s in unsupported_signals):
-                    _json_mode_support_cache[key] = False
-                    return False
-
-                # Otherwise: real failure (rate limit, auth, etc.)
-                raise
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
 
         def _completion_kwargs(
             self,
@@ -4094,7 +4074,7 @@ try:
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 
-            if self.use_json_object:
+            if self._should_use_json_object():
                 kwargs["response_format"] = {"type": "json_object"}
 
             return kwargs
@@ -4173,9 +4153,9 @@ try:
 
         use_json_object: bool, optional
             Whether to request JSON object output via response_format={"type": "json_object"}.
-            If None (default), support is detected automatically by making a minimal probe call
-            to the model on initialization. Set to True to force JSON object mode, or False to
-            disable it. Explicitly setting this avoids the probe call on the first call.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
 
         Attributes:
         -----------
@@ -4215,48 +4195,25 @@ try:
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
             self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
             self.use_json_object = use_json_object
-            self._json_mode_checked = False
+            self._resolved_use_json_object: bool | None = None
 
-        def _json_mode_cache_key(self) -> str:
-            return f"{self.model}|{self.api_base or 'default'}"
-
-        async def _probe_json_object_support_async(self) -> bool:
-            key = self._json_mode_cache_key()
-
-            if key in _json_mode_support_cache:
-                return _json_mode_support_cache[key]
-
+        def _detect_json_object_support(self) -> bool:
             try:
-                await litellm.acompletion(
-                    model=self.model,
-                    messages=[{"role": "user", "content": "Return {}"}],
-                    max_tokens=5,
-                    temperature=0,
-                    api_key=self.api_key,
-                    api_base=self.api_base,
-                    response_format={"type": "json_object"},
-                )
-                _json_mode_support_cache[key] = True
-                return True
-
-            except Exception as e:
-                msg = str(e).lower()
-                if "response_format" in msg or "not supported" in msg:
-                    _json_mode_support_cache[key] = False
-                    return False
-                raise
-
-        async def _ensure_json_mode_checked(self):
-            if self.use_json_object is not None or self._json_mode_checked:
-                return
-
-            try:
-                self.use_json_object = await self._probe_json_object_support_async()
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
             except Exception:
-                self.use_json_object = False
+                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                return False
 
-            self._json_mode_checked = True
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
 
         def _completion_kwargs(
             self,
@@ -4275,7 +4232,7 @@ try:
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 
-            if self.use_json_object:
+            if self._should_use_json_object():
                 kwargs["response_format"] = {"type": "json_object"}
 
             return kwargs
@@ -4286,7 +4243,6 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-            await self._ensure_json_mode_checked()
 
             async with self.semaphore:
                 response = await litellm.acompletion(
@@ -4307,7 +4263,6 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-            await self._ensure_json_mode_checked()
 
             async with self.semaphore:
                 response = await litellm.acompletion(

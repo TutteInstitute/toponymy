@@ -11,6 +11,10 @@ from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 from toponymy.tests.helpers.llm_test_config import make_mock_data
+import litellm
+
+# fallback to httpx transport for testing to avoid aiohttp issues in test environments
+litellm.disable_aiohttp_transport = True
 
 @pytest.fixture(scope="function")
 def llm():

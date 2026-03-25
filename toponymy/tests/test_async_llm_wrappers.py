@@ -1056,6 +1056,18 @@ async def test_async_wrapper_invalid_input(async_openai_wrapper):
 
 
 # LiteLLM Tests
+@pytest_asyncio.fixture
+async def async_litellm_wrapper_mock():
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch('litellm.acompletion', return_value=mock_client):
+        wrapper = AsyncLiteLLMNamer(api_key="dummy")
+        try:
+            yield wrapper
+        finally:
+            await wrapper.close()
+
+
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)

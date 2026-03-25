@@ -876,7 +876,7 @@ def test_replicate_generate_cluster_names_failure(replicate_wrapper, mock_data):
 # LiteLLM Tests
 @pytest.mark.external
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
-def test_litellm_connectivity_canary(provider_cfg):
+def test_litellm_connectivity_canary_sync_plain(provider_cfg):
     """
     Canary test to verify live connectivity to LiteLLM. Tests the plain prompt path.
     """
