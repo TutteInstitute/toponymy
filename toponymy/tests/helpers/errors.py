@@ -58,7 +58,7 @@ def make_httpx_response(
 
 
 def make_openai_error(error_class):
-    message = "test error"
+    message = TEST_ERROR_MESSAGE
     request = make_httpx_request("https://api.openai.com/v1/chat/completions")
     status = OPENAI_STATUS_CODES.get(error_class, 500)
     response = make_httpx_response(status, request)

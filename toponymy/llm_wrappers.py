@@ -3998,10 +3998,12 @@ try:
         extra_prompting: str
             Additional instructions appended to the prompt.
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. This wrapper does.
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts 
+            if unsupported for a given model.
 
-        use_response_format: bool
+        use_json_object: bool
             Whether response_format={"type": "json_object"} will be sent.
         """
         FAIL_FAST_EXCEPTIONS = (
@@ -4019,6 +4021,7 @@ try:
             api_base: str = None,
             llm_specific_instructions=None,
             use_json_object: bool = None,
+            disable_system_prompts: bool = False,
         ):
 
             self.api_key = api_key
@@ -4029,6 +4032,9 @@ try:
             )
             self.use_json_object = use_json_object # set by user
             self._resolved_use_json_object: bool | None = None # set internally
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+
             filterwarnings(
                 "ignore",
                 message="Pydantic serializer warnings",
@@ -4041,6 +4047,47 @@ try:
                 category=DeprecationWarning,
                 module="httpx",
             )
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+        def _detect_system_prompt_support(self) -> bool:
+            try:
+                return litellm.supports_system_messages(model=self.model)
+            except Exception:
+                logger.warning(
+                    f"Failed to detect system prompt support for model {self.model}, assuming not supported"
+                )
+                return False
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
         def _detect_json_object_support(self) -> bool:
             try:
                 supported = litellm.get_supported_openai_params(model=self.model)
@@ -4079,17 +4126,29 @@ try:
 
             return kwargs
 
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        def _completion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
             response = litellm.completion(
                 **self._completion_kwargs(
-                    messages=[
-                        {"role": "user", "content": prompt + self.extra_prompting}
-                    ],
+                    messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
             )
             return response.choices[0].message.content
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            return self._completion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
         def _call_llm_with_system_prompt(
             self,
@@ -4098,17 +4157,40 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-            response = litellm.completion(
-                **self._completion_kwargs(
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt + self.extra_prompting},
-                    ],
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+
+            try:
+                result = self._completion_with_messages(
+                    messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-            )
-            return response.choices[0].message.content
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return self._completion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
 
 
     class AsyncLiteLLMNamer(AsyncLLMWrapper):
@@ -4165,9 +4247,10 @@ try:
         extra_prompting: str
             Additional instructions specific to the LLM, appended to the prompt.
 
-        supports_system_prompts: bool
-            Indicates whether the model supports system prompts, detected automatically
-            via LiteLLM's model info.
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts 
+            if unsupported for a given model.
         """
 
         FAIL_FAST_EXCEPTIONS = (
@@ -4183,9 +4266,10 @@ try:
             api_key: str = None,
             model: str = "openai/gpt-4o-mini",
             api_base: str = None,
-            llm_specific_instructions=None,
+            llm_specific_instructions: str = None,
             max_concurrent_requests: int = 10,
-            use_json_object: bool = None,
+            use_json_object:  bool | None = None,
+            disable_system_prompts:  bool = False,
         ):
 
             self.api_key = api_key
@@ -4198,6 +4282,48 @@ try:
 
             self.use_json_object = use_json_object
             self._resolved_use_json_object: bool | None = None
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+        def _detect_system_prompt_support(self) -> bool:
+            try:
+                return litellm.supports_system_messages(model=self.model)
+            except Exception:
+                logger.warning(
+                    f"Failed to detect system prompt support for model {self.model}, assuming not supported"
+                )
+                return False
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
 
         def _detect_json_object_support(self) -> bool:
             try:
@@ -4237,24 +4363,36 @@ try:
 
             return kwargs
 
+
+        async def _acompletion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            async with self.semaphore:
+                response = await litellm.acompletion(
+                    **self._completion_kwargs(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            return response.choices[0].message.content
+
         async def _call_single_llm(
             self,
             prompt: str,
             temperature: float,
             max_tokens: int,
         ) -> str:
-
-            async with self.semaphore:
-                response = await litellm.acompletion(
-                    **self._completion_kwargs(
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                )
-            return response.choices[0].message.content
+            return await self._acompletion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
 
         async def _call_single_llm_with_system(
             self,
@@ -4263,22 +4401,41 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-
-            async with self.semaphore:
-                response = await litellm.acompletion(
-                    **self._completion_kwargs(
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+            try:
+            # If the model doesn't support system prompts, this will raise an error which we 
+            # catch to disable system prompt usage for future calls. Everything else raises as normal.
+                result = await self._acompletion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 )
-            return response.choices[0].message.content
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return await self._acompletion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
 
         async def close(self):
             """No-op for parity with other async wrappers."""
