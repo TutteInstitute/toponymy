@@ -3990,6 +3990,22 @@ try:
             for the specified model. Set to True to force JSON object mode, or False to
             disable it.
 
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts 
+            if unsupported for a given model.
+
+        completion_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
         Attributes
         ----------
         model: str
@@ -3997,11 +4013,6 @@ try:
 
         extra_prompting: str
             Additional instructions appended to the prompt.
-
-        disable_system_prompts: bool, False
-            Set to True to override to use plain calls instead of system prompts.
-            If False (default), system prompt support is detected automatically and will flatten system prompts 
-            if unsupported for a given model.
 
         use_json_object: bool
             Whether response_format={"type": "json_object"} will be sent.
@@ -4022,6 +4033,7 @@ try:
             llm_specific_instructions=None,
             use_json_object: bool = None,
             disable_system_prompts: bool = False,
+            completion_kwargs: dict[str, Any] | None = None,
         ):
 
             self.api_key = api_key
@@ -4034,6 +4046,7 @@ try:
             self._resolved_use_json_object: bool | None = None # set internally
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
+            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
 
             filterwarnings(
                 "ignore",
@@ -4110,15 +4123,17 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> dict:
-            kwargs = {
+            kwargs = dict(self.completion_kwargs)
+            kwargs.update({
                 "model": self.model,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
-                "api_key": self.api_key,
-            }
+            })
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
 
-            if self.api_base:
+            if self.api_base is not None:
                 kwargs["api_base"] = self.api_base
 
             if self._should_use_json_object():
@@ -4233,11 +4248,26 @@ try:
             This can be adjusted based on your application's needs and the rate limits of
             the provider. Higher values may improve throughput but could lead to rate limiting.
 
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts 
+            if unsupported for a given model.
+
         use_json_object: bool, optional
             Whether to request JSON object output via response_format={"type": "json_object"}.
             If None (default), support is detected automatically by check if response_format is supported
             for the specified model. Set to True to force JSON object mode, or False to
             disable it.
+        completion_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
 
         Attributes:
         -----------
@@ -4246,11 +4276,6 @@ try:
 
         extra_prompting: str
             Additional instructions specific to the LLM, appended to the prompt.
-
-        disable_system_prompts: bool, False
-            Set to True to override to use plain calls instead of system prompts.
-            If False (default), system prompt support is detected automatically and will flatten system prompts 
-            if unsupported for a given model.
         """
 
         FAIL_FAST_EXCEPTIONS = (
@@ -4270,6 +4295,7 @@ try:
             max_concurrent_requests: int = 10,
             use_json_object:  bool | None = None,
             disable_system_prompts:  bool = False,
+            completion_kwargs: dict[str, Any] | None = None,
         ):
 
             self.api_key = api_key
@@ -4284,6 +4310,7 @@ try:
             self._resolved_use_json_object: bool | None = None
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
+            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
 
         @property
         def supports_system_prompts(self) -> bool:
@@ -4347,15 +4374,18 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> dict:
-            kwargs = {
+            kwargs = dict(self.completion_kwargs)
+            kwargs.update({
                 "model": self.model,
                 "messages": messages,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
-                "api_key": self.api_key,
-            }
+            })
 
-            if self.api_base:
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
                 kwargs["api_base"] = self.api_base
 
             if self._should_use_json_object():
