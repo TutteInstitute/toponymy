@@ -13,6 +13,9 @@ from toponymy.tests.helpers.errors import (
     ANTHROPIC_FAIL_FAST,
     ANTHROPIC_RETRYABLE,
     make_anthropic_error,
+    LITELLM_FAIL_FAST,
+    LITELLM_RETRYABLE,
+    make_litellm_error,
 )
 import logging
 logger = logging.getLogger(__name__)
@@ -33,7 +36,7 @@ class MockLLMResponse:
         return Response(content)
 
     @staticmethod
-    def create_openai_response(content: str):
+    def create_chat_response(content: str):
         class Choice:
             def __init__(self, content):
                 self.message = Mock(content=content)
@@ -400,35 +403,35 @@ def test_openai_topic_cluster_names_fail_fast_error(openai_wrapper, error, mock_
             logger.error(f"No exception raised! Got result: {result!r}")
 
 def test_openai_generate_topic_name_success(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["valid_topic_name"])
+    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
 
     result = openai_wrapper.generate_topic_name("test prompt")
     validate_topic_name(result)
 
 def test_openai_generate_topic_name_success_system_prompt(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["valid_topic_name"])
+    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
 
     result = openai_wrapper.generate_topic_name({"system": "system prompt", "user": "test prompt"})
     validate_topic_name(result)
 
 def test_openai_generate_cluster_names_success(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["valid_cluster_names"])
+    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
 
     result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_openai_generate_cluster_names_success_system_prompt(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["valid_cluster_names"])
+    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
 
     result = openai_wrapper.generate_topic_cluster_names({"system": "system prompt", "user": "test prompt"}, mock_data["old_names"])
     validate_cluster_names(result)
 
 def test_openai_generate_cluster_names_success_on_malformed_mapping(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["malformed_mapping"])
+    response = MockLLMResponse.create_chat_response(mock_data["malformed_mapping"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
 
     result = openai_wrapper.generate_topic_cluster_names("test prompt", mock_data["old_names"])
@@ -448,7 +451,7 @@ def test_openai_generate_topic_name_retry_exhausted_returns_empty(openai_wrapper
     assert openai_wrapper.llm.chat.completions.create.call_count == 3
 
 def test_openai_generate_topic_name_failure_malformed_json(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_openai_response(mock_data["malformed_json"])
+    response = MockLLMResponse.create_chat_response(mock_data["malformed_json"])
     openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
     result = openai_wrapper.generate_topic_name("test prompt")
     assert result == ""
@@ -874,6 +877,14 @@ def test_replicate_generate_cluster_names_failure(replicate_wrapper, mock_data):
         assert result == mock_data["old_names"]
 
 # LiteLLM Tests
+
+@pytest.fixture
+def litellm_wrapper():
+    return LiteLLMNamer(
+        api_key="dummy",
+        model="openai/gpt-4o-mini",
+    )
+
 @pytest.mark.external
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
 def test_litellm_connectivity_canary_sync_plain(provider_cfg):
@@ -900,7 +911,6 @@ def test_litellm_connectivity_canary_sync_system(provider_cfg):
     namer = LiteLLMNamer(
         model=provider_cfg["model"],
     )
-
     result = namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
@@ -910,3 +920,233 @@ def test_litellm_connectivity_canary_sync_system(provider_cfg):
         f"Sync system canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
         f"  Error: {result['error_type']}: {result['error_message']}"
     )
+
+def test_litellm_generate_topic_name_success(litellm_wrapper, mock_data):
+    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=response):
+        result = litellm_wrapper.generate_topic_name("test prompt")
+
+    validate_topic_name(result)
+
+
+def test_litellm_generate_topic_name_success_system_prompt(litellm_wrapper, mock_data):
+    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=response):
+        result = litellm_wrapper.generate_topic_name(
+            {"system": "system prompt", "user": "test prompt"}
+        )
+
+    validate_topic_name(result)
+
+
+def test_litellm_generate_cluster_names_success(litellm_wrapper, mock_data):
+    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
+
+    with patch("litellm.completion", return_value=response):
+        result = litellm_wrapper.generate_topic_cluster_names(
+            "test prompt",
+            mock_data["old_names"],
+        )
+
+    validate_cluster_names(result)
+
+
+def test_litellm_generate_cluster_names_success_system_prompt(litellm_wrapper, mock_data):
+    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
+
+    with patch("litellm.completion", return_value=response):
+        result = litellm_wrapper.generate_topic_cluster_names(
+            {"system": "system prompt", "user": "test prompt"},
+            mock_data["old_names"],
+        )
+
+    validate_cluster_names(result)
+
+
+def test_litellm_generate_cluster_names_success_on_malformed_mapping(
+    litellm_wrapper,
+    mock_data,
+):
+    response = MockLLMResponse.create_chat_response(mock_data["malformed_mapping"])
+
+    with patch("litellm.completion", return_value=response):
+        result = litellm_wrapper.generate_topic_cluster_names(
+            "test prompt",
+            mock_data["old_names"],
+        )
+
+    validate_cluster_names(result)
+
+
+def test_litellm_generate_topic_name_failure_malformed_json(litellm_wrapper, mock_data):
+    response = MockLLMResponse.create_chat_response(mock_data["malformed_json"])
+
+    with patch("litellm.completion", return_value=response):
+        result = litellm_wrapper.generate_topic_name("test prompt")
+
+    assert result == ""
+
+@pytest.mark.parametrize("error_class", LITELLM_FAIL_FAST)
+def test_litellm_topic_name_fail_fast_error(litellm_wrapper, error_class):
+    with patch(
+        "litellm.completion",
+        side_effect=make_litellm_error(error_class),
+    ):
+        with pytest.raises(FailFastLLMError):
+            litellm_wrapper.generate_topic_name("test prompt")
+
+
+@pytest.mark.parametrize("error_class", LITELLM_FAIL_FAST)
+def test_litellm_topic_cluster_names_fail_fast_error(
+    litellm_wrapper,
+    error_class,
+    mock_data,
+):
+    with patch(
+        "litellm.completion",
+        side_effect=make_litellm_error(error_class),
+    ):
+        with pytest.raises(FailFastLLMError):
+            litellm_wrapper.generate_topic_cluster_names(
+                "test prompt",
+                mock_data["old_names"],
+            )
+
+
+@pytest.mark.parametrize("error_class", LITELLM_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
+def test_litellm_generate_topic_name_retry_exhausted_returns_empty(
+    litellm_wrapper,
+    error_class,
+):
+    with patch(
+        "litellm.completion",
+        side_effect=[make_litellm_error(error_class) for _ in range(3)],
+    ) as mock_completion:
+        result = litellm_wrapper.generate_topic_name("test prompt")
+
+    assert result == ""
+    assert mock_completion.call_count == 3
+
+
+@pytest.mark.parametrize("error_class", LITELLM_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:All retries exhausted")
+def test_litellm_generate_cluster_names_retry_exhausted_returns_old_names(
+    litellm_wrapper,
+    mock_data,
+    error_class,
+):
+    with patch(
+        "litellm.completion",
+        side_effect=[make_litellm_error(error_class) for _ in range(3)],
+    ) as mock_completion:
+        result = litellm_wrapper.generate_topic_cluster_names(
+            "test prompt",
+            mock_data["old_names"],
+        )
+
+    assert result == mock_data["old_names"]
+    assert mock_completion.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "use_json_object,detected_support,expected",
+    [
+        (True, False, True),
+        (False, True, False),
+        (None, True, True),
+        (None, False, False),
+    ],
+)
+def test_litellm_should_use_json_object(
+    use_json_object,
+    detected_support,
+    expected,
+):
+    wrapper = LiteLLMNamer(
+        model="openai/gpt-4o-mini",
+        use_json_object=use_json_object,
+    )
+
+    with patch.object(
+        wrapper,
+        "_detect_json_object_support",
+        return_value=detected_support,
+    ) as mock_detect:
+        first = wrapper._should_use_json_object()
+        second = wrapper._should_use_json_object()
+
+    assert first is expected
+    assert second is expected
+
+    if use_json_object is None:
+        assert mock_detect.call_count == 1
+    else:
+        mock_detect.assert_not_called()
+
+
+def test_litellm_system_prompt_probe_falls_back_and_caches(litellm_wrapper, mock_data):
+    unsupported_error = Exception("system messages are not supported")
+    good_response = MockLLMResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+
+    with patch(
+        "litellm.completion",
+        side_effect=[unsupported_error, good_response],
+    ) as mock_completion:
+        result = litellm_wrapper._call_llm_with_system_prompt(
+            system_prompt="system",
+            user_prompt="user",
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert litellm_wrapper._system_prompt_capability is False
+    assert mock_completion.call_count == 2
+
+
+def test_litellm_system_prompt_cached_false_flattens_immediately(
+    litellm_wrapper,
+    mock_data,
+):
+    litellm_wrapper._system_prompt_capability = False
+    good_response = MockLLMResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        litellm_wrapper._call_llm_with_system_prompt(
+            system_prompt="system",
+            user_prompt="user",
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    kwargs = mock_completion.call_args.kwargs
+    assert kwargs["messages"] == [
+        {"role": "user", "content": "System: system\n\nUser: user"}
+    ]
+
+
+def test_litellm_system_prompt_probe_success_caches_true(
+    litellm_wrapper,
+    mock_data,
+):
+    good_response = MockLLMResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+
+    with patch("litellm.completion", return_value=good_response):
+        result = litellm_wrapper._call_llm_with_system_prompt(
+            system_prompt="system",
+            user_prompt="user",
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert litellm_wrapper._system_prompt_capability is True

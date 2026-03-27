@@ -21,6 +21,19 @@ from anthropic import (
     APIStatusError as AnthropicAPIStatusError,
 )
 
+from litellm.exceptions import (
+    AuthenticationError as LiteLLMAuthenticationError,
+    PermissionDeniedError as LiteLLMPermissionDeniedError,
+    BadRequestError as LiteLLMBadRequestError,
+    NotFoundError as LiteLLMNotFoundError,
+    UnprocessableEntityError as LiteLLMUnprocessableEntityError,
+    RateLimitError as LiteLLMRateLimitError,
+    APIConnectionError as LiteLLMAPIConnectionError,
+    Timeout as LiteLLMTimeout,
+    InternalServerError as LiteLLMInternalServerError,
+    ServiceUnavailableError as LiteLLMServiceUnavailableError,
+)
+
 TEST_ERROR_MESSAGE = "test error"
 
 ## Open AI errors
@@ -148,5 +161,76 @@ def make_anthropic_error(error_class):
 
     if error_class is AnthropicAPIStatusError:
         return error_class(message=message, response=response, body=body)
+
+    raise ValueError(f"Unknown error class: {error_class}")
+
+# LiteLLM Errors
+
+LITELLM_FAIL_FAST = [
+    LiteLLMAuthenticationError,
+    LiteLLMPermissionDeniedError,
+    LiteLLMBadRequestError,
+    LiteLLMNotFoundError,
+    LiteLLMUnprocessableEntityError,
+]
+
+LITELLM_RETRYABLE = [
+    LiteLLMRateLimitError,
+    LiteLLMAPIConnectionError,
+    LiteLLMTimeout,
+    LiteLLMInternalServerError,
+    LiteLLMServiceUnavailableError,
+]
+
+LITELLM_STATUS_CODES = {
+    LiteLLMBadRequestError: 400,
+    LiteLLMAuthenticationError: 401,
+    LiteLLMPermissionDeniedError: 403,
+    LiteLLMNotFoundError: 404,
+    LiteLLMUnprocessableEntityError: 422,
+    LiteLLMRateLimitError: 429,
+    LiteLLMInternalServerError: 500,
+    LiteLLMServiceUnavailableError: 503,
+}
+
+def make_litellm_error(error_class, provider_name="openai", model="gpt-4"):
+    message = TEST_ERROR_MESSAGE
+    status = LITELLM_STATUS_CODES.get(error_class, 500)
+    request = make_httpx_request("https://api.openai.com/v1/chat/completions")
+    status = LITELLM_STATUS_CODES.get(error_class, 500)
+    response = make_httpx_response(status, request)
+
+    if error_class in (
+        LiteLLMAuthenticationError,
+        LiteLLMBadRequestError,
+        LiteLLMNotFoundError,
+        LiteLLMRateLimitError,
+        LiteLLMAPIConnectionError,
+        LiteLLMTimeout,
+        LiteLLMInternalServerError,
+        LiteLLMServiceUnavailableError,
+    ):
+        return error_class(
+            message=message,
+            llm_provider=provider_name,
+            model=model,
+        )
+    if error_class in (
+        LiteLLMPermissionDeniedError,
+        LiteLLMUnprocessableEntityError,
+    ):
+        return error_class(
+            message=message,
+            llm_provider=provider_name,
+            model=model,
+            response=response,
+        )
+    if error_class is LiteLLMAPIConnectionError:
+        return error_class(
+            message=message,
+            llm_provider=provider_name,
+            model=model,
+            request=request,
+        )
 
     raise ValueError(f"Unknown error class: {error_class}")

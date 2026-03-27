@@ -10,7 +10,7 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar
+from typing import List, Optional, Union, Dict, Generic, TypeVar, Any
 from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
 from dataclasses import dataclass
 
@@ -3992,7 +3992,7 @@ try:
 
         disable_system_prompts: bool, False
             Set to True to override to use plain calls instead of system prompts.
-            If False (default), system prompt support is detected automatically and will flatten system prompts 
+            If False (default), system prompt support is detected automatically and will flatten system prompts
             if unsupported for a given model.
 
         completion_kwargs : dict[str, Any], optional
@@ -4250,7 +4250,7 @@ try:
 
         disable_system_prompts: bool, False
             Set to True to override to use plain calls instead of system prompts.
-            If False (default), system prompt support is detected automatically and will flatten system prompts 
+            If False (default), system prompt support is detected automatically and will flatten system prompts
             if unsupported for a given model.
 
         use_json_object: bool, optional
@@ -4439,7 +4439,7 @@ try:
                     {"role": "user", "content": user_prompt + self.extra_prompting},
                 ]
             try:
-            # If the model doesn't support system prompts, this will raise an error which we 
+            # If the model doesn't support system prompts, this will raise an error which we
             # catch to disable system prompt usage for future calls. Everything else raises as normal.
                 result = await self._acompletion_with_messages(
                     messages=messages,

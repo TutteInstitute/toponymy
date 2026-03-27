@@ -19,7 +19,7 @@ litellm.disable_aiohttp_transport = True
 @pytest.fixture(scope="function")
 def llm():
     """Fixture for the LLM model."""
-    return HuggingFaceNamer("Qwen/Qwen2.5-0.5B-Instruct")
+    return HuggingFaceNamer("Qwen/Qwen2.5-0.5B-Instruct", device="cpu")
     # return HuggingFace("Qwen/Qwen3-0.6B", llm_specific_instructions=" /no_think")
 
 @pytest.fixture(scope="function")
@@ -33,6 +33,7 @@ def async_llm():
     return AsyncHuggingFaceNamer(
         "Qwen/Qwen2.5-0.5B-Instruct",
         max_concurrent_requests=4,
+        device="cpu",
     )
     # return AsyncHuggingFace(
     #     "Qwen/Qwen3-0.6B",
