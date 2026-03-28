@@ -378,19 +378,8 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
         """
         return True
 
-    def test_llm_connectivity(
-        self,
-        prompt: str = (
-            "Identify yourself and explain that you will be providing "
-            "topic names for clusters in JSON format"
-        ),
-        *,
-        system_prompt: str | None = None,
-    ) -> str:
-        result = self.connectivity_status(
-            prompt=prompt,
-            system_prompt=system_prompt,
-        )
+    def test_llm_connectivity(self) -> str:
+        result = self.connectivity_status()
 
         if result["success"]:
             logger.info(
@@ -415,10 +404,10 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
     def connectivity_status(
         self,
         prompt: str = (
-            "Identify yourself and explain that you will be providing "
-            "topic names for clusters in JSON format"
-        ),
-        *,
+            "Respond with exactly this JSON and nothing else.\n"
+            "Do not use markdown or code blocks.\n\n"
+            '{"status": "ok"}'
+            ),
         system_prompt: str | None = None,
     ) -> dict:
         result = {
@@ -3976,7 +3965,7 @@ try:
 
         model: str, optional
             The LiteLLM model string, e.g. "openai/gpt-4o-mini",
-            "anthropic/claude-3-5-sonnet-20241022", etc.
+            "anthropic/claude-haiku-4-5-20251001", etc.
 
         api_base: str, optional
             Optional LiteLLM/OpenAI-compatible API base. Alias-style convenience.
