@@ -60,6 +60,7 @@ LITELLM_PROVIDER_CASES = [
         {
             "provider_name": "OpenAI",
             "model": "openai/gpt-4o-mini",
+            "api_key_env": "OPENAI_API_KEY",
         },
         id="openai",
     ),
@@ -67,6 +68,7 @@ LITELLM_PROVIDER_CASES = [
         {
             "provider_name": "Anthropic",
             "model": "anthropic/claude-haiku-4-5-20251001",
+            "api_key_env": "ANTHROPIC_API_KEY",
         },
         id="anthropic",
     ),

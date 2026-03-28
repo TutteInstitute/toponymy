@@ -888,9 +888,9 @@ def litellm_wrapper():
 @pytest.mark.external
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
 def test_litellm_connectivity_canary_sync_plain(provider_cfg):
-    """
-    Canary test to verify live connectivity to LiteLLM. Tests the plain prompt path.
-    """
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
     namer = LiteLLMNamer(
         model=provider_cfg["model"],
     )
@@ -905,9 +905,10 @@ def test_litellm_connectivity_canary_sync_plain(provider_cfg):
 @pytest.mark.external
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
 def test_litellm_connectivity_canary_sync_system(provider_cfg):
-    """
-    Canary test to verify live sync connectivity to LiteLLM using the system prompt path.
-    """
+    if not os.getenv(provider_cfg["api_key_env"]):
+        print(f"Skipping test for {provider_cfg['provider_name']} because {provider_cfg['api_key_env']} is not set.")
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
     namer = LiteLLMNamer(
         model=provider_cfg["model"],
     )

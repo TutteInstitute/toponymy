@@ -3,7 +3,6 @@ import os
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 
-#import asyncio
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
@@ -27,7 +26,9 @@ from toponymy.tests.helpers.errors import (
     make_litellm_error
 )
 
-
+LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
+    "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
+)
 
 # Helper for async tests
 async def async_return(value):
@@ -1060,11 +1061,14 @@ async def async_litellm_wrapper():
 
 @pytest.mark.external
 @pytest.mark.asyncio
+# Temporary workaround for upstream LiteLLM async logging teardown noise.
+# Remove once LiteLLM cleanup is fixed
+@pytest.mark.filterwarnings(LITELLM_ASYNC_LOGGING_WARNING_FILTER)
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
 async def test_litellm_connectivity_canary_async_plain(provider_cfg):
-    """
-    Canary test verifying live async connectivity to LiteLLM using the plain prompt path.
-    """
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
     namer = AsyncLiteLLMNamer(
         model=provider_cfg["model"],
     )
@@ -1078,11 +1082,14 @@ async def test_litellm_connectivity_canary_async_plain(provider_cfg):
 
 @pytest.mark.external
 @pytest.mark.asyncio
+# Temporary workaround for upstream LiteLLM async logging teardown noise.
+# Remove once LiteLLM cleanup is fixed
+@pytest.mark.filterwarnings(LITELLM_ASYNC_LOGGING_WARNING_FILTER)
 @pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
 async def test_litellm_connectivity_canary_async_system(provider_cfg):
-    """
-    Canary test verifying live async connectivity to LiteLLM using the system prompt path.
-    """
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
     namer = AsyncLiteLLMNamer(
         model=provider_cfg["model"],
     )
