@@ -4056,15 +4056,6 @@ try:
                 return False
             return True
 
-        def _detect_system_prompt_support(self) -> bool:
-            try:
-                return litellm.supports_system_messages(model=self.model)
-            except Exception:
-                logger.warning(
-                    f"Failed to detect system prompt support for model {self.model}, assuming not supported"
-                )
-                return False
-
         def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
             message = str(exc).lower()
             return any(
@@ -4307,14 +4298,6 @@ try:
                 return False
             return True
 
-        def _detect_system_prompt_support(self) -> bool:
-            try:
-                return litellm.supports_system_messages(model=self.model)
-            except Exception:
-                logger.warning(
-                    f"Failed to detect system prompt support for model {self.model}, assuming not supported"
-                )
-                return False
 
         def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
             message = str(exc).lower()
