@@ -578,7 +578,7 @@ class TopicTree:
 
     def treemap(
         self,
-        margin: dict=dict(t=10, l=10, r=10, b=10)
+        margin: dict = None
     ):
         """
         Draws a hierarchical treemap of the TopicTree using plotly.express.treemap
@@ -588,6 +588,8 @@ class TopicTree:
         fig
             A `plotly.graph_objects.Figure` containing a tree map.
         """
+        if margin is None:
+            margin = dict(t=10, l=10, r=10, b=10)
         fig = None
         # The reason I wrap with this try/except block is
         # to avoid adding plotly as a dependency to Toponymy
