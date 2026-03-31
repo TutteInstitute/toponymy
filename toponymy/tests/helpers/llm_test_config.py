@@ -2,6 +2,7 @@ import json
 from typing import List
 import os
 import pytest
+from toponymy.llm_wrappers import AnthropicNamer, AsyncAnthropicNamer, AsyncAzureAINamer, AsyncCohereNamer, AsyncGoogleGeminiNamer, AsyncHuggingFaceNamer, AsyncLiteLLMNamer, AsyncOllamaNamer, AsyncOpenAINamer, AsyncTogether, AsyncVLLMNamer, AzureAINamer, BatchAnthropicNamer, BatchAzureAINamer, CohereBatchNamer, CohereNamer, GoogleGeminiNamer, HuggingFaceNamer, LiteLLMNamer, LlamaCppNamer, OllamaNamer, OpenAINamer, ReplicateNamer, TogetherNamer, VLLMNamer,, AsyncOpenAINamer AsyncLiteLLMNamer, GoogleGeminiNamer, HuggingFaceNamer, LiteLLMNamer, LlamaCppNamer, OpenAINamer
 
 
 # Mock responses for different scenarios
@@ -72,4 +73,40 @@ LITELLM_PROVIDER_CASES = [
         },
         id="anthropic",
     ),
+]
+
+SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
+    (OpenAINamer, {"api_key": "dummy"}),
+    (LiteLLMNamer, {}),
+]
+UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS =[
+    (LlamaCppNamer, {}),
+    (HuggingFaceNamer, {}),
+    (VLLMNamer, {}),
+    (CohereNamer, {}),
+    (AnthropicNamer, {}),
+    (TogetherNamer, {}),
+    (ReplicateNamer, {}),
+    (AzureAINamer, {}),
+    (OllamaNamer, {}),
+    (GoogleGeminiNamer, {}),
+]
+
+SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS = [
+    (AsyncOpenAINamer, {"api_key": "dummy"}),
+    (AsyncLiteLLMNamer, {}),
+]
+UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS =[
+    (AsyncHuggingFaceNamer, {}),
+    (AsyncVLLMNamer, {}),
+    (AsyncCohereNamer, {}),
+    (CohereBatchNamer, {}),
+    (AsyncAnthropicNamer, {}),
+    (BatchAnthropicNamer, {}),
+    (AsyncOpenAINamer, {}),
+    (AsyncTogether, {}),
+    (AsyncAzureAINamer, {}),
+    (BatchAzureAINamer, {}),
+    (AsyncOllamaNamer, {}),
+    (AsyncGoogleGeminiNamer, {}),
 ]
