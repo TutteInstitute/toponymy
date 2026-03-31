@@ -1,3 +1,5 @@
+import warnings
+
 import pytest
 from unittest.mock import Mock, patch
 import os
@@ -5,7 +7,13 @@ import os
 
 from toponymy.llm_wrappers import LiteLLMNamer, repair_json_string_backslashes, FailFastLLMError
 from toponymy.llm_wrappers import AnthropicNamer, OpenAINamer, CohereNamer, HuggingFaceNamer, AzureAINamer, LlamaCppNamer, OllamaNamer, GoogleGeminiNamer, TogetherNamer, ReplicateNamer, OllamaNamer, GoogleGeminiNamer
-from toponymy.tests.helpers.llm_test_config import (validate_cluster_names, validate_topic_name, LITELLM_PROVIDER_CASES)
+from toponymy.tests.helpers.llm_test_config import (
+    validate_cluster_names,
+    validate_topic_name,
+    LITELLM_PROVIDER_CASES,
+    SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
+    UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
+)
 from toponymy.tests.helpers.errors import (
     make_openai_error,
     OPENAI_FAIL_FAST,
@@ -103,6 +111,46 @@ class MockLLMResponse:
                 self.model.generate_content = Mock(return_value=MockText(text))
 
         return MockResponse(content)
+
+# Test callback support in all wrappers
+@pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
+def test_supported_namers_do_not_warn_on_callback(namer_cls, kwargs):
+    callback = lambda payload: None
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        namer_cls(callback=callback, **kwargs)
+
+    debug_warnings = [
+        w for w in record
+        if "debug callback" in str(w.message)
+    ]
+
+    assert len(debug_warnings) == 0
+    assert namer_cls._supports_debug_callback is True
+
+@pytest.mark.parametrize("namer_cls, kwargs", UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
+def test_unsupported_namers_warn_on_callback(namer_cls, kwargs):
+    callback = lambda payload: None
+
+    with pytest.warns(UserWarning, match="debug callback") as record:
+        namer_cls(callback=callback, **kwargs)
+    assert namer_cls._supports_debug_callback is False
+
+@pytest.mark.parametrize(
+    "namer_cls, kwargs",
+    SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS + UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
+)
+def test_no_warning_when_no_callback(namer_cls, kwargs):
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        namer_cls(callback=None, **kwargs)
+    debug_warnings = [
+        w for w in record
+        if "debug callback" in str(w.message)
+    ]
+
+    assert len(debug_warnings) == 0
 
 # LlamaCpp Tests
 @pytest.fixture

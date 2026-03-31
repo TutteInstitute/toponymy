@@ -10,7 +10,7 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar, Any
+from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
 from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
 from dataclasses import dataclass
 
@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 T = TypeVar("T")
+DebugCallback = Callable[[dict[str, Any]], None]
+
 
 # Ignore internal litellm warning
 filterwarnings(
@@ -154,6 +156,53 @@ class LLMErrorHandlingMixin:
             f"override _raise_fail_fast_from_batch_error: {error}"
         )
 
+
+class DebugCallbackMixin:
+    """
+    Mixin providing optional debug callback support for LLM wrappers.
+
+    This mixin allows wrappers to emit structured debug events (e.g., prompts,
+    raw LLM responses, errors, and metadata) to a user-supplied callback
+    function. The callback is intended for debugging, logging, or observability
+    purposes such as inspecting prompts/responses or recording them to a file.
+
+    Wrappers opt into emitting events by setting `_supports_debug_callback = True`.
+
+    The helper `_warn_if_debug_callback_unsupported` provides a check to warn if
+    a debug callback is provided but not supported.
+    """
+    _supports_debug_callback: bool = False
+    callback: DebugCallback | None = None
+
+    def _emit_debug_callback(self, payload: dict[str, Any]) -> None:
+        callback = getattr(self, "callback", None)
+        if callback is None:
+            return
+
+        try:
+            callback(
+                {
+                    "wrapper": self.__class__.__name__,
+                    "model": getattr(self, "model", None),
+                    **payload,
+                }
+            )
+        except Exception:
+            pass
+
+    def _warn_if_debug_callback_unsupported(self) -> None:
+        callback = getattr(self, "callback", None)
+
+        if callback is not None and not self._supports_debug_callback:
+            warn(
+                (
+                    f"{self.__class__.__name__} received a debug callback, but "
+                    "this wrapper does not currently support debug callback events."
+                ),
+                UserWarning,
+                stacklevel=2,
+            )
+
 def repair_json_string_backslashes(s: str) -> str:
     """
     Attempts to repair a string that should be JSON by escaping unescaped backslashes.
@@ -200,7 +249,7 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
     return result
 
 
-class LLMWrapper(LLMErrorHandlingMixin, ABC):
+class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
     FAIL_FAST_EXCEPTIONS: tuple = ()
 
     @abstractmethod
@@ -445,7 +494,7 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
 
         return result
 
-class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
+class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
     async def _call_single_llm(
         self, prompt: str, temperature: float, max_tokens: int
@@ -997,13 +1046,15 @@ try:
             Indicates whether the wrapper supports system prompts. For LlamaCpp, this is always False.
         """
 
-        def __init__(self, model_path: str, llm_specific_instructions=None, **kwargs):
+        def __init__(self, model_path: str, llm_specific_instructions=None, callback: DebugCallback | None = None, **kwargs):
             self.model_path = model_path
             for arg, val in kwargs.items():
                 if arg == "n_ctx":
                     continue
                 setattr(self, arg, val)
             self.llm = llama_cpp.Llama(model_path=model_path, **kwargs)
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -1079,8 +1130,10 @@ try:
             Indicates whether the wrapper supports system prompts. For Huggingface, this is always True.
         """
 
-        def __init__(self, model: str, llm_specific_instructions=None, **kwargs):
+        def __init__(self, model: str, llm_specific_instructions=None, callback: DebugCallback | None = None, **kwargs):
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
@@ -1128,9 +1181,12 @@ try:
             model: str,
             llm_specific_instructions: Optional[str] = None,
             max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
             **kwargs,
         ):
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.llm = transformers.pipeline("text-generation", model=model, **kwargs)
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
@@ -1228,8 +1284,10 @@ try:
             Indicates whether the wrapper supports system prompts. For Huggingface, this is always True.
         """
 
-        def __init__(self, model: str, llm_specific_instructions=None, **kwargs):
+        def __init__(self, model: str, llm_specific_instructions=None, callback: DebugCallback | None = None, **kwargs):
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.kwargs = kwargs
             self._start_engine()
             self.extra_prompting = (
@@ -1288,9 +1346,12 @@ try:
             model: str,
             llm_specific_instructions: Optional[str] = None,
             max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
             **kwargs,
         ):
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.kwargs = kwargs
             self._start_engine()
             self.extra_prompting = (
@@ -1428,6 +1489,7 @@ try:
             base_url: str = None,
             httpx_client: Optional[httpx.Client] = None,
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             if base_url is None:
                 base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
@@ -1449,6 +1511,8 @@ try:
                 msg = f"Model '{model}' not found, try one of {models}"
                 raise ValueError(msg)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -1545,6 +1609,7 @@ try:
             max_concurrent_requests: int = 10,
             base_url: str = None,
             httpx_client: Optional[httpx.Client] = None,
+            callback: DebugCallback | None = None,
         ):
             if base_url is None:
                 base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
@@ -1559,6 +1624,8 @@ try:
                 api_key=api_key, base_url=base_url, httpx_client=httpx_client
             )
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -1700,9 +1767,12 @@ try:
             llm_specific_instructions=None,
             polling_interval: int = 60,
             timeout: int = 7200,
+            callback: DebugCallback | None = None,
         ):
             self.client = cohere.ClientV2(api_key=api_key)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -1971,6 +2041,7 @@ try:
             api_key: str,
             model: str = "claude-haiku-4-5-20251001",
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
             if not api_key:
@@ -1980,6 +2051,8 @@ try:
 
             self.llm = anthropic.Anthropic(api_key=api_key)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2064,6 +2137,7 @@ try:
             model: str = "claude-haiku-4-5-20251001",
             llm_specific_instructions=None,
             max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
         ):
 
             api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
@@ -2074,6 +2148,8 @@ try:
 
             self.client = anthropic.AsyncAnthropic(api_key=api_key)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2174,9 +2250,12 @@ try:
             llm_specific_instructions=None,
             polling_interval: int = 60,
             timeout: int = 7200,
+            callback: DebugCallback | None = None,
         ):
             self.client = anthropic.Anthropic(api_key=api_key)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2444,6 +2523,7 @@ try:
         consider using the AsyncOpenAI wrapper instead.
         """
         FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
+        _supports_debug_callback = True
 
         def __init__(
             self,
@@ -2452,6 +2532,7 @@ try:
             base_url: str = None,
             http_client: "httpx.Client | None" = None,
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("OPENAI_API_KEY")
             if not api_key:
@@ -2463,6 +2544,8 @@ try:
                 api_key=api_key, base_url=base_url, http_client=http_client
             )
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2551,6 +2634,7 @@ try:
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
         FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
+        _supports_debug_callback = True
 
         def __init__(
             self,
@@ -2560,6 +2644,7 @@ try:
             max_concurrent_requests: int = 10,
             organization: str = None,
             base_url: str = None,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("OPENAI_API_KEY")
             if not api_key:
@@ -2569,6 +2654,8 @@ try:
 
             self.client = openai.AsyncOpenAI(api_key=api_key, organization=organization)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2674,6 +2761,7 @@ try:
             api_key: str,
             model: str = "meta-llama/Llama-3-8b-chat-hf",
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("TOGETHER_API_KEY")
             if not api_key:
@@ -2683,6 +2771,8 @@ try:
 
             self.client = together.Together(api_key=api_key)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2756,6 +2846,7 @@ try:
             model: str = "meta-llama/Llama-3-8b-chat-hf",
             llm_specific_instructions=None,
             max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("TOGETHER_API_KEY")
             if not api_key:
@@ -2765,6 +2856,8 @@ try:
 
             self.client = together.AsyncTogether(api_key=api_key)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -2899,6 +2992,7 @@ try:
             api_token: str = None,
             model: str = "meta/llama-2-70b-chat",
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             api_token = api_token or os.getenv("REPLICATE_API_TOKEN")
             if not api_token:
@@ -2908,6 +3002,8 @@ try:
 
             os.environ["REPLICATE_API_TOKEN"] = api_token
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -3009,10 +3105,12 @@ try:
             endpoint: str,
             model: str,
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             self.endpoint = endpoint
             self.model = model
-
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             api_key = api_key or os.getenv("AZURE_API_KEY")
             if not api_key:
                 raise ValueError(
@@ -3120,6 +3218,7 @@ try:
             model: str,
             llm_specific_instructions=None,
             max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("AZURE_API_KEY")
             if not api_key:
@@ -3136,7 +3235,8 @@ try:
                 raise ValueError(
                     "Azure model name is required. Provide the name of the Azure AI Foundry model to use."
                 )
-
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.endpoint = endpoint
             self.model = model
             self.client = AsyncChatCompletionsClient(
@@ -3282,6 +3382,7 @@ try:
             llm_specific_instructions=None,
             polling_interval: int = 60,
             timeout: int = 7200,
+            callback: DebugCallback | None = None,
         ):
             self.client = anthropic.Anthropic(api_key=api_key)
             self.model = model
@@ -3290,6 +3391,8 @@ try:
             )
             self.polling_interval = polling_interval
             self.timeout = timeout
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
 
         async def _call_llm_batch(
             self, prompts: List[str], temperature: float, max_tokens: int
@@ -3535,9 +3638,12 @@ try:
             model: str = "llama3.2",
             host: str = "http://localhost:11434",
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             self.client = ollama.Client(host=host)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -3616,9 +3722,12 @@ try:
             host: str = "http://localhost:11434",
             llm_specific_instructions=None,
             max_concurrent_requests: int = 5,
+            callback: DebugCallback | None = None,
         ):
             self.client = ollama.AsyncClient(host=host)
             self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -3755,6 +3864,7 @@ try:
             api_key: str,
             model: str = "gemini-1.5-flash",
             llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("GOOGLE_API_KEY")
             if not api_key:
@@ -3764,6 +3874,8 @@ try:
 
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(model)
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.model_name = model
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
@@ -3844,6 +3956,7 @@ try:
             model: str = "gemini-1.5-flash",
             llm_specific_instructions=None,
             max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
         ):
             api_key = api_key or os.getenv("GOOGLE_API_KEY")
             if not api_key:
@@ -3854,6 +3967,8 @@ try:
             genai.configure(api_key=api_key)
             self.model = genai.GenerativeModel(model)
             self.model_name = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -4013,6 +4128,7 @@ try:
             NotFoundError,
             UnprocessableEntityError,
         )
+        _supports_debug_callback = True
 
         def __init__(
             self,
@@ -4023,11 +4139,14 @@ try:
             use_json_object: bool = None,
             disable_system_prompts: bool = False,
             completion_kwargs: dict[str, Any] | None = None,
+            callback: DebugCallback | None = None,
         ):
 
             self.api_key = api_key
             self.model = model
             self.api_base = api_base
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
@@ -4265,7 +4384,7 @@ try:
             NotFoundError,
             UnprocessableEntityError,
         )
-
+        _supports_debug_callback = True
         def __init__(
             self,
             api_key: str = None,
@@ -4276,11 +4395,14 @@ try:
             use_json_object:  bool | None = None,
             disable_system_prompts:  bool = False,
             completion_kwargs: dict[str, Any] | None = None,
+            callback: DebugCallback | None = None,
         ):
 
             self.api_key = api_key
             self.model = model
             self.api_base = api_base
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
