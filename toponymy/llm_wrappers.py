@@ -108,6 +108,8 @@ class LLMErrorHandlingMixin:
         *args,
         **kwargs,
     ) -> CallResult:
+        prompt = kwargs.get("prompt")
+        routine = kwargs.pop("routine", None)
         try:
             async for attempt in AsyncRetrying(
                 stop=stop_after_attempt(3),
@@ -117,6 +119,15 @@ class LLMErrorHandlingMixin:
             ):
                 with attempt:
                     value = await fn(*args, **kwargs)
+                    # SUCCESS emit
+                    self._emit_debug_callback(
+                        {
+                            "event": "llm_call_success",
+                            "routine": routine,
+                            "prompt": prompt,
+                            "raw_response": value,
+                        }
+                    )
                     return CallResult(value=value)
         except Exception as e:
             if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
@@ -128,6 +139,18 @@ class LLMErrorHandlingMixin:
                 self.__class__.__name__,
                 type(e).__name__,
                 str(e)[:200],
+            )
+            # ERROR emit
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_error",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "error": {
+                        "type": type(e).__name__,
+                        "message": str(e),
+                    },
+                }
             )
             return CallResult(error=e)
 
@@ -270,20 +293,83 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         """
         pass
 
-    def _safe_call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+    def _safe_call_llm(
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int,
+            routine: str | None = None
+        ) -> str:
         try:
-            return self._call_llm(prompt, temperature, max_tokens)
+            raw_response = self._call_llm(prompt, temperature, max_tokens)
+
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_success",
+                    "prompt_type": "single",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "raw_response": raw_response,
+                }
+            )
+            return raw_response
+
         except Exception as e:
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_error",
+                    "prompt_type": "single",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "error": {
+                        "type": type(e).__name__,
+                        "message": str(e),
+                    },
+                }
+            )
             self._handle_exception(e)
 
     def _safe_call_llm_with_system_prompt(
-        self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
+        self, system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+        routine: str | None = None
     ) -> str:
+        prompt_payload = {
+            "system": system_prompt,
+            "user": user_prompt,
+        }
+
         try:
-            return self._call_llm_with_system_prompt(
+            raw_response = self._call_llm_with_system_prompt(
                 system_prompt, user_prompt, temperature, max_tokens
             )
+
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_success",
+                    "prompt_type": "system",
+                    "routine": routine,
+                    "prompt": prompt_payload,
+                    "raw_response": raw_response,
+                }
+            )
+            return raw_response
+
         except Exception as e:
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_error",
+                    "prompt_type": "system",
+                    "routine": routine,
+                    "prompt": prompt_payload,
+                    "error": {
+                        "type": type(e).__name__,
+                        "message": str(e),
+                    },
+                }
+            )
             self._handle_exception(e)
 
     @staticmethod
@@ -311,7 +397,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
     ) -> str:
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
-                prompt, temperature, max_tokens=128
+                prompt, temperature, max_tokens=128, routine="generate_topic_names",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
@@ -319,6 +405,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 user_prompt=prompt["user"],
                 temperature=temperature,
                 max_tokens=128,
+                routine="generate_topic_names",
             )
         else:
             raise InvalidLLMInputError(
@@ -365,7 +452,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
-                prompt, temperature, max_tokens=1024
+                prompt, temperature, max_tokens=1024, routine="generate_topic_cluster_names",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
@@ -373,6 +460,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 user_prompt=prompt["user"],
                 temperature=temperature,
                 max_tokens=1024,
+                routine="generate_topic_cluster_names",
             )
         else:
             raise InvalidLLMInputError(
@@ -568,7 +656,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
 
     async def _call_llm_batch(
-        self, prompts: List[str], temperature: float, max_tokens: int
+        self, prompts: List[str], temperature: float, max_tokens: int, routine: str | None = None
     ) -> List[CallResult[str]]:
         """
         Process a batch of prompts and return one CallResult per prompt.
@@ -612,6 +700,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 prompt,
                 temperature,
                 max_tokens,
+                routine=routine,
             )
             for prompt in prompts
         ]
@@ -623,6 +712,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         user_prompts: List[str],
         temperature: float,
         max_tokens: int,
+        routine: str | None = None,
     ) -> List[CallResult[str]]:
         """
         Process a batch of system prompt + user prompt pairs and return one CallResult
@@ -673,6 +763,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 user_prompt,
                 temperature,
                 max_tokens,
+                routine=routine,
             )
             for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
         ]
