@@ -1,5 +1,5 @@
 import string
-from warnings import warn
+from warnings import warn, filterwarnings
 
 import tokenizers
 import transformers
@@ -10,7 +10,7 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar
+from typing import List, Optional, Union, Dict, Generic, TypeVar, Any
 from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
 from dataclasses import dataclass
 
@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 T = TypeVar("T")
 
-
+# Ignore internal litellm warning
+filterwarnings(
+    "ignore",
+    message="Support for class-based `config` is deprecated",
+    category=DeprecationWarning,
+    module="litellm",
+)
 
 @dataclass
 class CallResult(Generic[T]):
@@ -372,19 +378,8 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
         """
         return True
 
-    def test_llm_connectivity(
-        self,
-        prompt: str = (
-            "Identify yourself and explain that you will be providing "
-            "topic names for clusters in JSON format"
-        ),
-        *,
-        system_prompt: str | None = None,
-    ) -> str:
-        result = self.connectivity_status(
-            prompt=prompt,
-            system_prompt=system_prompt,
-        )
+    def test_llm_connectivity(self) -> str:
+        result = self.connectivity_status()
 
         if result["success"]:
             logger.info(
@@ -409,10 +404,10 @@ class LLMWrapper(LLMErrorHandlingMixin, ABC):
     def connectivity_status(
         self,
         prompt: str = (
-            "Identify yourself and explain that you will be providing "
-            "topic names for clusters in JSON format"
-        ),
-        *,
+            "Respond with exactly this JSON and nothing else.\n"
+            "Do not use markdown or code blocks.\n\n"
+            '{"status": "ok"}'
+            ),
         system_prompt: str | None = None,
     ) -> dict:
         result = {
@@ -2399,7 +2394,8 @@ except:
 
 try:
     import openai
-    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError
+    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
+
 
     class OpenAINamer(LLMWrapper):
         """
@@ -2447,7 +2443,7 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncOpenAI wrapper instead.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
 
         def __init__(
             self,
@@ -2554,7 +2550,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
 
         def __init__(
             self,
@@ -3947,5 +3943,513 @@ except ImportError:
             super().__init__(*args, **kwds)
 
     class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+
+try:
+    import litellm
+    from litellm.exceptions import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
+    class LiteLLMNamer(LLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM using a unified interface.
+        LiteLLM supports 100+ providers including OpenAI, Anthropic, Cohere, HuggingFace,
+        Together, Replicate, and more. For more information, see https://docs.litellm.ai.
+
+        Parameters
+        ----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str, optional
+            The LiteLLM model string, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-haiku-4-5-20251001", etc.
+
+        api_base: str, optional
+            Optional LiteLLM/OpenAI-compatible API base. Alias-style convenience.
+
+        llm_specific_instructions: str, optional
+            Additional instructions appended to the user prompt.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
+
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts
+            if unsupported for a given model.
+
+        completion_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
+        Attributes
+        ----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions appended to the prompt.
+
+        use_json_object: bool
+            Whether response_format={"type": "json_object"} will be sent.
+        """
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions=None,
+            use_json_object: bool = None,
+            disable_system_prompts: bool = False,
+            completion_kwargs: dict[str, Any] | None = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.use_json_object = use_json_object # set by user
+            self._resolved_use_json_object: bool | None = None # set internally
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
+
+            filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+                module="pydantic",
+            )
+            filterwarnings(
+                "ignore",
+                message="Use 'content=<...>' to upload raw bytes/text content",
+                category=DeprecationWarning,
+                module="httpx",
+            )
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
+        def _detect_json_object_support(self) -> bool:
+            try:
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                return False
+
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
+
+        def _completion_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = dict(self.completion_kwargs)
+            kwargs.update({
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            })
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
+                kwargs["api_base"] = self.api_base
+
+            if self._should_use_json_object():
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+        def _completion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            response = litellm.completion(
+                **self._completion_kwargs(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            )
+            return response.choices[0].message.content
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            return self._completion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+
+            try:
+                result = self._completion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return self._completion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+
+    class AsyncLiteLLMNamer(AsyncLLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM with asynchronous support.
+        This allows for concurrent processing of multiple prompts across 100+ providers
+        including OpenAI, Anthropic, Cohere, HuggingFace, Together, Replicate, and more.
+        For more information, see https://docs.litellm.ai.
+
+        As an asynchronous wrapper this will potentially speed up topic naming, particularly
+        when you have a large number of topics. If, however, there are quirks in your data,
+        or bugs in Toponymy's prompt generation, you will potentially quickly spend money on
+        API calls.
+
+        Uses litellm.acompletion() and an asyncio semaphore for bounded
+        concurrency. Since this wrapper does not create a persistent SDK client,
+        close() is a no-op.
+
+
+        Parameters:
+        -----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str
+            The model to use in LiteLLM format, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-3-haiku-20240307", "together_ai/mistralai/Mixtral-8x7B-v0.1".
+            See https://docs.litellm.ai/docs/providers for the full list.
+
+        api_base: str, optional
+            The base URL for the provider API. Useful for self-hosted models or proxies.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the provider API. Default is 10.
+            This can be adjusted based on your application's needs and the rate limits of
+            the provider. Higher values may improve throughput but could lead to rate limiting.
+
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts
+            if unsupported for a given model.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
+        completion_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
+        Attributes:
+        -----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+        """
+
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions: str = None,
+            max_concurrent_requests: int = 10,
+            use_json_object:  bool | None = None,
+            disable_system_prompts:  bool = False,
+            completion_kwargs: dict[str, Any] | None = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+            self.use_json_object = use_json_object
+            self._resolved_use_json_object: bool | None = None
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
+        def _detect_json_object_support(self) -> bool:
+            try:
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                return False
+
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
+
+        def _completion_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = dict(self.completion_kwargs)
+            kwargs.update({
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            })
+
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
+                kwargs["api_base"] = self.api_base
+
+            if self._should_use_json_object():
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+
+        async def _acompletion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            async with self.semaphore:
+                response = await litellm.acompletion(
+                    **self._completion_kwargs(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            return response.choices[0].message.content
+
+        async def _call_single_llm(
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            return await self._acompletion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+            try:
+            # If the model doesn't support system prompts, this will raise an error which we
+            # catch to disable system prompt usage for future calls. Everything else raises as normal.
+                result = await self._acompletion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return await self._acompletion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+        async def close(self):
+            """No-op for parity with other async wrappers."""
+            return None
+
+except Exception as e:
+
+    class LiteLLMNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncLiteLLMNamer(FailedImportAsyncLLMWrapper):
+
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)

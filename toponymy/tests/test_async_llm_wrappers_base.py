@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock
 from toponymy.llm_wrappers import AsyncLLMWrapper, CallResult, FailFastLLMError, InvalidLLMInputError
 
-from toponymy.tests.helpers.make_llm_data import (
+from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
     validate_cluster_names,
 )
