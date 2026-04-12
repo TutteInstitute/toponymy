@@ -586,35 +586,39 @@ try:
 
         def __init__(
             self,
-            min_clusters: int = 4,
-            base_min_cluster_size: Optional[int] = 10,
-            base_n_clusters: Optional[int] = None,
             noise_level: float = 0.5,
+            base_min_cluster_size: int = 5,
+            base_n_clusters: Optional[int] = None,
+            approx_n_clusters: Optional[int] = None,
             n_neighbors: int = 15,
             min_samples: int = 5,
-            next_cluster_size_quantile: float = 0.85,
             n_epochs: int = 50,
-            node_embedding_init: str = "label_prop",
+            node_embedding_init: Optional[str] = "label_prop",
             symmetrize_graph: bool = True,
             node_embedding_dim: Optional[int] = None,
             neighbor_scale: float = 1.0,
+            min_similarity_threshold: float = 0.2,
+            max_layers: int = 10,
+            n_label_prop_iter: int = 20,
             verbose: Optional[bool] = None,
             show_progress_bar: Optional[bool] = None,
         ):
             super().__init__()
 
-            self.min_clusters = min_clusters
+            self.noise_level = noise_level
             self.base_min_cluster_size = base_min_cluster_size
             self.base_n_clusters = base_n_clusters
-            self.noise_level = noise_level
+            self.approx_n_clusters = approx_n_clusters
             self.n_neighbors = n_neighbors
             self.min_samples = min_samples
-            self.next_cluster_size_quantile = next_cluster_size_quantile
             self.n_epochs = n_epochs
             self.node_embedding_init = node_embedding_init
             self.symmetrize_graph = symmetrize_graph
             self.node_embedding_dim = node_embedding_dim
             self.neighbor_scale = neighbor_scale
+            self.min_similarity_threshold = min_similarity_threshold
+            self.max_layers = max_layers
+            self.n_label_prop_iter = n_label_prop_iter
 
             # Handle verbose parameters
             _, self.verbose = handle_verbose_params(
@@ -627,15 +631,17 @@ try:
                 noise_level=noise_level,
                 base_min_cluster_size=base_min_cluster_size,
                 base_n_clusters=base_n_clusters,
-                min_num_clusters=min_clusters,
+                approx_n_clusters=approx_n_clusters,
                 n_neighbors=n_neighbors,
                 min_samples=min_samples,
-                next_cluster_size_quantile=next_cluster_size_quantile,
                 n_epochs=n_epochs,
                 node_embedding_init=node_embedding_init,
                 symmetrize_graph=symmetrize_graph,
                 node_embedding_dim=node_embedding_dim,
                 neighbor_scale=neighbor_scale,
+                min_similarity_threshold=min_similarity_threshold,
+                max_layers=max_layers,
+                n_label_prop_iter=n_label_prop_iter,
             )
 
         def fit(

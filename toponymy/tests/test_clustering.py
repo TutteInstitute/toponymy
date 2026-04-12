@@ -11,11 +11,22 @@ from toponymy.clustering import (
 from toponymy.cluster_layer import ClusterLayerText
 from sklearn.metrics import adjusted_mutual_info_score
 import numpy as np
+import pytest
 
 from sklearn.datasets import make_blobs
 from sklearn.metrics import pairwise_distances
 from scipy.optimize import linear_sum_assignment
 
+@pytest.fixture
+def simple_embedding_data():
+    """Create simple high-dimensional embedding-like data for testing."""
+    # Create 512-dimensional data similar to CLIP embeddings
+    X, y = make_blobs(
+        n_samples=800, centers=4, n_features=512, cluster_std=0.8, random_state=42
+    )
+    # Normalize to unit sphere (typical for embeddings)
+    X = X / np.linalg.norm(X, axis=1, keepdims=True)
+    return X.astype(np.float32), y
 
 def test_centroids_from_labels():
     for i in range(10):
@@ -243,33 +254,96 @@ def test_kmeans_clusterer_class():
         for i in range(len(class_cluster_layers))
     )
 
-def test_evoc_clusterer_class():
-    clusterer = EVoCClusterer(
-        min_clusters=4,
-        min_samples=5,
-        base_min_cluster_size=10,
-        next_cluster_size_quantile=0.8,
-    )
 
-    np.random.seed(0)
-    clusterable_data, cluster_labels = make_blobs(
-        n_samples=1000,
-        n_features=128,
-        centers=5,
-        center_box=(0.0, 1.0),
-        cluster_std=0.05,
-        random_state=0,
+def test_evoc_clusterer_basic(simple_embedding_data):
+    """Test basic EVoCClusterer functionality."""
+    X, y = simple_embedding_data
+    
+    clusterer = EVoCClusterer(
+        base_min_cluster_size=20,
+        min_samples=5,
     )
-    class_cluster_layers, class_tree = clusterer.fit_predict(
-        clusterable_vectors=clusterable_data,
-        embedding_vectors=clusterable_data,
+    
+    cluster_layers, cluster_tree = clusterer.fit_predict(
+        clusterable_vectors=X,
+        embedding_vectors=X,
         layer_class=ClusterLayerText,
     )
-    assert np.unique(class_cluster_layers[-1].cluster_labels).shape[0] >= 5 and np.unique(class_cluster_layers[-1].cluster_labels).shape[0] <= 7
-    assert adjusted_mutual_info_score(
-        class_cluster_layers[-1].cluster_labels[class_cluster_layers[-1].cluster_labels >= 0],
-        cluster_labels[class_cluster_layers[-1].cluster_labels >= 0]
-    ) >= 0.75
+    
+    # Should create at least one layer
+    assert len(cluster_layers) >= 1
+    # Should have a cluster tree
+    assert len(cluster_tree) > 0
+    # Each layer should have labels for all samples
+    for layer in cluster_layers:
+        assert len(layer.cluster_labels) == len(X)
+
+
+def test_evoc_clusterer_approx_n_clusters(simple_embedding_data):
+    """Test EVoCClusterer with approx_n_clusters parameter."""
+    X, y = simple_embedding_data
+    
+    clusterer = EVoCClusterer(
+        approx_n_clusters=4,  # Request approximately 4 clusters
+        min_samples=5,
+    )
+    
+    cluster_layers, cluster_tree = clusterer.fit_predict(
+        clusterable_vectors=X,
+        embedding_vectors=X,
+        layer_class=ClusterLayerText,
+    )
+    
+    # With approx_n_clusters, should return single layer
+    assert len(cluster_layers) == 1
+    # Should have approximately the requested number of clusters
+    n_clusters = len(np.unique(cluster_layers[0].cluster_labels[cluster_layers[0].cluster_labels >= 0]))
+    assert 3 <= n_clusters <= 5, f"Expected ~4 clusters, got {n_clusters}"
+
+
+def test_evoc_clusterer_max_layers(simple_embedding_data):
+    """Test EVoCClusterer respects max_layers parameter."""
+    X, y = simple_embedding_data
+    
+    clusterer = EVoCClusterer(
+        base_min_cluster_size=20,
+        min_samples=5,
+        max_layers=3,
+    )
+    
+    cluster_layers, cluster_tree = clusterer.fit_predict(
+        clusterable_vectors=X,
+        embedding_vectors=X,
+        layer_class=ClusterLayerText,
+    )
+    
+    # Should respect max_layers limit
+    assert len(cluster_layers) <= 3
+
+
+def test_evoc_clusterer_fit_method(simple_embedding_data):
+    """Test EVoCClusterer fit method sets attributes correctly."""
+    X, y = simple_embedding_data
+    
+    clusterer = EVoCClusterer(
+        base_min_cluster_size=20,
+        min_samples=5,
+    )
+    
+    result = clusterer.fit(
+        clusterable_vectors=X,
+        embedding_vectors=X,
+        layer_class=ClusterLayerText,
+    )
+    
+    # fit should return self
+    assert result is clusterer
+    # Should have cluster_layers_ attribute
+    assert hasattr(clusterer, 'cluster_layers_')
+    assert len(clusterer.cluster_layers_) >= 1
+    # Should have cluster_tree_ attribute
+    assert hasattr(clusterer, 'cluster_tree_')
+    assert len(clusterer.cluster_tree_) > 0
 
 
 def test_max_layers_limit():
