@@ -315,8 +315,8 @@ try:
     import vllm
 
     class VLLMEmbedder:
-        def __init__(self, model: str = "all-MiniLM-L6-v2", kwargs: dict = {}):
-            self.llm = vllm.LLM(model=model, task="embed", **kwargs)
+        def __init__(self, model: str = "all-MiniLM-L6-v2", kwargs: dict = None):
+            self.llm = vllm.LLM(model=model, task="embed", **(kwargs or {}))
 
         def encode(
             self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None
