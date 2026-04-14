@@ -1,7 +1,6 @@
 import jinja2
 import re
 
-
 SUMMARY_KINDS = [
     "domain expert level (8 to 15 word)",
     "very specific and detailed (6 to 12 word)",
