@@ -20,6 +20,7 @@ import json
 import asyncio
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -30,15 +31,18 @@ class InvalidLLMInputError(ValueError):
 
     pass
 
+
 class FailFastLLMError(RuntimeError):
     """
     A non-retryable error that is not caused by invalid input, but by a configuration
     or provider issue (e.g. bad API key, insufficient permissions, model not found).
     Retrying will not resolve these errors.
     """
+
     def __init__(self, message: str = "", original_exception: Exception | None = None):
         super().__init__(message)
         self.original_exception = original_exception
+
 
 def _should_retry(e: Exception) -> bool:
     if isinstance(e, InvalidLLMInputError):
@@ -122,7 +126,7 @@ class LLMWrapper(ABC):
             if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
                 raise FailFastLLMError(
                     message=f"Non-retryable error for model '{self.model}': {e}",
-                    original_exception=e
+                    original_exception=e,
                 ) from None
             raise  # other exceptions propagate as-is, should also specify retry exceptions
 
@@ -137,7 +141,7 @@ class LLMWrapper(ABC):
             if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
                 raise FailFastLLMError(
                     message=f"Non-retryable error for model '{self.model}': {e}",
-                    original_exception=e
+                    original_exception=e,
                 ) from None
             raise  # other exceptions propagate as-is, should also specify retry exceptions
 
@@ -147,7 +151,9 @@ class LLMWrapper(ABC):
         exc = retry_state.outcome.exception()
         if isinstance(exc, (FailFastLLMError, InvalidLLMInputError)):
             raise exc
-        warn(f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}")
+        warn(
+            f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}"
+        )
         return ""
 
     # @abstractmethod
@@ -185,8 +191,8 @@ class LLMWrapper(ABC):
         topic_name_info = llm_output_to_result(
             topic_name_info_raw, get_topic_name_regex
         )
-        topic_name = str(topic_extraction_function(topic_name_info))
-
+        result = topic_extraction_function(topic_name_info)
+        topic_name = result if isinstance(result, tuple) else str(result)
         return topic_name
 
     @staticmethod
@@ -221,27 +227,25 @@ class LLMWrapper(ABC):
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
         max_tokens: int = 1024,
     ) -> List[str]:
-            if isinstance(prompt, str):
-                topic_name_info_raw = self._safe_call_llm(
-(
-                    prompt, temperature, max_tokens=max_tokens
-                )
-            elif isinstance(prompt, dict) and self.supports_system_prompts:
-                topic_name_info_raw = self._safe_call_llm_with_system_prompt(
-                    system_prompt=prompt["system"],
-                    user_prompt=prompt["user"],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            else:
-                raise InvalidLLMInputError(
-                    f"Prompt must be a string or a dictionary, got {type(prompt)}"
-                )
+        if isinstance(prompt, str):
+            topic_name_info_raw = self._safe_call_llm(
+                prompt, temperature, max_tokens=max_tokens
+            )
+        elif isinstance(prompt, dict) and self.supports_system_prompts:
+            topic_name_info_raw = self._safe_call_llm_with_system_prompt(
+                system_prompt=prompt["system"],
+                user_prompt=prompt["user"],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        else:
+            raise InvalidLLMInputError(
+                f"Prompt must be a string or a dictionary, got {type(prompt)}"
+            )
 
         topic_name_info = llm_output_to_result(
             topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
         )
-
 
         return extract_topic_names_function(
             topic_name_info, old_names, topic_name_info_raw
@@ -292,12 +296,16 @@ class LLMWrapper(ABC):
             logger.info(f" Connected to {result['wrapper']} using {result['model']}")
             return result["response"]
         else:
-            logger.warning(f"  Failed to connect to {result['wrapper']} using {result['model']}")
-            logger.warning(f"  Cause:  {result['error_type']}: {result['error_message']}")
+            logger.warning(
+                f"  Failed to connect to {result['wrapper']} using {result['model']}"
+            )
+            logger.warning(
+                f"  Cause:  {result['error_type']}: {result['error_message']}"
+            )
             return "<error>"
 
     def connectivity_status(
-       self,
+        self,
         prompt="Identify yourself and explain that you will be providing topic names for  in JSON format",
     ) -> dict:
         result = {
@@ -2119,7 +2127,12 @@ except ImportError:
 
 try:
     import openai
-    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError
+    from openai import (
+        AuthenticationError,
+        PermissionDeniedError,
+        BadRequestError,
+        NotFoundError,
+    )
 
     class OpenAINamer(LLMWrapper):
         """
@@ -2167,7 +2180,13 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncOpenAI wrapper instead.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError)
+
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+        )
 
         def __init__(
             self,
@@ -2198,6 +2217,7 @@ try:
                 messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
                 response_format={"type": "json_object"},
+                reasoning_effort="none",
             )
             result = response.choices[0].message.content
             return result
