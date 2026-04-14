@@ -404,7 +404,7 @@ def submodular_selection_exemplars(
             )
             cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
         # Get the objects in this cluster
-        
+
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
 
@@ -492,7 +492,7 @@ def random_exemplars(
     ):
         # Get mask for current cluster
         cluster_mask = cluster_label_vector == cluster_num
-        
+
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
 
