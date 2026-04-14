@@ -2,5 +2,15 @@
     "python.testing.pytestArgs": [],
     "python.testing.unittestEnabled": false,
     "python.testing.pytestEnabled": true,
-    "python.experiments.optInto": ["pythonTestAdapter"]
+    "python.experiments.optInto": ["pythonTestAdapter"],
+    
+    // Format on save settings
+    "editor.formatOnSave": true,
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true
+    },
+    
+    // Use local .venv Python
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
 }
