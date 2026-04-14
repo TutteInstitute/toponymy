@@ -25,6 +25,7 @@ from toponymy.subtopics import (
 from toponymy.templates import (
     GET_TOPIC_CLUSTER_NAMES_REGEX,
     GET_TOPIC_NAME_REGEX,
+    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
     SUMMARY_KINDS,
     default_extract_topic_names,
 )
@@ -969,10 +970,10 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
-                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             )
                             if self.prompt_template
-                            else GET_TOPIC_NAME_REGEX
+                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                         ),
                         max_tokens=2048,
                     )
@@ -1077,10 +1078,11 @@ class ClusterLayerSummaryText(ClusterLayerText):
                             ),
                             get_topic_name_regex=(
                                 self.prompt_template.get(
-                                    "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                    "get_topic_name_regex",
+                                    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
                                 )
                                 if self.prompt_template
-                                else GET_TOPIC_NAME_REGEX
+                                else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             ),
                         )
                         if name == ""
@@ -1104,10 +1106,10 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
-                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             )
                             if self.prompt_template
-                            else GET_TOPIC_NAME_REGEX
+                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                         ),
                     )
                 )
