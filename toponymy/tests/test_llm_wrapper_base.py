@@ -1,5 +1,11 @@
-from toponymy.llm_wrappers import LLMWrapper, _should_retry, FailFastLLMError, InvalidLLMInputError
+from toponymy.llm_wrappers import (
+    LLMWrapper,
+    _should_retry,
+    FailFastLLMError,
+    InvalidLLMInputError,
+)
 import pytest
+
 
 class DummySingleWrapper(LLMWrapper):
     model = "dummy-model"
@@ -23,6 +29,7 @@ class DummyFailureWrapper(LLMWrapper):
         self, system_prompt, user_prompt, temperature, max_tokens
     ):
         raise RuntimeError("error")
+
 
 class DummyFailFastProviderError(Exception):
     pass
@@ -50,6 +57,7 @@ def test_sync_connectivity_status_uses_plain_call():
     assert result["response"] == "single-ok"
     assert result["wrapper"] == "DummySingleWrapper"
     assert result["model"] == "dummy-model"
+
 
 # Connectivity Tests
 def test_sync_connectivity_status_uses_system_call():
@@ -93,6 +101,7 @@ def test_sync_test_llm_connectivity_failure():
 
     assert result == "<error>"
 
+
 # Test the retry-policy
 def test_should_retry_invalid_input_returns_false():
     assert _should_retry(InvalidLLMInputError("bad input")) is False
@@ -104,6 +113,7 @@ def test_should_retry_fail_fast_returns_false():
 
 def test_should_retry_generic_exception_returns_true():
     assert _should_retry(RuntimeError("retry me")) is True
+
 
 # Test safe calling
 def test_safe_call_llm_wraps_fail_fast_exception():
@@ -124,6 +134,7 @@ def test_safe_call_llm_with_system_prompt_wraps_fail_fast_exception():
             max_tokens=128,
         )
 
+
 def test_generate_topic_name_invalid_prompt_type_raises():
     wrapper = DummySingleWrapper()
 
@@ -140,9 +151,11 @@ def test_generate_topic_cluster_names_invalid_prompt_type_raises():
             ["old1", "old2"],
         )
 
+
 def test_supports_system_prompts_defaults_true():
     wrapper = DummySingleWrapper()
     assert wrapper.supports_system_prompts is True
+
 
 def test_handle_exception_reraises_retryable_exception():
     wrapper = DummySingleWrapper()

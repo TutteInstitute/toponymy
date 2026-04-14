@@ -110,7 +110,7 @@ class ClusterLayer(ABC):
         self.prompt_format = prompt_format
         self.prompt_template = prompt_template
         if exemplar_delimiters is None:
-            self.exemplar_delimiters = ["    *\"", "\"\n"]
+            self.exemplar_delimiters = ['    *"', '"\n']
         # Handle verbose parameters
         self.show_progress_bar, self.verbose = handle_verbose_params(
             verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False

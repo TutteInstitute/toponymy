@@ -22,12 +22,12 @@ from apricot.optimizers import ApproximateLazyGreedy
 from apricot.optimizers import SieveGreedy
 
 dtypes = [
-	"void(float64[:,:], float64[:], float64[:], int64[:])",
-	"void(float32[:,:], float64[:], float64[:], int64[:])",
+    "void(float64[:,:], float64[:], float64[:], int64[:])",
+    "void(float32[:,:], float64[:], float64[:], int64[:])",
 ]
 sdtypes = [
-	"void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
-	"void(float32[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
+    "void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
+    "void(float32[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
 ]
 sieve_dtypes = (
     "void(float64[:,:], int64, float64[:,:], int64[:,:],"
@@ -41,17 +41,19 @@ def calculate_gains_(X, gains, current_values, idxs):
         idx = idxs[i]
         gains[i] = np.maximum(X[idx], current_values).sum()
 
+
 @numba.njit(sdtypes, fastmath=True, cache=True)
 def calculate_gains_sparse_(X_data, X_indices, X_indptr, gains, current_values, idxs):
     for i in range(idxs.shape[0]):
         idx = idxs[i]
 
         start = X_indptr[idx]
-        end = X_indptr[idx+1]
+        end = X_indptr[idx + 1]
 
         for j in range(start, end):
             k = X_indices[j]
             gains[i] += max(X_data[j], current_values[k]) - current_values[k]
+
 
 class FacilityLocationSelection(BaseGraphSelection):
     """A selector based off a facility location submodular function.
@@ -272,7 +274,7 @@ class FacilityLocationSelection(BaseGraphSelection):
             self.metric = original_metric
             return result
         else:
-           return super(FacilityLocationSelection, self).fit(
+            return super(FacilityLocationSelection, self).fit(
                 X, y=y, sample_weight=sample_weight, sample_cost=sample_cost
             )
 
@@ -290,8 +292,14 @@ class FacilityLocationSelection(BaseGraphSelection):
         idxs = idxs if idxs is not None else self.idxs
         gains = np.zeros(idxs.shape[0], dtype="float64")
         if self.sparse:
-            self.calculate_gains_(X_pairwise.data, X_pairwise.indices, 
-				X_pairwise.indptr, gains, self.current_values, idxs)
+            self.calculate_gains_(
+                X_pairwise.data,
+                X_pairwise.indices,
+                X_pairwise.indptr,
+                gains,
+                self.current_values,
+                idxs,
+            )
         else:
             self.calculate_gains_(X_pairwise, gains, self.current_values, idxs)
         gains -= self.current_values_sum
@@ -375,9 +383,7 @@ def submodular_selection_exemplars(
 
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
     for cluster_num in tqdm(
@@ -411,14 +417,18 @@ def submodular_selection_exemplars(
         cluster_indices = np.arange(cluster_object_vectors.shape[0])
 
         if cluster_object_vectors.shape[0] >= n_exemplars:
-            _, candidate_indices = selector.fit_transform(cluster_object_vectors, y=cluster_indices)
+            _, candidate_indices = selector.fit_transform(
+                cluster_object_vectors, y=cluster_indices
+            )
         else:
             candidate_indices = cluster_indices
 
         if object_to_text_function is None:
             chosen_exemplars = [cluster_objects[i] for i in candidate_indices]
         else:
-            chosen_exemplars = object_to_text_function([cluster_objects[i] for i in candidate_indices])
+            chosen_exemplars = object_to_text_function(
+                [cluster_objects[i] for i in candidate_indices]
+            )
 
         # Map chosen indices back to original object list indices
         chosen_original_indices = [original_indices[i] for i in candidate_indices]
@@ -463,9 +473,7 @@ def random_exemplars(
     """
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
     results = []
@@ -495,7 +503,9 @@ def random_exemplars(
         if object_to_text_function is None:
             chosen_exemplars = cluster_objects[exemplar_order].tolist()
         else:
-            chosen_exemplars = object_to_text_function([cluster_objects[i] for i in exemplar_order])
+            chosen_exemplars = object_to_text_function(
+                [cluster_objects[i] for i in exemplar_order]
+            )
 
         # Map chosen indices back to original object list indices
         chosen_original_indices = [original_indices[i] for i in exemplar_order]
@@ -552,11 +562,9 @@ def diverse_exemplars(
     """
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose,
-        show_progress_bar=show_progress_bar,
-        default_verbose=False
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    
+
     results = []
     indices = []
     null_topic = np.mean(object_vectors, axis=0)
@@ -616,7 +624,9 @@ def diverse_exemplars(
         if object_to_text_function is None:
             chosen_exemplars = [exemplar_candidates[i] for i in chosen_indices]
         else:
-            chosen_exemplars = object_to_text_function([exemplar_candidates[i] for i in chosen_indices])
+            chosen_exemplars = object_to_text_function(
+                [exemplar_candidates[i] for i in chosen_indices]
+            )
 
         # Map chosen indices back to original object list indices
         chosen_original_indices = [
