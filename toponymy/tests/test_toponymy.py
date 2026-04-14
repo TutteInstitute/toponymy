@@ -58,6 +58,7 @@ def test_toponymy(
         == cluster_label_vector
     )
 
+
 def test_toponymy(
     llm,
     embedder,
@@ -151,10 +152,8 @@ def test_toponymy_resyncs_runtime_layer_config_for_prefit_clusterer(
         for layer in model.cluster_layers_
     )
 
-    assert all(
-        layer.verbose == model.verbose
-        for layer in model.cluster_layers_
-    )
+    assert all(layer.verbose == model.verbose for layer in model.cluster_layers_)
+
 
 # @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_toponymy_alternative_options(

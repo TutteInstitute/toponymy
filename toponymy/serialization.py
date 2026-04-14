@@ -12,22 +12,28 @@ import numpy as np
 
 _SERIAL_VERSION = "0.1"
 
+
 def topic_uid(tup) -> str:
     a, b = tup
     a = int(a)
-    b = int(b) + 1  # Because unclustered is -1 and we can't convert negative to unsigned.
+    b = (
+        int(b) + 1
+    )  # Because unclustered is -1 and we can't convert negative to unsigned.
     combined = (a << 10) | b  # pack into 20 bits
-    return base64.urlsafe_b64encode(combined.to_bytes(3, "big")).rstrip(b'=').decode()
+    return base64.urlsafe_b64encode(combined.to_bytes(3, "big")).rstrip(b"=").decode()
+
 
 def uid_to_ints(s: str):
     """Returns (layer, cluster_number)"""
-    padded = s + '=' * (-len(s) % 4)
+    padded = s + "=" * (-len(s) % 4)
     combined = int.from_bytes(base64.urlsafe_b64decode(padded), "big")
     return combined >> 10, (combined & 0x3FF) - 1
+
 
 def _pandas_col_to_arrow(series: pd.Series):
     """Infer a PyArrow type from a pandas Series for schema construction."""
     import pyarrow as pa
+
     dtype = series.dtype
     if pd.api.types.is_integer_dtype(dtype):
         return pa.int64()
@@ -37,13 +43,15 @@ def _pandas_col_to_arrow(series: pd.Series):
         return pa.bool_()
     return pa.string()
 
+
 @dataclass
 class TopicModel:
-    """ Storage class for the data of a fitted Toponymy. """
+    """Storage class for the data of a fitted Toponymy."""
+
     topic_df: pd.DataFrame
     cluster_tree: dict
     cluster_layers: list
-    embedding_vectors: np.ndarray 
+    embedding_vectors: np.ndarray
     reduced_vectors: np.ndarray = None
     document_df: pd.DataFrame = None
 
@@ -51,7 +59,7 @@ class TopicModel:
         n_samples = self.embedding_vectors.shape[0]
         n_topics = len(self.topic_df)
         s = f"TopicModel(n_samples={n_samples},"
-        s +=f" n_topics={n_topics})"
+        s += f" n_topics={n_topics})"
         return s
 
     @classmethod
@@ -74,31 +82,33 @@ class TopicModel:
         for layer_idx, layer in enumerate(toponymy.cluster_layers_):
             unique_labels = np.unique(layer.cluster_labels)
             for cluster in unique_labels[unique_labels >= 0]:
-                rows.append({
-                    "uid": topic_uid((layer_idx, int(cluster))),
-                    "layer": layer_idx,
-                    "cluster": cluster,
-                    "name": toponymy.topic_names_[layer_idx][cluster],
-                    "keyphrases" : toponymy.cluster_layers_[layer_idx].keyphrases[cluster]
-                })
+                rows.append(
+                    {
+                        "uid": topic_uid((layer_idx, int(cluster))),
+                        "layer": layer_idx,
+                        "cluster": cluster,
+                        "name": toponymy.topic_names_[layer_idx][cluster],
+                        "keyphrases": toponymy.cluster_layers_[layer_idx].keyphrases[
+                            cluster
+                        ],
+                    }
+                )
         topic_df = pd.DataFrame(rows)
         if document_df is None:
             n_samples = toponymy.embedding_vectors_.shape[0]
-            document_df = pd.DataFrame(
-                {'item_num':range(n_samples)}
-            )
+            document_df = pd.DataFrame({"item_num": range(n_samples)})
 
         return cls(
             cluster_layers=cluster_layers,
             cluster_tree=toponymy.cluster_tree_,
             topic_df=topic_df,
-            embedding_vectors=toponymy.embedding_vectors_, 
+            embedding_vectors=toponymy.embedding_vectors_,
             reduced_vectors=toponymy.clusterable_vectors_,
             document_df=document_df,
         )
 
     @classmethod
-    def from_file(cls, path:str):
+    def from_file(cls, path: str):
         path = Path(path)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -127,7 +137,9 @@ class TopicModel:
             embedding_vectors = np.load(root / "embedding_vectors.npy")
             reduced_vectors = None
             if has_reduced:
-                reduced_vectors = np.load(root / "reduced_vectors.npy")  # bugfix: was loading from cwd
+                reduced_vectors = np.load(
+                    root / "reduced_vectors.npy"
+                )  # bugfix: was loading from cwd
 
             # --- Sparse cluster matrices ---
             matrices_dir = root / "cluster_matrices"
@@ -155,7 +167,7 @@ class TopicModel:
                 cluster_layers=matrices,
             )
 
-    def to_file(self, path:str):
+    def to_file(self, path: str):
         path = Path(path)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "topic_model"
@@ -197,8 +209,9 @@ class TopicModel:
                     z.write(file, file.relative_to(root))
 
     @classmethod
-    def from_lance(cls, path:str):
+    def from_lance(cls, path: str):
         import lance
+
         path = Path(path)
 
         # --- config ---
@@ -222,18 +235,20 @@ class TopicModel:
         embedding_vectors = np.array(doc_table.pop("embedding"), dtype=np.float32)
         reduced_vectors = None
         if has_reduced:
-            reduced_vectors = np.array(doc_table.pop("reduced_embedding"), dtype=np.float32)
+            reduced_vectors = np.array(
+                doc_table.pop("reduced_embedding"), dtype=np.float32
+            )
         document_df = pd.DataFrame(doc_table)
 
         topic_dict = lance.dataset(str(path / "topics.lance")).to_table().to_pydict()
         topic_df = pd.DataFrame(topic_dict)
 
         coo_dict = lance.dataset(str(path / "clusters.lance")).to_table().to_pydict()
-        layers_arr   = np.array(coo_dict["layer"],   dtype=np.int16)
-        rows_arr     = np.array(coo_dict["row_idx"],  dtype=np.int32)
-        cols_arr     = np.array(coo_dict["col_idx"],  dtype=np.int16)
-        vals_arr     = np.array(coo_dict["value"],    dtype=np.uint8)  # safe: values are 0-255
-        n_docs       = len(document_df)
+        layers_arr = np.array(coo_dict["layer"], dtype=np.int16)
+        rows_arr = np.array(coo_dict["row_idx"], dtype=np.int32)
+        cols_arr = np.array(coo_dict["col_idx"], dtype=np.int16)
+        vals_arr = np.array(coo_dict["value"], dtype=np.uint8)  # safe: values are 0-255
+        n_docs = len(document_df)
 
         matrices = []
         for layer_idx in range(n_layers):
@@ -252,10 +267,10 @@ class TopicModel:
             document_df=document_df,
             topic_df=topic_df,
             cluster_tree=cluster_tree,
-            cluster_layers=matrices
+            cluster_layers=matrices,
         )
 
-    def to_lance(self, path:str):
+    def to_lance(self, path: str):
 
         import lance
         import pyarrow as pa
@@ -268,14 +283,17 @@ class TopicModel:
         path.mkdir(parents=True)
 
         # --- documents.lance ---
-        doc_dict = {col: self.document_df[col].tolist()
-                    for col in self.document_df.columns}
+        doc_dict = {
+            col: self.document_df[col].tolist() for col in self.document_df.columns
+        }
 
         emb_dim = self.embedding_vectors.shape[1]
         doc_dict["embedding"] = self.embedding_vectors.tolist()
         schema_fields = [
-            *[pa.field(col, _pandas_col_to_arrow(self.document_df[col]))
-            for col in self.document_df.columns],
+            *[
+                pa.field(col, _pandas_col_to_arrow(self.document_df[col]))
+                for col in self.document_df.columns
+            ],
             pa.field("embedding", pa.list_(pa.float32(), emb_dim)),
         ]
 
@@ -309,12 +327,14 @@ class TopicModel:
             coo_cols.append(coo.col.astype(np.int16))
             coo_vals.append(coo.data.astype(np.int32))
 
-        clusters_table = pa.table({
-            "layer":   pa.array(np.concatenate(coo_layers), type=pa.int16()),
-            "row_idx": pa.array(np.concatenate(coo_rows),   type=pa.int32()),
-            "col_idx": pa.array(np.concatenate(coo_cols),   type=pa.int16()),
-            "value":   pa.array(np.concatenate(coo_vals),   type=pa.int32()),
-        })
+        clusters_table = pa.table(
+            {
+                "layer": pa.array(np.concatenate(coo_layers), type=pa.int16()),
+                "row_idx": pa.array(np.concatenate(coo_rows), type=pa.int32()),
+                "col_idx": pa.array(np.concatenate(coo_cols), type=pa.int16()),
+                "value": pa.array(np.concatenate(coo_vals), type=pa.int32()),
+            }
+        )
         lance.write_dataset(clusters_table, str(path / "clusters.lance"))
 
         uid_tree = {
@@ -323,33 +343,37 @@ class TopicModel:
         }
 
         # --- config.lance ---
-        config_table = pa.table({
-            "serial_version": pa.array([_SERIAL_VERSION],  type=pa.string()),
-            "n_layers":       pa.array([len(self.cluster_layers)], type=pa.int32()),
-            "has_reduced":    pa.array([has_reduced],       type=pa.bool_()),
-            "cluster_tree":   pa.array(
-                [json.dumps(uid_tree)],
-                type=pa.string(),
-            ),
-        })
+        config_table = pa.table(
+            {
+                "serial_version": pa.array([_SERIAL_VERSION], type=pa.string()),
+                "n_layers": pa.array([len(self.cluster_layers)], type=pa.int32()),
+                "has_reduced": pa.array([has_reduced], type=pa.bool_()),
+                "cluster_tree": pa.array(
+                    [json.dumps(uid_tree)],
+                    type=pa.string(),
+                ),
+            }
+        )
         lance.write_dataset(config_table, str(path / "config.lance"))
 
     @property
     def topic_name_vectors(self):
         vectors = []
-        max_len = max([len(x) for x in self.topic_df['name'].values])
+        max_len = max([len(x) for x in self.topic_df["name"].values])
         for layer, matrix in enumerate(self.cluster_layers):
             matrix = matrix.todense()
-            vector_layer = np.full(matrix.shape[0], "Unlabelled", dtype=f'<U{max_len}')
+            vector_layer = np.full(matrix.shape[0], "Unlabelled", dtype=f"<U{max_len}")
             for cluster in range(matrix.shape[1]):
                 cluster_uid = topic_uid((layer, cluster))
-                cluster_name = self.topic_df[self.topic_df['uid']==cluster_uid]['name'].values[0]
-                column = matrix[:,cluster]
-                cluster_index = (column==255).nonzero()[0]
+                cluster_name = self.topic_df[self.topic_df["uid"] == cluster_uid][
+                    "name"
+                ].values[0]
+                column = matrix[:, cluster]
+                cluster_index = (column == 255).nonzero()[0]
                 vector_layer[cluster_index] = cluster_name
             vectors.append(vector_layer)
         return vectors
-    
+
     @property
     def topic_names(self):
         all_names = []
@@ -357,7 +381,9 @@ class TopicModel:
             layer_names = []
             for cluster in range(matrix.shape[1]):
                 cluster_uid = topic_uid((layer, cluster))
-                cluster_name = self.topic_df[self.topic_df['uid']==cluster_uid]['name'].values[0]
+                cluster_name = self.topic_df[self.topic_df["uid"] == cluster_uid][
+                    "name"
+                ].values[0]
                 layer_names.append(cluster_name)
             all_names.append(layer_names)
         return all_names

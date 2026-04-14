@@ -25,6 +25,7 @@ def test_abstract_cluster_layer(
     cluster_tree,
 ):
     ClusterLayer.__abstractmethods__ = set()
+
     @dataclass
     class ConcreteClusterLayer(ClusterLayer):
         pass
