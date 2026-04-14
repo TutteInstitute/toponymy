@@ -130,6 +130,14 @@ class Toponymy:
             verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
         )
 
+        # If the default prompt template is used, but the layer class is ClusterLayerSummaryText, it is
+        # reasonable to switch to the summary prompt templates, if not, the user may be passing their own.
+        if (
+            isinstance(layer_class, ClusterLayerSummaryText)
+            and prompt_template == PROMPT_TEMPLATES
+        ):
+            self.prompt_template = SUMMARY_PROMPT_TEMPLATES
+
     def __sklearn_tags__(self):
         tags = BaseEstimator.__sklearn_tags__(self)
         tags.requires_fit = True
