@@ -39,7 +39,7 @@ def test_toponymy(
         corpus_description="collection of sentences",
         lowest_detail_level=0.8,
         highest_detail_level=1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     model.fit(all_sentences, object_vectors, clusterable_vectors)
     embedded_topic_names = embedder.encode(model.topic_names_[1])
@@ -58,6 +58,103 @@ def test_toponymy(
         == cluster_label_vector
     )
 
+def test_toponymy(
+    llm,
+    embedder,
+    clusterer,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+    cluster_label_vector,
+    subtopic_objects,
+):
+    model = Toponymy(
+        llm,
+        embedder,
+        clusterer,
+        keyphrase_builder=KeyphraseBuilder(n_jobs=1),
+        object_description="sentences",
+        corpus_description="collection of sentences",
+        lowest_detail_level=0.8,
+        highest_detail_level=1.0,
+        verbose=True,
+    )
+    model.fit(all_sentences, object_vectors, clusterable_vectors)
+    embedded_topic_names = embedder.encode(model.topic_names_[1])
+    print(model.topic_names_[1])
+    distance_matrix = pairwise_distances(
+        embedded_topic_names,
+        embedder.encode([topic["topic"] for topic in subtopic_objects]),
+        metric="cosine",
+    )
+    row_matching, col_matching = linear_sum_assignment(distance_matrix)
+    assert distance_matrix[row_matching, col_matching].sum() < 2.5
+    assert np.all(
+        pd.Series(model.cluster_layers_[1].cluster_labels)
+        .map(dict(np.vstack([np.arange(5), col_matching]).T))
+        .values
+        == cluster_label_vector
+    )
+
+
+def test_toponymy_resyncs_runtime_layer_config_for_prefit_clusterer(
+    llm,
+    embedder,
+    clusterer,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+):
+    # Ensure this test uses a wrapper that supports system prompts
+    assert llm.supports_system_prompts is True
+
+    # Pre-fit clusterer with old settings
+    clusterer.fit(
+        clusterable_vectors,
+        object_vectors,
+        prompt_format="combined",
+        exemplar_delimiters=["<<OLD>>", "<</OLD>>"],
+        show_progress_bar=False,
+        verbose=False,
+    )
+
+    assert all(layer.prompt_format == "combined" for layer in clusterer.cluster_layers_)
+
+    new_exemplar_delimiters = ["<EXAMPLE>", "</EXAMPLE>"]
+
+    model = Toponymy(
+        llm,
+        embedder,
+        clusterer,
+        keyphrase_builder=KeyphraseBuilder(n_jobs=1),
+        object_description="sentences",
+        corpus_description="collection of sentences",
+        lowest_detail_level=0.8,
+        highest_detail_level=1.0,
+        exemplar_delimiters=new_exemplar_delimiters,
+        verbose=True,
+    )
+
+    model.fit(all_sentences, object_vectors, clusterable_vectors)
+
+    # prompt_format should now reflect the wrapper capability
+    assert all(layer.prompt_format == "system_user" for layer in model.cluster_layers_)
+
+    # other runtime config should also be updated
+    assert all(
+        layer.exemplar_delimiters == new_exemplar_delimiters
+        for layer in model.cluster_layers_
+    )
+
+    assert all(
+        layer.show_progress_bar == model.show_progress_bars
+        for layer in model.cluster_layers_
+    )
+
+    assert all(
+        layer.verbose == model.verbose
+        for layer in model.cluster_layers_
+    )
 
 # @pytest.mark.skip(reason="Lowering runtime for CI")
 def test_toponymy_alternative_options(
@@ -85,7 +182,7 @@ def test_toponymy_alternative_options(
         corpus_description="collection of sentences",
         lowest_detail_level=0.8,
         highest_detail_level=1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     topic_name_vectors = model.fit_predict(
         all_sentences,
@@ -137,7 +234,7 @@ def test_toponymy_alternative_options_2(
         corpus_description="collection of sentences",
         lowest_detail_level=0.8,
         highest_detail_level=1.0,
-        show_progress_bars=True,
+        verbose=True,
     )
     topic_name_vectors = model.fit_predict(
         all_sentences,
@@ -310,7 +407,7 @@ def test_toponymy_with_ollama(
                     corpus_description="collection of sentences",
                     lowest_detail_level=0.8,
                     highest_detail_level=1.0,
-                    show_progress_bars=True,
+                    verbose=True,
                 )
 
                 model.fit(all_sentences, object_vectors, clusterable_vectors)
@@ -505,7 +602,7 @@ def test_toponymy_async_ollama(
                     corpus_description="collection of sentences",
                     lowest_detail_level=0.8,
                     highest_detail_level=1.0,
-                    show_progress_bars=True,
+                    verbose=True,
                 )
 
                 topic_name_vectors = model.fit_predict(
@@ -839,7 +936,7 @@ def test_toponymy_with_mocked_ollama(
             corpus_description="collection of sentences",
             lowest_detail_level=0.8,
             highest_detail_level=1.0,
-            show_progress_bars=True,
+            verbose=True,
         )
 
         model.fit(all_sentences, object_vectors, clusterable_vectors)

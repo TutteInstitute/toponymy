@@ -1,43 +1,34 @@
+import os
+
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
-import json
-from typing import List
 
-import asyncio
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
-    AsyncCohereNamer,
-    AsyncAnthropicNamer,
-    BatchAnthropicNamer,
-    AsyncOpenAINamer,
-    AsyncAzureAINamer,
-    AsyncOllamaNamer,
-    AsyncGoogleGeminiNamer,
-    AsyncTogether,
+    AsyncCohereNamer, AsyncAnthropicNamer, AsyncLiteLLMNamer, BatchAnthropicNamer, AsyncOpenAINamer, AsyncAzureAINamer,
+    AsyncOllamaNamer, AsyncGoogleGeminiNamer, AsyncTogether, FailFastLLMError, CallResult
 )
-from toponymy.tests.test_llm_wrappers import (
-    MockLLMResponse,
-    VALID_TOPIC_NAME_RESPONSE,
-    VALID_CLUSTER_NAMES_RESPONSE,
-    MALFORMED_JSON_RESPONSE,
-    MALFORMED_MAPPING_RESPONSE,
+from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
     validate_cluster_names,
+    LITELLM_PROVIDER_CASES
+)
+from toponymy.tests.helpers.errors import (
+    ANTHROPIC_FAIL_FAST,
+    ANTHROPIC_RETRYABLE,
+    make_anthropic_error,
+    OPENAI_FAIL_FAST,
+    OPENAI_RETRYABLE,
+    make_openai_error,
+    LITELLM_FAIL_FAST,
+    LITELLM_RETRYABLE,
+    make_litellm_error
 )
 
-
-@pytest.fixture
-def mock_data():
-    return {
-        "valid_topic_name": json.dumps(VALID_TOPIC_NAME_RESPONSE),
-        "valid_cluster_names": json.dumps(VALID_CLUSTER_NAMES_RESPONSE),
-        "old_names": ["data", "ml", "ai"],
-        "old_names_list": [["data", "ml", "ai"], ["x", "y", "z"]],
-        "malformed_mapping": MALFORMED_MAPPING_RESPONSE,
-        "malformed_json": MALFORMED_JSON_RESPONSE,
-    }
-
+LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
+    "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
+)
 
 # Helper for async tests
 async def async_return(value):
@@ -60,7 +51,7 @@ class MockAsyncResponse:
         return Response(content)
 
     @staticmethod
-    def create_openai_response(content: str):
+    def create_chat_response(content: str):
         class Choice:
             def __init__(self, content):
                 self.message = Mock(content=content)
@@ -87,23 +78,11 @@ class MockAsyncResponse:
 
         return Response(content)
 
-    @staticmethod
-    def create_azureai_response(content: str):
-        class Choice:
-            def __init__(self, content):
-                self.message = Mock(content=content)
-
-        class Response:
-            def __init__(self, content):
-                self.choices = [Choice(content)]
-
-        return Response(content)
-
 
 # AsyncCohere Tests
 @pytest_asyncio.fixture
 async def async_cohere_wrapper():
-    with patch("cohere.AsyncClientV2"):
+    with patch('cohere.AsyncClientV2'):
         wrapper = AsyncCohereNamer(api_key="dummy")
         yield wrapper
         # Clean up any resources
@@ -114,9 +93,7 @@ async def async_cohere_wrapper():
 
 
 @pytest.mark.asyncio
-async def test_async_cohere_generate_topic_names_success(
-    async_cohere_wrapper, mock_data
-):
+async def test_async_cohere_generate_topic_names_success(async_cohere_wrapper, mock_data):
     response = MockAsyncResponse.create_cohere_response(mock_data["valid_topic_name"])
     async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
 
@@ -126,26 +103,18 @@ async def test_async_cohere_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_cohere_generate_topic_names_system_prompt(
-    async_cohere_wrapper, mock_data
-):
+async def test_async_cohere_generate_topic_names_system_prompt(async_cohere_wrapper, mock_data):
     response = MockAsyncResponse.create_cohere_response(mock_data["valid_topic_name"])
     async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
 
-    result = await async_cohere_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_cohere_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_success(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(
-        mock_data["valid_cluster_names"]
-    )
+async def test_async_cohere_generate_topic_cluster_names_success(async_cohere_wrapper, mock_data):
+    response = MockAsyncResponse.create_cohere_response(mock_data["valid_cluster_names"])
     async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
 
     result = await async_cohere_wrapper.generate_topic_cluster_names(
@@ -156,25 +125,20 @@ async def test_async_cohere_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_system_prompt(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(
-        mock_data["valid_cluster_names"]
-    )
+async def test_async_cohere_generate_topic_cluster_names_system_prompt(async_cohere_wrapper, mock_data):
+    response = MockAsyncResponse.create_cohere_response(mock_data["valid_cluster_names"])
     async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
 
     result = await async_cohere_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_malformed_mapping(
-    async_cohere_wrapper, mock_data
-):
+async def test_async_cohere_generate_topic_cluster_names_malformed_mapping(async_cohere_wrapper, mock_data):
     response = MockAsyncResponse.create_cohere_response(mock_data["malformed_mapping"])
     async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
 
@@ -194,9 +158,7 @@ async def test_async_cohere_generate_topic_names_failure(async_cohere_wrapper):
 
 
 @pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_failure(
-    async_cohere_wrapper, mock_data
-):
+async def test_async_cohere_generate_topic_cluster_names_failure(async_cohere_wrapper, mock_data):
     async_cohere_wrapper.llm.chat = AsyncMock(side_effect=Exception("API Error"))
     result = await async_cohere_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -211,28 +173,58 @@ async def test_async_cohere_batch_processing(async_cohere_wrapper, mock_data):
     async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
 
     # Test batch processing with multiple prompts
-    result = await async_cohere_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
+    result = await async_cohere_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
-
 
 # AsyncAnthropic Tests
 @pytest_asyncio.fixture
 async def async_anthropic_wrapper():
-    with patch("anthropic.AsyncAnthropic"):
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch("anthropic.AsyncAnthropic", return_value=mock_client):
         wrapper = AsyncAnthropicNamer(api_key="dummy")
-        yield wrapper
+        try:
+            yield wrapper
+        finally:
+            await wrapper.close()
+
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
+async def test_anthropic_connectivity_async_plain_canary():
+    namer = AsyncAnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Anthropic:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set")
+async def test_anthropic_connectivity_async_system_canary():
+    namer = AsyncAnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for Anthropic:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_async_anthropic_generate_topic_names_success(
-    async_anthropic_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_anthropic_response(
-        mock_data["valid_topic_name"]
-    )
+async def test_async_anthropic_generate_topic_names_success(async_anthropic_wrapper, mock_data):
+    response = MockAsyncResponse.create_anthropic_response(mock_data["valid_topic_name"])
     async_anthropic_wrapper.client.messages.create = AsyncMock(return_value=response)
 
     result = await async_anthropic_wrapper.generate_topic_names(["test prompt"])
@@ -241,28 +233,18 @@ async def test_async_anthropic_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_anthropic_generate_topic_names_system_prompt(
-    async_anthropic_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_anthropic_response(
-        mock_data["valid_topic_name"]
-    )
+async def test_async_anthropic_generate_topic_names_system_prompt(async_anthropic_wrapper, mock_data):
+    response = MockAsyncResponse.create_anthropic_response(mock_data["valid_topic_name"])
     async_anthropic_wrapper.client.messages.create = AsyncMock(return_value=response)
 
-    result = await async_anthropic_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_anthropic_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_anthropic_generate_topic_cluster_names_success(
-    async_anthropic_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_anthropic_response(
-        mock_data["valid_cluster_names"]
-    )
+async def test_async_anthropic_generate_topic_cluster_names_success(async_anthropic_wrapper, mock_data):
+    response = MockAsyncResponse.create_anthropic_response(mock_data["valid_cluster_names"])
     async_anthropic_wrapper.client.messages.create = AsyncMock(return_value=response)
 
     result = await async_anthropic_wrapper.generate_topic_cluster_names(
@@ -273,28 +255,21 @@ async def test_async_anthropic_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_anthropic_generate_topic_cluster_names_system_prompt(
-    async_anthropic_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_anthropic_response(
-        mock_data["valid_cluster_names"]
-    )
+async def test_async_anthropic_generate_topic_cluster_names_system_prompt(async_anthropic_wrapper, mock_data):
+    response = MockAsyncResponse.create_anthropic_response(mock_data["valid_cluster_names"])
     async_anthropic_wrapper.client.messages.create = AsyncMock(return_value=response)
 
     result = await async_anthropic_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_anthropic_generate_topic_cluster_names_malformed_mapping(
-    async_anthropic_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_anthropic_response(
-        mock_data["malformed_mapping"]
-    )
+async def test_async_anthropic_generate_topic_cluster_names_malformed_mapping(async_anthropic_wrapper, mock_data):
+    response = MockAsyncResponse.create_anthropic_response(mock_data["malformed_mapping"])
     async_anthropic_wrapper.client.messages.create = AsyncMock(return_value=response)
 
     result = await async_anthropic_wrapper.generate_topic_cluster_names(
@@ -303,11 +278,149 @@ async def test_async_anthropic_generate_topic_cluster_names_malformed_mapping(
     assert len(result) == 1
     validate_cluster_names(result[0])
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", ANTHROPIC_FAIL_FAST)
+async def test_async_anthropic_generate_topic_names_fail_fast_raises(async_anthropic_wrapper, error_class):
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=make_anthropic_error(error_class)
+    )
+
+    with pytest.raises(FailFastLLMError):
+        await async_anthropic_wrapper.generate_topic_names(
+            ["test prompt"]
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", ANTHROPIC_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_anthropic_generate_topic_names_retryable_returns_empty(
+    async_anthropic_wrapper,
+    error_class,
+):
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    result = await async_anthropic_wrapper.generate_topic_names(
+        ["test prompt"]
+    )
+
+    assert result == [""]
+    assert async_anthropic_wrapper.client.messages.create.call_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", ANTHROPIC_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_anthropic_generate_topic_cluster_names_retryable_returns_old_names(
+    async_anthropic_wrapper,
+    mock_data,
+    error_class,
+):
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    result = await async_anthropic_wrapper.generate_topic_cluster_names(
+        ["test prompt"],
+        [mock_data["old_names"]],
+    )
+
+    assert result == [mock_data["old_names"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_anthropic_retries_per_item_not_whole_batch(
+    async_anthropic_wrapper, mock_data
+):
+    good_response = MockAsyncResponse.create_anthropic_response(
+        mock_data["valid_topic_name"]
+    )
+    error_class = ANTHROPIC_RETRYABLE[0]
+
+    call_counts = {"prompt1": 0, "prompt2": 0}
+
+    async def mock_create(*args, **kwargs):
+        prompt_text = kwargs["messages"][0]["content"]
+        call_counts[prompt_text] += 1
+
+        if prompt_text == "prompt1":
+            return good_response
+        if prompt_text == "prompt2":
+            raise make_anthropic_error(error_class)
+
+        raise AssertionError(f"Unexpected prompt: {prompt_text}")
+
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=mock_create
+    )
+
+    result = await async_anthropic_wrapper.generate_topic_names(
+        ["prompt1", "prompt2"]
+    )
+
+    assert len(result) == 2
+    validate_topic_name(result[0])
+    assert result[1] == ""
+
+    assert call_counts["prompt1"] == 1
+    assert call_counts["prompt2"] == 3
+
+
+@pytest.mark.asyncio
+async def test_async_anthropic_generate_topic_names_retry_exhausted_warns(
+    async_anthropic_wrapper,
+):
+    error_class = ANTHROPIC_RETRYABLE[0]
+
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    with pytest.warns(
+        UserWarning,
+        match="Failed to generate topic name",
+    ):
+        result = await async_anthropic_wrapper.generate_topic_names(
+            ["test prompt"]
+        )
+
+    assert result == [""]
+
+
+@pytest.mark.asyncio
+async def test_async_anthropic_generate_topic_cluster_names_retry_exhausted_warns(
+    async_anthropic_wrapper, mock_data
+):
+    error_class = ANTHROPIC_RETRYABLE[0]
+
+    async_anthropic_wrapper.client.messages.create = AsyncMock(
+        side_effect=[
+            make_anthropic_error(error_class) for _ in range(3)
+        ]
+    )
+
+    with pytest.warns(UserWarning):
+        result = await async_anthropic_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert result == [mock_data["old_names"]]
 
 # BatchAnthropic Tests
 @pytest_asyncio.fixture
 async def batch_anthropic_wrapper():
-    with patch("anthropic.Anthropic"):
+    with patch('anthropic.Anthropic'):
         wrapper = BatchAnthropicNamer(api_key="dummy")
         yield wrapper
 
@@ -321,7 +434,9 @@ async def test_batch_anthropic_submit_batch(batch_anthropic_wrapper, mock_data):
     )
 
     # Test the submit_batch method
-    result = batch_anthropic_wrapper.submit_batch(["prompt1", "prompt2"], 0.4, 128)
+    result = batch_anthropic_wrapper.submit_batch(
+        ["prompt1", "prompt2"], 0.4, 128
+    )
     assert result == batch_id
 
     # Verify the client was called with the expected parameters
@@ -350,9 +465,7 @@ async def test_batch_anthropic_cancel_batch(batch_anthropic_wrapper):
     batch_anthropic_wrapper.cancel_batch("batch_123456")
 
     # Verify the client was called with the expected parameters
-    batch_anthropic_wrapper.client.beta.messages.batches.cancel.assert_called_once_with(
-        "batch_123456"
-    )
+    batch_anthropic_wrapper.client.beta.messages.batches.cancel.assert_called_once_with("batch_123456")
 
 
 @pytest.mark.asyncio
@@ -363,9 +476,7 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
     )
 
     # Test the _wait_for_completion_async method with a very short timeout
-    batch_anthropic_wrapper.polling_interval = (
-        0.01  # Use a short polling interval for the test
-    )
+    batch_anthropic_wrapper.polling_interval = 0.01  # Use a short polling interval for the test
     result = await batch_anthropic_wrapper._wait_for_completion_async("batch_123456")
     assert result is True
 
@@ -373,24 +484,58 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
 # AsyncOpenAI Tests
 @pytest_asyncio.fixture
 async def async_openai_wrapper():
-    with patch("openai.AsyncOpenAI"):
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch('openai.AsyncOpenAI', return_value=mock_client):
         wrapper = AsyncOpenAINamer(api_key="dummy")
-        yield wrapper
-        # Clean up any resources
         try:
+            yield wrapper
+        finally:
             await wrapper.close()
-        except:
-            pass
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
+async def test_openai_connectivity_async_plain_canary():
+    """
+    Canary test verifying live async connectivity to the OpenAI API
+    using the plain prompt path.
+    """
+    namer = AsyncOpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for OpenAI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
+async def test_openai_connectivity_async_system_canary():
+    """
+    Canary test verifying live async connectivity to the OpenAI API
+    using the system prompt path.
+    """
+    namer = AsyncOpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for OpenAI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
 
 
 @pytest.mark.asyncio
-async def test_async_openai_generate_topic_names_success(
-    async_openai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_openai_response(mock_data["valid_topic_name"])
-    async_openai_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=response
-    )
+async def test_async_openai_generate_topic_names_success(async_openai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(return_value=response)
 
     result = await async_openai_wrapper.generate_topic_names(["test prompt"])
     assert len(result) == 1
@@ -398,31 +543,19 @@ async def test_async_openai_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_openai_generate_topic_names_system_prompt(
-    async_openai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_openai_response(mock_data["valid_topic_name"])
-    async_openai_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=response
-    )
+async def test_async_openai_generate_topic_names_system_prompt(async_openai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(return_value=response)
 
-    result = await async_openai_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_openai_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_openai_generate_topic_cluster_names_success(
-    async_openai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_openai_response(
-        mock_data["valid_cluster_names"]
-    )
-    async_openai_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=response
-    )
+async def test_async_openai_generate_topic_cluster_names_success(async_openai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(return_value=response)
 
     result = await async_openai_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -432,31 +565,22 @@ async def test_async_openai_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_openai_generate_topic_cluster_names_system_prompt(
-    async_openai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_openai_response(
-        mock_data["valid_cluster_names"]
-    )
-    async_openai_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=response
-    )
+async def test_async_openai_generate_topic_cluster_names_system_prompt(async_openai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(return_value=response)
 
     result = await async_openai_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_openai_generate_topic_cluster_names_malformed_mapping(
-    async_openai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_openai_response(mock_data["malformed_mapping"])
-    async_openai_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=response
-    )
+async def test_async_openai_generate_topic_cluster_names_malformed_mapping(async_openai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["malformed_mapping"])
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(return_value=response)
 
     result = await async_openai_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -464,16 +588,114 @@ async def test_async_openai_generate_topic_cluster_names_malformed_mapping(
     assert len(result) == 1
     validate_cluster_names(result[0])
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", OPENAI_FAIL_FAST)
+async def test_async_openai_generate_topic_names_fail_fast_raises(async_openai_wrapper, error_class):
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=make_openai_error(error_class)
+    )
+
+    with pytest.raises(FailFastLLMError):
+        await async_openai_wrapper.generate_topic_names(["test prompt"])
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", OPENAI_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_openai_generate_topic_names_retryable_returns_empty(
+    async_openai_wrapper,
+    error_class,
+):
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    result = await async_openai_wrapper.generate_topic_names(["test prompt"])
+
+    assert result == [""]
+    assert async_openai_wrapper.client.chat.completions.create.call_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", OPENAI_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_openai_generate_topic_cluster_names_retryable_returns_old_names(
+    async_openai_wrapper,
+    mock_data,
+    error_class,
+):
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    result = await async_openai_wrapper.generate_topic_cluster_names(
+        ["test prompt"],
+        [mock_data["old_names"]],
+    )
+
+    assert result == [mock_data["old_names"]]
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_openai_retries_per_item_not_whole_batch( async_openai_wrapper, mock_data):
+    good_response = MockAsyncResponse.create_chat_response( mock_data["valid_topic_name"] )
+    error_class = OPENAI_RETRYABLE[0]
+    call_counts = {"prompt1": 0, "prompt2": 0}
+    async def mock_create(*args, **kwargs):
+        prompt_text = kwargs["messages"][0]["content"]
+        call_counts[prompt_text] += 1
+        if prompt_text == "prompt1":
+            return good_response
+        elif prompt_text == "prompt2":
+            raise make_openai_error(error_class)
+        raise AssertionError(f"Unexpected prompt: {prompt_text}")
+
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=mock_create
+    )
+    result = await async_openai_wrapper.generate_topic_names(
+        ["prompt1", "prompt2"]
+    )
+
+    assert len(result) == 2
+    validate_topic_name(result[0])
+    assert result[1] == ""
+    assert call_counts["prompt1"] == 1
+    assert call_counts["prompt2"] == 3
+
+@pytest.mark.asyncio
+async def test_async_openai_generate_topic_names_retry_exhausted_warns(async_openai_wrapper):
+    error_class = OPENAI_RETRYABLE[0]
+
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    with pytest.warns(UserWarning, match="Failed to generate topic name"):
+        result = await async_openai_wrapper.generate_topic_names(["test prompt"])
+
+    assert result == [""]
+
+@pytest.mark.asyncio
+async def test_async_openai_generate_topic_cluster_names_retry_exhausted_warns(async_openai_wrapper, mock_data):
+    error_class = OPENAI_RETRYABLE[0]
+
+    async_openai_wrapper.client.chat.completions.create = AsyncMock(
+        side_effect=[make_openai_error(error_class) for _ in range(3)]
+    )
+
+    with pytest.warns(UserWarning):
+        result = await async_openai_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert result == [mock_data["old_names"]]
 
 # AsyncAzureAI Tests
 @pytest_asyncio.fixture
 async def async_azureai_wrapper():
-    with patch("azure.ai.inference.aio.ChatCompletionsClient"):
-        wrapper = AsyncAzureAINamer(
-            api_key="dummy",
-            endpoint="https://dummy.services.ai.azure.com/models",
-            model="dummy",
-        )
+    with patch('azure.ai.inference.aio.ChatCompletionsClient'):
+        wrapper = AsyncAzureAINamer(api_key="dummy", endpoint="https://dummy.services.ai.azure.com/models", model="dummy")
         yield wrapper
         # Clean up any resources
         try:
@@ -483,10 +705,8 @@ async def async_azureai_wrapper():
 
 
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_names_success(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_azureai_response(mock_data["valid_topic_name"])
+async def test_async_azureai_generate_topic_names_success(async_azureai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
 
     result = await async_azureai_wrapper.generate_topic_names(["test prompt"])
@@ -495,26 +715,18 @@ async def test_async_azureai_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_names_system_prompt(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_azureai_response(mock_data["valid_topic_name"])
+async def test_async_azureai_generate_topic_names_system_prompt(async_azureai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
 
-    result = await async_azureai_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_azureai_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_cluster_names_success(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_azureai_response(
-        mock_data["valid_cluster_names"]
-    )
+async def test_async_azureai_generate_topic_cluster_names_success(async_azureai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
 
     result = await async_azureai_wrapper.generate_topic_cluster_names(
@@ -525,54 +737,41 @@ async def test_async_azureai_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_cluster_names_system_prompt(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_azureai_response(
-        mock_data["valid_cluster_names"]
-    )
+async def test_async_azureai_generate_topic_cluster_names_system_prompt(async_azureai_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
 
     result = await async_azureai_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_names_multiple(
-    async_azureai_wrapper, mock_data
-):
+async def test_async_azureai_generate_topic_names_multiple(async_azureai_wrapper, mock_data):
     """Test processing multiple prompts in a single call."""
-    response = MockAsyncResponse.create_azureai_response(mock_data["valid_topic_name"])
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
 
     # Test with 3 prompts
-    result = await async_azureai_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
+    result = await async_azureai_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
     assert len(result) == 3
     for name in result:
         assert name == "Machine Learning"
 
 
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_cluster_names_multiple(
-    async_azureai_wrapper, mock_data
-):
+async def test_async_azureai_generate_topic_cluster_names_multiple(async_azureai_wrapper, mock_data):
     """Test processing multiple prompt/old_names pairs in a single call."""
-    response = MockAsyncResponse.create_azureai_response(
-        mock_data["valid_cluster_names"]
-    )
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
     async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
 
     old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
     prompts = ["prompt1", "prompt2"]
 
-    result = await async_azureai_wrapper.generate_topic_cluster_names(
-        prompts, old_names_list
-    )
+    result = await async_azureai_wrapper.generate_topic_cluster_names(prompts, old_names_list)
     assert len(result) == 2
     validate_cluster_names(result[0])
 
@@ -580,18 +779,14 @@ async def test_async_azureai_generate_topic_cluster_names_multiple(
 # AsyncOllama Tests
 @pytest_asyncio.fixture
 async def async_ollama_wrapper():
-    with patch("ollama.AsyncClient"):
+    with patch('ollama.AsyncClient'):
         wrapper = AsyncOllamaNamer(model="llama3.2", host="http://localhost:11434")
         yield wrapper
 
 
 @pytest.mark.asyncio
-async def test_async_ollama_generate_topic_names_success(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.generate = AsyncMock(
-        return_value={"response": mock_data["valid_topic_name"]}
-    )
+async def test_async_ollama_generate_topic_names_success(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.generate = AsyncMock(return_value={'response': mock_data["valid_topic_name"]})
 
     result = await async_ollama_wrapper.generate_topic_names(["test prompt"])
     assert len(result) == 1
@@ -599,27 +794,17 @@ async def test_async_ollama_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_ollama_generate_topic_names_system_prompt(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.chat = AsyncMock(
-        return_value={"message": {"content": mock_data["valid_topic_name"]}}
-    )
+async def test_async_ollama_generate_topic_names_system_prompt(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.chat = AsyncMock(return_value={'message': {'content': mock_data["valid_topic_name"]}})
 
-    result = await async_ollama_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_ollama_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_ollama_generate_topic_cluster_names_success(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.generate = AsyncMock(
-        return_value={"response": mock_data["valid_cluster_names"]}
-    )
+async def test_async_ollama_generate_topic_cluster_names_success(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.generate = AsyncMock(return_value={'response': mock_data["valid_cluster_names"]})
 
     result = await async_ollama_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -629,15 +814,12 @@ async def test_async_ollama_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_ollama_generate_topic_cluster_names_system_prompt(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.chat = AsyncMock(
-        return_value={"message": {"content": mock_data["valid_cluster_names"]}}
-    )
+async def test_async_ollama_generate_topic_cluster_names_system_prompt(async_ollama_wrapper, mock_data):
+    async_ollama_wrapper.client.chat = AsyncMock(return_value={'message': {'content': mock_data["valid_cluster_names"]}})
 
     result = await async_ollama_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
@@ -652,9 +834,7 @@ async def test_async_ollama_generate_topic_names_failure(async_ollama_wrapper):
 
 
 @pytest.mark.asyncio
-async def test_async_ollama_generate_topic_cluster_names_failure(
-    async_ollama_wrapper, mock_data
-):
+async def test_async_ollama_generate_topic_cluster_names_failure(async_ollama_wrapper, mock_data):
     async_ollama_wrapper.client.generate = AsyncMock(side_effect=Exception("API Error"))
     result = await async_ollama_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -665,14 +845,10 @@ async def test_async_ollama_generate_topic_cluster_names_failure(
 
 @pytest.mark.asyncio
 async def test_async_ollama_batch_processing(async_ollama_wrapper, mock_data):
-    async_ollama_wrapper.client.generate = AsyncMock(
-        return_value={"response": mock_data["valid_topic_name"]}
-    )
+    async_ollama_wrapper.client.generate = AsyncMock(return_value={'response': mock_data["valid_topic_name"]})
 
     # Test batch processing with multiple prompts
-    result = await async_ollama_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
+    result = await async_ollama_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
 
@@ -680,21 +856,14 @@ async def test_async_ollama_batch_processing(async_ollama_wrapper, mock_data):
 # AsyncGoogleGemini Tests
 @pytest_asyncio.fixture
 async def async_google_gemini_wrapper():
-    with (
-        patch("google.generativeai.configure"),
-        patch("google.generativeai.GenerativeModel"),
-    ):
+    with patch('google.generativeai.configure'), patch('google.generativeai.GenerativeModel'):
         wrapper = AsyncGoogleGeminiNamer(api_key="dummy", model="gemini-1.5-flash")
         yield wrapper
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_names_success(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
-    )
+async def test_async_google_gemini_generate_topic_names_success(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_topic_name"]))
 
     result = await async_google_gemini_wrapper.generate_topic_names(["test prompt"])
     assert len(result) == 1
@@ -702,27 +871,17 @@ async def test_async_google_gemini_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_names_system_prompt(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
-    )
+async def test_async_google_gemini_generate_topic_names_system_prompt(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_topic_name"]))
 
-    result = await async_google_gemini_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_google_gemini_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_cluster_names_success(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+async def test_async_google_gemini_generate_topic_cluster_names_success(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_cluster_names"]))
 
     result = await async_google_gemini_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -732,39 +891,28 @@ async def test_async_google_gemini_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_cluster_names_system_prompt(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+async def test_async_google_gemini_generate_topic_cluster_names_system_prompt(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_cluster_names"]))
 
     result = await async_google_gemini_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_names_failure(
-    async_google_gemini_wrapper,
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        side_effect=Exception("API Error")
-    )
+async def test_async_google_gemini_generate_topic_names_failure(async_google_gemini_wrapper):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(side_effect=Exception("API Error"))
     result = await async_google_gemini_wrapper.generate_topic_names(["test prompt"])
     assert len(result) == 1
     assert result[0] == ""
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_cluster_names_failure(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        side_effect=Exception("API Error")
-    )
+async def test_async_google_gemini_generate_topic_cluster_names_failure(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(side_effect=Exception("API Error"))
     result = await async_google_gemini_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
     )
@@ -773,17 +921,11 @@ async def test_async_google_gemini_generate_topic_cluster_names_failure(
 
 
 @pytest.mark.asyncio
-async def test_async_google_gemini_batch_processing(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
-    )
+async def test_async_google_gemini_batch_processing(async_google_gemini_wrapper, mock_data):
+    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(return_value=Mock(text=mock_data["valid_topic_name"]))
 
     # Test batch processing with multiple prompts
-    result = await async_google_gemini_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
+    result = await async_google_gemini_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
 
@@ -791,7 +933,7 @@ async def test_async_google_gemini_batch_processing(
 # AsyncTogether Tests
 @pytest_asyncio.fixture
 async def async_together_wrapper():
-    with patch("together.AsyncTogether"):
+    with patch('together.AsyncTogether'):
         wrapper = AsyncTogether(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
         yield wrapper
         # Clean up any resources
@@ -802,16 +944,12 @@ async def async_together_wrapper():
 
 
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_names_success(
-    async_together_wrapper, mock_data
-):
+async def test_async_together_generate_topic_names_success(async_together_wrapper, mock_data):
     mock_response = Mock()
     mock_response.choices = [Mock()]
     mock_response.choices[0].message = Mock()
     mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     result = await async_together_wrapper.generate_topic_names(["test prompt"])
     assert len(result) == 1
@@ -819,35 +957,25 @@ async def test_async_together_generate_topic_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_names_system_prompt(
-    async_together_wrapper, mock_data
-):
+async def test_async_together_generate_topic_names_system_prompt(async_together_wrapper, mock_data):
     mock_response = Mock()
     mock_response.choices = [Mock()]
     mock_response.choices[0].message = Mock()
     mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-    result = await async_together_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
+    result = await async_together_wrapper.generate_topic_names([{"system": "system prompt", "user": "test prompt"}])
     assert len(result) == 1
     validate_topic_name(result[0])
 
 
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_cluster_names_success(
-    async_together_wrapper, mock_data
-):
+async def test_async_together_generate_topic_cluster_names_success(async_together_wrapper, mock_data):
     mock_response = Mock()
     mock_response.choices = [Mock()]
     mock_response.choices[0].message = Mock()
     mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     result = await async_together_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
@@ -857,19 +985,16 @@ async def test_async_together_generate_topic_cluster_names_success(
 
 
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_cluster_names_system_prompt(
-    async_together_wrapper, mock_data
-):
+async def test_async_together_generate_topic_cluster_names_system_prompt(async_together_wrapper, mock_data):
     mock_response = Mock()
     mock_response.choices = [Mock()]
     mock_response.choices[0].message = Mock()
     mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     result = await async_together_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
+        [{"system": "system prompt", "user": "test prompt"}],
+        [mock_data["old_names"]]
     )
     assert len(result) == 1
     validate_cluster_names(result[0])
@@ -877,21 +1002,15 @@ async def test_async_together_generate_topic_cluster_names_system_prompt(
 
 @pytest.mark.asyncio
 async def test_async_together_generate_topic_names_failure(async_together_wrapper):
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        side_effect=Exception("API Error")
-    )
+    async_together_wrapper.client.chat.completions.create = AsyncMock(side_effect=Exception("API Error"))
     result = await async_together_wrapper.generate_topic_names(["test prompt"])
     assert len(result) == 1
     assert result[0] == ""
 
 
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_cluster_names_failure(
-    async_together_wrapper, mock_data
-):
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        side_effect=Exception("API Error")
-    )
+async def test_async_together_generate_topic_cluster_names_failure(async_together_wrapper, mock_data):
+    async_together_wrapper.client.chat.completions.create = AsyncMock(side_effect=Exception("API Error"))
     result = await async_together_wrapper.generate_topic_cluster_names(
         ["test prompt"], [mock_data["old_names"]]
     )
@@ -905,14 +1024,10 @@ async def test_async_together_batch_processing(async_together_wrapper, mock_data
     mock_response.choices = [Mock()]
     mock_response.choices[0].message = Mock()
     mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+    async_together_wrapper.client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     # Test batch processing with multiple prompts
-    result = await async_together_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
+    result = await async_together_wrapper.generate_topic_names(["prompt1", "prompt2", "prompt3"])
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
 
@@ -926,5 +1041,375 @@ async def test_async_wrapper_invalid_input(async_openai_wrapper):
 
     with pytest.raises(ValueError):
         await async_openai_wrapper.generate_topic_cluster_names(
-            ["prompt1", "prompt2"], [["name1", "name2"]]
+            ["prompt1", "prompt2"],
+            [["name1", "name2"]]
         )  # Mismatched lengths
+
+
+# LiteLLM Tests
+@pytest_asyncio.fixture
+async def async_litellm_wrapper():
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch('litellm.acompletion', return_value=mock_client):
+        wrapper = AsyncLiteLLMNamer(api_key="dummy")
+        try:
+            yield wrapper
+        finally:
+            await wrapper.close()
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+# Temporary workaround for upstream LiteLLM async logging teardown noise.
+# Remove once LiteLLM cleanup is fixed
+@pytest.mark.filterwarnings(LITELLM_ASYNC_LOGGING_WARNING_FILTER)
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+async def test_litellm_connectivity_canary_async_plain(provider_cfg):
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
+    namer = AsyncLiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+@pytest.mark.external
+@pytest.mark.asyncio
+# Temporary workaround for upstream LiteLLM async logging teardown noise.
+# Remove once LiteLLM cleanup is fixed
+@pytest.mark.filterwarnings(LITELLM_ASYNC_LOGGING_WARNING_FILTER)
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+async def test_litellm_connectivity_canary_async_system(provider_cfg):
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
+    namer = AsyncLiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_success(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_system_prompt(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            [{"system": "system prompt", "user": "test prompt"}]
+        )
+
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_success(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_cluster_names"]
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_system_prompt(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_cluster_names"]
+    )
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            [{"system": "system prompt", "user": "test prompt"}],
+            [mock_data["old_names"]],
+        )
+
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_malformed_mapping(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["malformed_mapping"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", LITELLM_FAIL_FAST)
+async def test_async_litellm_generate_topic_names_fail_fast_raises(
+    async_litellm_wrapper,
+    error_class,
+):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=make_litellm_error(error_class)),
+    ):
+        with pytest.raises(FailFastLLMError):
+            await async_litellm_wrapper.generate_topic_names(["test prompt"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", LITELLM_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_litellm_generate_topic_names_retryable_returns_empty(
+    async_litellm_wrapper,
+    error_class,
+):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ) as mock_acompletion:
+        result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+
+    assert result == [""]
+    assert mock_acompletion.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", LITELLM_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_litellm_generate_topic_cluster_names_retryable_returns_old_names(
+    async_litellm_wrapper,
+    mock_data,
+    error_class,
+):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            ["test prompt"],
+            [mock_data["old_names"]],
+        )
+
+    assert result == [mock_data["old_names"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_litellm_retries_per_item_not_whole_batch(
+    async_litellm_wrapper,
+    mock_data,
+):
+    good_response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+    error_class = LITELLM_RETRYABLE[0]
+    call_counts = {"prompt1": 0, "prompt2": 0}
+
+    async def mock_acompletion(**kwargs):
+        prompt_text = kwargs["messages"][0]["content"]
+        call_counts[prompt_text] += 1
+
+        if prompt_text == "prompt1":
+            return good_response
+        if prompt_text == "prompt2":
+            raise make_litellm_error(error_class)
+
+        raise AssertionError(f"Unexpected prompt: {prompt_text}")
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=mock_acompletion)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            ["prompt1", "prompt2"]
+        )
+
+    assert len(result) == 2
+    validate_topic_name(result[0])
+    assert result[1] == ""
+    assert call_counts["prompt1"] == 1
+    assert call_counts["prompt2"] == 3
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_retry_exhausted_warns(
+    async_litellm_wrapper,
+):
+    error_class = LITELLM_RETRYABLE[0]
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ):
+        with pytest.warns(UserWarning, match="Failed to generate topic name"):
+            result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+
+    assert result == [""]
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_retry_exhausted_warns(
+    async_litellm_wrapper,
+    mock_data,
+):
+    error_class = LITELLM_RETRYABLE[0]
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ):
+        with pytest.warns(UserWarning):
+            result = await async_litellm_wrapper.generate_topic_cluster_names(
+                ["test prompt"],
+                [mock_data["old_names"]],
+            )
+
+    assert result == [mock_data["old_names"]]
+
+
+@pytest.mark.parametrize(
+    "use_json_object,detected_support,expected",
+    [
+        (True, False, True),
+        (False, True, False),
+        (None, True, True),
+        (None, False, False),
+    ],
+)
+def test_async_litellm_should_use_json_object(
+    use_json_object,
+    detected_support,
+    expected,
+):
+    wrapper = AsyncLiteLLMNamer(
+        model="openai/gpt-4o-mini",
+        use_json_object=use_json_object,
+    )
+
+    with patch.object(
+        wrapper,
+        "_detect_json_object_support",
+        return_value=detected_support,
+    ) as mock_detect:
+        assert wrapper._should_use_json_object() is expected
+        # run a second time to verify caching behavior via call_count
+        assert wrapper._should_use_json_object() is expected
+
+    if use_json_object is None:
+        assert mock_detect.call_count == 1
+    else:
+        mock_detect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_system_prompt_probe_falls_back_and_caches(
+    async_litellm_wrapper,
+    mock_data,
+):
+    unsupported_error = Exception("system messages are not supported")
+    good_response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[unsupported_error, good_response]),
+    ) as mock_acompletion:
+        result = await async_litellm_wrapper._call_single_llm_with_system(
+            system_prompt="system",
+            user_prompt="user",
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert async_litellm_wrapper._system_prompt_capability is False
+    assert mock_acompletion.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_system_prompt_cached_false_flattens_immediately(
+    async_litellm_wrapper,
+):
+    async_litellm_wrapper._system_prompt_capability = False
+    good_response = MockAsyncResponse.create_chat_response('prompt response')
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=good_response),
+    ) as mock_acompletion:
+        await async_litellm_wrapper._call_single_llm_with_system(
+            system_prompt="system",
+            user_prompt="user",
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    kwargs = mock_acompletion.await_args.kwargs
+    assert kwargs["messages"] == [
+        {"role": "user", "content": "System: system\n\nUser: user"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_system_prompt_probe_success_caches_true(
+    async_litellm_wrapper,
+    mock_data,
+):
+    good_response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=good_response),
+    ):
+        result = await async_litellm_wrapper._call_single_llm_with_system(
+            system_prompt="system",
+            user_prompt="user",
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert async_litellm_wrapper._system_prompt_capability is True

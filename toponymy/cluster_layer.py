@@ -93,7 +93,7 @@ class ClusterLayer(ABC):
         n_exemplars: int = 16,
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        exemplar_delimiters: List[str] = None,
         prompt_format: str = "combined",
         prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
@@ -110,7 +110,8 @@ class ClusterLayer(ABC):
         self.exemplar_delimiters = exemplar_delimiters
         self.prompt_format = prompt_format
         self.prompt_template = prompt_template
-
+        if exemplar_delimiters is None:
+            self.exemplar_delimiters = ["    *\"", "\"\n"]
         # Handle verbose parameters
         self.show_progress_bar, self.verbose = handle_verbose_params(
             verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
@@ -398,7 +399,7 @@ class ClusterLayerText(ClusterLayer):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        exemplar_delimiters: List[str] = None,
         prompt_format: str = "combined",
         prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
@@ -836,7 +837,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        exemplar_delimiters: List[str] = None,
         prompt_format: str = "combined",
         prompt_template: Optional[str | Dict[str, Any]] = None,
         verbose: Optional[bool] = None,

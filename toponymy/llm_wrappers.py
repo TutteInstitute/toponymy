@@ -1,5 +1,5 @@
 import string
-from warnings import warn
+from warnings import warn, filterwarnings
 
 import tokenizers
 import transformers
@@ -10,8 +10,9 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
+from typing import List, Optional, Union, Dict, Generic, TypeVar, Any
+from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
+from dataclasses import dataclass
 
 import re
 import os
@@ -24,7 +25,24 @@ import logging
 logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+T = TypeVar("T")
 
+# Ignore internal litellm warning
+filterwarnings(
+    "ignore",
+    message="Support for class-based `config` is deprecated",
+    category=DeprecationWarning,
+    module="litellm",
+)
+
+@dataclass
+class CallResult(Generic[T]):
+    value: Optional[T] = None
+    error: Optional[Exception] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
 
 class InvalidLLMInputError(ValueError):
     """A custom exception for invalid LLM input. In these cases we do not want to retry, as the input will not change."""
@@ -51,6 +69,94 @@ def _should_retry(e: Exception) -> bool:
         return False
     return True
 
+class LLMErrorHandlingMixin:
+    """
+    A mixin class that provides standardized error handling for LLM wrappers.
+
+    This mixin centralizes error detection and safe async call patterns,
+    ensuring consistent behavior across synchronous and asynchronous LLM wrappers.
+    Subclasses should declare FAIL_FAST_EXCEPTIONS to specify which exceptions
+    should trigger an immediate failure without retrying.
+
+    Attributes:
+    -----------
+    FAIL_FAST_EXCEPTIONS: tuple
+        A tuple of exception types that should trigger an immediate failure without
+        retrying. These are typically configuration or provider-level errors such as
+        invalid API keys, insufficient permissions, or model not found errors.
+        Default is an empty tuple, meaning no exceptions are treated as fail-fast.
+    """
+
+    FAIL_FAST_EXCEPTIONS: tuple = ()
+
+    def _handle_exception(self, e: Exception) -> None:
+        if isinstance(e, InvalidLLMInputError):
+            raise e
+
+        if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
+            raise FailFastLLMError(
+                message=(
+                    f"Non-retryable error for model "
+                    f"'{getattr(self, 'model', '<unknown>')}': {e}"
+                ),
+                original_exception=e,
+            ) from None
+
+        raise e
+
+    async def _safe_call_with_retry_result(
+        self,
+        fn,
+        *args,
+        **kwargs,
+    ) -> CallResult:
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(3),
+                wait=wait_random_exponential(multiplier=1, min=1, max=10),
+                retry=retry_if_exception(_should_retry),
+                reraise=True,
+            ):
+                with attempt:
+                    value = await fn(*args, **kwargs)
+                    return CallResult(value=value)
+        except Exception as e:
+            if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
+                self._handle_exception(e)
+
+            # For other exceptions, we log a warning and return the error in the CallResult for potential handling by the caller.
+            logger.warning(
+                "%s exhausted retries for LLM call (%s): %s",
+                self.__class__.__name__,
+                type(e).__name__,
+                str(e)[:200],
+            )
+            return CallResult(error=e)
+
+    def _raise_fail_fast_from_batch_error(self, error) -> None:
+        """
+        Handle a provider-level error surfaced from a batch response item.
+
+        Some provider batch APIs return errors inline as response fields rather than raising.
+        This method provides a hook for subclasses to inspect those inline errors
+        and raise FailFastLLMError if appropriate.
+
+        A subclass that uses a batch API should override this method to handle
+        provider-specific error formats. Subclasses that do not use a batch API
+        do not need to override this method.
+
+        Parameters:
+        -----------
+        error:
+            The provider-specific error object from a batch response item.
+            If None, the method returns immediately.
+        """
+        if error is None:
+            return
+        warn(
+            f"{self.__class__.__name__} received a batch item error but did not "
+            f"override _raise_fail_fast_from_batch_error: {error}"
+        )
 
 def repair_json_string_backslashes(s: str) -> str:
     """
@@ -98,7 +204,7 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
     return result
 
 
-class LLMWrapper(ABC):
+class LLMWrapper(LLMErrorHandlingMixin, ABC):
     FAIL_FAST_EXCEPTIONS: tuple = ()
 
     @abstractmethod
@@ -123,12 +229,7 @@ class LLMWrapper(ABC):
         try:
             return self._call_llm(prompt, temperature, max_tokens)
         except Exception as e:
-            if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
-                raise FailFastLLMError(
-                    message=f"Non-retryable error for model '{self.model}': {e}",
-                    original_exception=e,
-                ) from None
-            raise  # other exceptions propagate as-is, should also specify retry exceptions
+            self._handle_exception(e)
 
     def _safe_call_llm_with_system_prompt(
         self, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int
@@ -138,12 +239,7 @@ class LLMWrapper(ABC):
                 system_prompt, user_prompt, temperature, max_tokens
             )
         except Exception as e:
-            if isinstance(e, self.FAIL_FAST_EXCEPTIONS):
-                raise FailFastLLMError(
-                    message=f"Non-retryable error for model '{self.model}': {e}",
-                    original_exception=e,
-                ) from None
-            raise  # other exceptions propagate as-is, should also specify retry exceptions
+            self._handle_exception(e)
 
     @staticmethod
     def _topic_name_error_callback(retry_state):
@@ -159,7 +255,7 @@ class LLMWrapper(ABC):
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
+        wait=wait_random_exponential(multiplier=1, min=4, max=10),
         retry_error_callback=_topic_name_error_callback,
         retry=retry_if_exception(_should_retry),
     )
@@ -214,7 +310,7 @@ class LLMWrapper(ABC):
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=4, max=10),
+        wait=wait_random_exponential(multiplier=1, min=4, max=10),
         retry_error_callback=_topic_cluster_names_error_callback,
         retry=retry_if_exception(_should_retry),
     )
@@ -292,21 +388,35 @@ class LLMWrapper(ABC):
 
     def test_llm_connectivity(self) -> str:
         result = self.connectivity_status()
+
         if result["success"]:
-            logger.info(f" Connected to {result['wrapper']} using {result['model']}")
+            logger.info(
+                " Connected to %s using %s",
+                result["wrapper"],
+                result["model"],
+            )
             return result["response"]
-        else:
-            logger.warning(
-                f"  Failed to connect to {result['wrapper']} using {result['model']}"
-            )
-            logger.warning(
-                f"  Cause:  {result['error_type']}: {result['error_message']}"
-            )
-            return "<error>"
+
+        logger.warning(
+            "  Failed to connect to %s using %s",
+            result["wrapper"],
+            result["model"],
+        )
+        logger.warning(
+            "  Cause:  %s: %s",
+            result["error_type"],
+            result["error_message"],
+        )
+        return "<error>"
 
     def connectivity_status(
         self,
-        prompt="Identify yourself and explain that you will be providing topic names for  in JSON format",
+        prompt: str = (
+            "Respond with exactly this JSON and nothing else.\n"
+            "Do not use markdown or code blocks.\n\n"
+            '{"status": "ok"}'
+            ),
+        system_prompt: str | None = None,
     ) -> dict:
         result = {
             "success": False,
@@ -317,42 +427,217 @@ class LLMWrapper(ABC):
             "error_message": None,
             "original_exception": None,
         }
+
         try:
-            response = self._call_llm(prompt, temperature=0.4, max_tokens=128)
+            if system_prompt is None:
+                response = self._call_llm(
+                    prompt,
+                    temperature=0.4,
+                    max_tokens=128,
+                )
+            else:
+                response = self._call_llm_with_system_prompt(
+                    system_prompt,
+                    prompt,
+                    temperature=0.4,
+                    max_tokens=128,
+                )
+
             result["success"] = True
             result["response"] = response
+
         except Exception as e:
             result["error_type"] = type(e).__name__
             result["error_message"] = str(e)
             result["original_exception"] = e
+
         return result
 
+class AsyncLLMWrapper(LLMErrorHandlingMixin, ABC):
 
-class AsyncLLMWrapper(ABC):
+    async def _call_single_llm(
+        self, prompt: str, temperature: float, max_tokens: int
+    ) -> str:
+        """
+        Execute a single provider request for one user prompt and return the raw
+        text result from the model.
 
-    @abstractmethod
+        Subclasses should implement this method when their provider interaction
+        follows the common pattern of issuing one request per prompt.
+
+        This method should contain only provider-specific mechanics, such as:
+            - constructing the provider request
+            - calling the async SDK/API
+            - extracting the returned text from the provider response
+            - applying provider-specific concurrency controls (e.g., semaphores)
+
+        This method should NOT implement:
+            - retry logic
+            - fail-fast handling
+            - fallback behavior
+            - batching or orchestration across prompts
+
+        Those responsibilities are handled by the base class through
+        `_safe_call_with_retry_result` and the batch orchestration methods.
+
+        Override this method for most new async wrappers.
+
+        To support true provider-managed batch jobs, subclasses may
+        leave this unimplemented and instead override `_call_llm_batch` directly.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement either _call_single_llm "
+            f"or override _call_llm_batch"
+        )
+
+
+    async def _call_single_llm_with_system(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """
+        Execute a single provider request for one system prompt + user prompt pair
+        and return the raw text result from the model.
+
+        Subclasses should implement this method when the provider supports system
+        prompts and uses a one-request-per-prompt execution model.
+
+        This method should contain only provider-specific mechanics, such as:
+            - formatting the provider request with system and user prompts
+            - calling the async SDK/API
+            - extracting the returned text from the provider response
+            - applying provider-specific concurrency controls (e.g., semaphores)
+
+        This method should NOT implement:
+            - retry logic
+            - fail-fast handling
+            - fallback behavior
+            - batching or orchestration across prompts
+
+        Those behaviors are handled by the base class through
+        `_safe_call_with_retry_result` and `_call_llm_with_system_prompt_batch`.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement either "
+            f"_call_single_llm_with_system or override "
+            f"_call_llm_with_system_prompt_batch"
+        )
+
     async def _call_llm_batch(
         self, prompts: List[str], temperature: float, max_tokens: int
-    ) -> List[str]:
+    ) -> List[CallResult[str]]:
         """
-        Call the LLM with a batch of prompts and temperature.
-        This method should be implemented by subclasses.
-        """
-        pass
+        Process a batch of prompts and return one CallResult per prompt.
 
-    @abstractmethod
+        The default implementation wraps `_call_single_llm` with retry and error
+        handling via `_safe_call_with_retry_result` and runs all prompts concurrently
+        using `asyncio.gather`.
+
+        This produces the standard async behavior used by most wrappers:
+
+            - retryable errors are retried per prompt
+            - fail-fast errors abort the entire batch/layer
+            - exhausted retryable errors return CallResult(error=...)
+            - successful calls return CallResult(value=<text>)
+
+        Subclasses normally should NOT override this method if their provider interaction model
+        is "one async request per prompt". Instead, implement `_call_single_llm`
+        and inherit this default batching behavior.
+
+        Override this method when using a fundamentally different batch
+        model than concurrent single-call execution, such as:
+
+            - provider-managed batch job APIs
+            - bulk endpoints accepting multiple prompts in one request
+            - server-side batching that must be coordinated as a unit
+
+        In the current architecture, such providers may still inherit from
+        AsyncLLMWrapper and override this method directly.
+
+        If a dedicated batch wrapper base class (for example LLMBatchWrapper) is
+        introduced in the future, these implementations may move there instead.
+
+        Note:
+            Some legacy wrapper implementations override `_call_llm_batch`
+            directly even with a "one async request per prompt". Those implementations
+            remain supported and will take precedence over this default method.
+        """
+        tasks = [
+            self._safe_call_with_retry_result(
+                self._call_single_llm,
+                prompt,
+                temperature,
+                max_tokens,
+            )
+            for prompt in prompts
+        ]
+        return await asyncio.gather(*tasks)
+
     async def _call_llm_with_system_prompt_batch(
         self,
         system_prompts: List[str],
         user_prompts: List[str],
         temperature: float,
         max_tokens: int,
-    ) -> List[str]:
+    ) -> List[CallResult[str]]:
         """
-        Call the LLM with batches of system prompts and user prompts.
-        This method should be implemented by subclasses.
+        Process a batch of system prompt + user prompt pairs and return one CallResult
+        per pair.
+
+        The default implementation wraps `_call_single_llm_with_system` with retry and
+        error handling via `_safe_call_with_retry_result` and executes all prompt pairs
+        concurrently using `asyncio.gather`.
+
+        This produces the standard async behavior used by most wrappers:
+
+            - retryable errors are retried per prompt pair
+            - fail-fast errors abort the entire batch/layer
+            - exhausted retryable errors return CallResult(error=...)
+            - successful calls return CallResult(value=<text>)
+
+        Subclasses normally should NOT override this method if their provider model is
+        "one async request per prompt pair". Instead, implement
+        `_call_single_llm_with_system` and inherit this default batching behavior.
+
+        Override this method when the provider uses a fundamentally different batch
+        model than concurrent single-call execution, such as:
+
+            - provider-managed batch job APIs
+            - bulk endpoints accepting multiple prompt pairs in one request
+            - server-side batching that must be coordinated as a unit
+
+        In the current architecture, such providers may still inherit from
+        AsyncLLMWrapper and override this method directly.
+
+        If a dedicated batch wrapper base class (for example LLMBatchWrapper) is
+        introduced in the future, these implementations may move there instead.
+
+        Note:
+            Some legacy wrapper implementations override `_call_llm_with_system_prompt_batch`
+            with a "one async request per prompt pair" model. Those implementations remain
+            supported and will take precedence over this default method.
         """
-        pass
+        if len(system_prompts) != len(user_prompts):
+            raise ValueError(
+                "Number of system prompts must match number of user prompts"
+            )
+
+        tasks = [
+            self._safe_call_with_retry_result(
+                self._call_single_llm_with_system,
+                sys_prompt,
+                user_prompt,
+                temperature,
+                max_tokens,
+            )
+            for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+        ]
+
+        return await asyncio.gather(*tasks)
+
 
     async def generate_topic_names(
         self,
@@ -388,14 +673,26 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response in responses:
-            if not response:
+            if isinstance(response, CallResult):
+                if not response.ok:
+                    warn(
+                        f"Failed to generate topic name with "
+                        f"{self.__class__.__name__}: {response.error}"
+                    )
+                    results.append("")
+                    continue
+                response_text = response.value
+            else:
+                response_text = response
+
+            if not response_text:
                 results.append("")
                 continue
 
             # Attempt to parse the response
             try:
-                topic_name_info = llm_output_to_result(response, get_topic_name_regex)
-                results.append(extract_topic_name_function(topic_name_info))
+                topic_name_info = llm_output_to_result(response_text, get_topic_name_regex)
+                results.append(str(extract_topic_name_function(topic_name_info)))
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
@@ -442,9 +739,24 @@ class AsyncLLMWrapper(ABC):
         # Parse responses
         results = []
         for response, old_names in zip(responses, old_names_list):
+            if isinstance(response, CallResult):
+                if not response.ok:
+                    warn(
+                        f"Failed to generate cluster names with "
+                        f"{self.__class__.__name__}: {response.error}"
+                    )
+                    results.append(old_names)
+                    continue
+                response_text = response.value
+            else:
+                response_text = response
+
+            if not response_text:
+                results.append(old_names)
+                continue
             results.append(
                 self._parse_cluster_response(
-                    response,
+                    response_text,
                     old_names,
                     extract_topic_names_function,
                     get_topic_names_regex,
@@ -502,19 +814,101 @@ class AsyncLLMWrapper(ABC):
         """
         return True
 
-    def test_llm_connectivity(
-        self,
-        prompt="Identify yourself and explain that you will be providing topic names for clusters",
-    ) -> str:
-        try:
-            response = asyncio.run(
-                self._call_llm_batch([prompt], temperature=0.4, max_tokens=128)
-            )
-            return response[0]
-        except Exception as e:
-            warn(f"Failed to test LLM connectivity with {self.__class__.__name__}: {e}")
-            return "<error>"
+    async def test_llm_connectivity(self) -> str:
+        result = await self.connectivity_status()
 
+        if result["success"]:
+            logger.info(
+                " Connected to %s using %s",
+                result["wrapper"],
+                result["model"],
+            )
+            return result["response"]
+
+        logger.warning(
+            "  Failed to connect to %s using %s",
+            result["wrapper"],
+            result["model"],
+        )
+        logger.warning(
+            "  Cause:  %s: %s",
+            result["error_type"],
+            result["error_message"],
+        )
+
+        return "<error>"
+
+    async def connectivity_status(
+        self,
+        prompt: str = (
+            "Identify yourself and explain that you will be providing "
+            "topic names for clusters in JSON format"
+        ),
+        *,
+        system_prompt: str | None = None,
+    ) -> dict:
+        result = {
+            "success": False,
+            "model": self.model,
+            "wrapper": self.__class__.__name__,
+            "response": None,
+            "error_type": None,
+            "error_message": None,
+            "original_exception": None,
+        }
+
+        try:
+            if system_prompt is None:
+                try:
+                    response = await self._call_single_llm(
+                        prompt, temperature=0.4, max_tokens=128
+                    )
+                except NotImplementedError:
+                    responses = await self._call_llm_batch(
+                        [prompt], temperature=0.4, max_tokens=128
+                    )
+                    if not responses:
+                        raise RuntimeError("Connectivity probe returned no responses")
+                    response = responses[0]
+            else:
+                try:
+                    response = await self._call_single_llm_with_system(
+                        system_prompt,
+                        prompt,
+                        temperature=0.4,
+                        max_tokens=128,
+                    )
+                except NotImplementedError:
+                    responses = await self._call_llm_with_system_prompt_batch(
+                        [system_prompt],
+                        [prompt],
+                        temperature=0.4,
+                        max_tokens=128,
+                    )
+                    if not responses:
+                        raise RuntimeError("Connectivity probe returned no responses")
+                    response = responses[0]
+
+            if isinstance(response, CallResult):
+                if not response.ok:
+                    raise response.error
+                response = response.value
+
+            result["success"] = True
+            result["response"] = response
+
+        except Exception as e:
+            result["error_type"] = type(e).__name__
+            result["error_message"] = str(e)
+            result["original_exception"] = e
+
+        return result
+
+    async def close(self) -> None:
+        """
+        Optional cleanup hook for LLM wrappers that manage network clients or connection pools.
+        """
+        pass
 
 class LLMWrapperImportError(ImportError):
     """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
@@ -1534,6 +1928,12 @@ except:
 try:
     import anthropic
     import time
+    from anthropic import (
+        AuthenticationError as AnthropicAuthenticationError,
+        PermissionDeniedError as AnthropicPermissionDeniedError,
+        BadRequestError as AnthropicBadRequestError,
+        NotFoundError as AnthropicNotFoundError
+    )
 
     class AnthropicNamer(LLMWrapper):
         """
@@ -1576,6 +1976,7 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncAnthropic wrapper instead.
         """
+        FAIL_FAST_EXCEPTIONS = (AnthropicAuthenticationError, AnthropicPermissionDeniedError, AnthropicBadRequestError, AnthropicNotFoundError)
 
         def __init__(
             self,
@@ -1667,6 +2068,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
         """
+        FAIL_FAST_EXCEPTIONS = (AnthropicAuthenticationError, AnthropicPermissionDeniedError, AnthropicBadRequestError, AnthropicNotFoundError)
 
         def __init__(
             self,
@@ -1724,36 +2126,6 @@ try:
                 )
                 return response.content[0].text
 
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
 
     class BatchAnthropicNamer(AsyncLLMWrapper):
         """
@@ -2033,99 +2405,6 @@ except:
 
 
 try:
-    import together
-
-    class TogetherNamer(LLMWrapper):
-        """
-        Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
-        For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf".
-            Available models include various Llama, Mixtral, and other open-source models.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-        client: together.Together
-            The Together client instance.
-
-        model: str
-            The name of the Together model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Together, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "meta-llama/Llama-3-8b-chat-hf",
-            llm_specific_instructions=None,
-        ):
-            api_key = api_key or os.getenv("TOGETHER_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = together.Together(api_key=api_key)
-            self.model = model
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content
-
-    # ... rest of Together classes and OpenAI imports would go here ...
-
-except ImportError:
-
-    class TogetherNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncTogether(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-
-try:
     import openai
     from openai import (
         AuthenticationError,
@@ -2294,6 +2573,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
+        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
 
         def __init__(
             self,
@@ -2318,24 +2598,23 @@ try:
             self.semaphore = asyncio.Semaphore(max_concurrent_requests)
 
         async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int
         ) -> str:
             """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        response_format={"type": "json_object"},
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"OpenAI API call failed: {str(e)[:100]}...")
-                return ""
+            async with self.semaphore:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "user", "content": prompt + self.extra_prompting},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
+                )
+            return response.choices[0].message.content
 
         async def _call_single_llm_with_system(
             self,
@@ -2345,56 +2624,21 @@ try:
             max_tokens: int,
         ) -> str:
             """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        response_format={"type": "json_object"},
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"OpenAI API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
+            async with self.semaphore:
+                response = await self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {
+                            "role": "user",
+                            "content": user_prompt + self.extra_prompting,
+                        },
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"},
                 )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
+                return response.choices[0].message.content
 
         async def close(self):
             """Close the client connection."""
@@ -3722,5 +3966,513 @@ except ImportError:
             super().__init__(*args, **kwds)
 
     class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+
+try:
+    import litellm
+    from litellm.exceptions import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
+    class LiteLLMNamer(LLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM using a unified interface.
+        LiteLLM supports 100+ providers including OpenAI, Anthropic, Cohere, HuggingFace,
+        Together, Replicate, and more. For more information, see https://docs.litellm.ai.
+
+        Parameters
+        ----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str, optional
+            The LiteLLM model string, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-haiku-4-5-20251001", etc.
+
+        api_base: str, optional
+            Optional LiteLLM/OpenAI-compatible API base. Alias-style convenience.
+
+        llm_specific_instructions: str, optional
+            Additional instructions appended to the user prompt.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
+
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts
+            if unsupported for a given model.
+
+        completion_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
+        Attributes
+        ----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions appended to the prompt.
+
+        use_json_object: bool
+            Whether response_format={"type": "json_object"} will be sent.
+        """
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions=None,
+            use_json_object: bool = None,
+            disable_system_prompts: bool = False,
+            completion_kwargs: dict[str, Any] | None = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.use_json_object = use_json_object # set by user
+            self._resolved_use_json_object: bool | None = None # set internally
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
+
+            filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+                module="pydantic",
+            )
+            filterwarnings(
+                "ignore",
+                message="Use 'content=<...>' to upload raw bytes/text content",
+                category=DeprecationWarning,
+                module="httpx",
+            )
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
+        def _detect_json_object_support(self) -> bool:
+            try:
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                return False
+
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
+
+        def _completion_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = dict(self.completion_kwargs)
+            kwargs.update({
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            })
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
+                kwargs["api_base"] = self.api_base
+
+            if self._should_use_json_object():
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+        def _completion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            response = litellm.completion(
+                **self._completion_kwargs(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            )
+            return response.choices[0].message.content
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            return self._completion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+
+            try:
+                result = self._completion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return self._completion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+
+    class AsyncLiteLLMNamer(AsyncLLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM with asynchronous support.
+        This allows for concurrent processing of multiple prompts across 100+ providers
+        including OpenAI, Anthropic, Cohere, HuggingFace, Together, Replicate, and more.
+        For more information, see https://docs.litellm.ai.
+
+        As an asynchronous wrapper this will potentially speed up topic naming, particularly
+        when you have a large number of topics. If, however, there are quirks in your data,
+        or bugs in Toponymy's prompt generation, you will potentially quickly spend money on
+        API calls.
+
+        Uses litellm.acompletion() and an asyncio semaphore for bounded
+        concurrency. Since this wrapper does not create a persistent SDK client,
+        close() is a no-op.
+
+
+        Parameters:
+        -----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str
+            The model to use in LiteLLM format, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-3-haiku-20240307", "together_ai/mistralai/Mixtral-8x7B-v0.1".
+            See https://docs.litellm.ai/docs/providers for the full list.
+
+        api_base: str, optional
+            The base URL for the provider API. Useful for self-hosted models or proxies.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the provider API. Default is 10.
+            This can be adjusted based on your application's needs and the rate limits of
+            the provider. Higher values may improve throughput but could lead to rate limiting.
+
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts
+            if unsupported for a given model.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
+        completion_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
+        Attributes:
+        -----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+        """
+
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions: str = None,
+            max_concurrent_requests: int = 10,
+            use_json_object:  bool | None = None,
+            disable_system_prompts:  bool = False,
+            completion_kwargs: dict[str, Any] | None = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+            self.use_json_object = use_json_object
+            self._resolved_use_json_object: bool | None = None
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
+        def _detect_json_object_support(self) -> bool:
+            try:
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                return False
+
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
+
+        def _completion_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = dict(self.completion_kwargs)
+            kwargs.update({
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            })
+
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
+                kwargs["api_base"] = self.api_base
+
+            if self._should_use_json_object():
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+
+        async def _acompletion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            async with self.semaphore:
+                response = await litellm.acompletion(
+                    **self._completion_kwargs(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            return response.choices[0].message.content
+
+        async def _call_single_llm(
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            return await self._acompletion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+            try:
+            # If the model doesn't support system prompts, this will raise an error which we
+            # catch to disable system prompt usage for future calls. Everything else raises as normal.
+                result = await self._acompletion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return await self._acompletion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+        async def close(self):
+            """No-op for parity with other async wrappers."""
+            return None
+
+except Exception as e:
+
+    class LiteLLMNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncLiteLLMNamer(FailedImportAsyncLLMWrapper):
+
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
