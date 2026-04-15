@@ -1,11 +1,17 @@
 import pytest
 from unittest.mock import AsyncMock
-from toponymy.llm_wrappers import AsyncLLMWrapper, CallResult, FailFastLLMError, InvalidLLMInputError
+from toponymy.llm_wrappers import (
+    AsyncLLMWrapper,
+    CallResult,
+    FailFastLLMError,
+    InvalidLLMInputError,
+)
 
 from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
     validate_cluster_names,
 )
+
 
 class MockCallResult:
     @staticmethod
@@ -16,8 +22,10 @@ class MockCallResult:
     def failure(error: Exception | None = None) -> CallResult[str]:
         return CallResult(error=error or RuntimeError("temporary failure"))
 
+
 class DummyAsyncProviderError(Exception):
     pass
+
 
 class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
     model = "dummy-model"
@@ -30,6 +38,7 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
         self, system_prompt, user_prompt, temperature, max_tokens
     ):
         raise DummyAsyncProviderError("bad config")
+
 
 class DummySingleWrapper(AsyncLLMWrapper):
     async def _call_single_llm(self, prompt, temperature, max_tokens):
@@ -73,6 +82,7 @@ async def test_async_connectivity_status_uses_single_call():
     assert result["wrapper"] == "DummySingleWrapper"
     assert result["model"] == "dummy-model"
 
+
 @pytest.mark.asyncio
 async def test_async_connectivity_status_uses_single_call_with_system():
     wrapper = DummySingleWrapper()
@@ -88,6 +98,7 @@ async def test_async_connectivity_status_uses_single_call_with_system():
     assert result["wrapper"] == "DummySingleWrapper"
     assert result["model"] == "dummy-model"
 
+
 @pytest.mark.asyncio
 async def test_async_connectivity_status_falls_back_to_batch():
     wrapper = DummyBatchWrapper()
@@ -99,6 +110,7 @@ async def test_async_connectivity_status_falls_back_to_batch():
     assert result["response"] == "batch-ok"
     assert result["wrapper"] == "DummyBatchWrapper"
     assert result["model"] == "dummy-model"
+
 
 @pytest.mark.asyncio
 async def test_async_connectivity_status_falls_back_to_system_batch():
@@ -115,6 +127,7 @@ async def test_async_connectivity_status_falls_back_to_system_batch():
     assert result["wrapper"] == "DummyBatchWrapper"
     assert result["model"] == "dummy-model"
 
+
 @pytest.mark.asyncio
 async def test_async_connectivity_status_unwraps_call_result_from_batch():
     wrapper = DummyBatchCallResultWrapper()
@@ -126,6 +139,7 @@ async def test_async_connectivity_status_unwraps_call_result_from_batch():
     assert result["response"] == "batch-ok"
     assert result["wrapper"] == "DummyBatchCallResultWrapper"
     assert result["model"] == "dummy-model"
+
 
 @pytest.mark.asyncio
 async def test_async_connectivity_status_batch_call_result_error():
@@ -142,6 +156,7 @@ async def test_async_connectivity_status_batch_call_result_error():
     assert result["wrapper"] == "DummyBatchErrorWrapper"
     assert result["model"] == "dummy-model"
 
+
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_success():
     wrapper = DummySingleWrapper()
@@ -155,6 +170,7 @@ async def test_safe_call_with_retry_result_success():
     assert result.ok is True
     assert result.value == "ok"
     assert result.error is None
+
 
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_exhausted_retries():
@@ -171,6 +187,7 @@ async def test_safe_call_with_retry_result_exhausted_retries():
     assert isinstance(result.error, RuntimeError)
     assert str(result.error) == "temporary failure"
 
+
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_raises_fail_fast():
     wrapper = DummyAsyncFailFastWrapper()
@@ -180,6 +197,7 @@ async def test_safe_call_with_retry_result_raises_fail_fast():
 
     with pytest.raises(FailFastLLMError, match="dummy-model"):
         await wrapper._safe_call_with_retry_result(fail_fast_fn)
+
 
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_raises_invalid_input():
@@ -199,6 +217,7 @@ async def test_async_generate_topic_names_empty_input_returns_empty_list():
     result = await wrapper.generate_topic_names([])
 
     assert result == []
+
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_names_invalid_prompt_type_raises():
@@ -227,6 +246,7 @@ async def test_async_generate_topic_cluster_names_length_mismatch_raises():
             [["old1", "old2"]],
         )
 
+
 @pytest.mark.asyncio
 async def test_async_generate_topic_names_routes_string_prompts_to_call_llm_batch():
     wrapper = DummySingleWrapper()
@@ -239,6 +259,7 @@ async def test_async_generate_topic_names_routes_string_prompts_to_call_llm_batc
         0.4,
         max_tokens=128,
     )
+
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_names_routes_dict_prompts_to_call_with_system_prompt_batch():
@@ -254,6 +275,7 @@ async def test_async_generate_topic_names_routes_dict_prompts_to_call_with_syste
         0.4,
         max_tokens=128,
     )
+
 
 @pytest.mark.asyncio
 @pytest.mark.filterwarnings("ignore:Failed to generate")
@@ -291,10 +313,10 @@ async def test_async_generate_topic_cluster_names_partial_success(
     )
 
     fallback_old_names = ["old_x", "old_y", "old_z"]
-    old_names =  [
-            mock_data["old_names"],
-            fallback_old_names,
-            mock_data["old_names"],
+    old_names = [
+        mock_data["old_names"],
+        fallback_old_names,
+        mock_data["old_names"],
     ]
     result = await wrapper.generate_topic_cluster_names(
         ["prompt 1", "prompt 2", "prompt 3"],

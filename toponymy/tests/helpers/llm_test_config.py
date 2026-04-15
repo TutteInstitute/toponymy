@@ -5,22 +5,19 @@ import pytest
 
 
 # Mock responses for different scenarios
-VALID_TOPIC_NAME_RESPONSE = {
-    "topic_name": "Machine Learning",
-    "topic_specificity": 0.6
-}
+VALID_TOPIC_NAME_RESPONSE = {"topic_name": "Machine Learning", "topic_specificity": 0.6}
 
 VALID_CLUSTER_NAMES_RESPONSE = {
     "new_topic_name_mapping": {
         "1. data": "Data Science",
         "2. ml": "Machine Learning\\ML",
-        "3. ai": "Artificial Intelligence"
+        "3. ai": "Artificial Intelligence",
     },
     "topic_specificities": [
         0.6,
         0.8,
         0.7,
-    ]
+    ],
 }
 
 MALFORMED_JSON_RESPONSE = "{"  # Incomplete JSON
@@ -33,6 +30,7 @@ postamble.
 """
 EMPTY_MAPPING_RESPONSE = {"new_topic_name_mapping": {}}
 MALFORMED_MAPPING_RESPONSE = """{"new_topic_name_mapping": {"data science": "Data Science", "data science": "Machine Learning\\ML", "data science": "Artificial Intelligence"} , "topic_specificities": [0.6, 0.8, 0.7]}"""
+
 
 def make_mock_data():
     return {
@@ -51,9 +49,11 @@ def make_mock_data():
 def validate_topic_name(result: str):
     assert result == "Machine Learning"
 
+
 def validate_cluster_names(result: List[str]):
     expected = ["Data Science", "Machine Learning\\ML", "Artificial Intelligence"]
     assert result == expected
+
 
 LITELLM_PROVIDER_CASES = [
     pytest.param(

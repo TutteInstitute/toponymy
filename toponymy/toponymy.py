@@ -152,11 +152,7 @@ class Toponymy:
         """
         Determine the effective prompt format based on the llm_wrapper's capabilities.
         """
-        return (
-            "system_user"
-            if self.llm_wrapper.supports_system_prompts
-            else "combined"
-        )
+        return "system_user" if self.llm_wrapper.supports_system_prompts else "combined"
 
     def _sync_layer_runtime_config(self) -> None:
         """
