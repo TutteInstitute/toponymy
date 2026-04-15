@@ -1,9 +1,8 @@
 import pandas as pd
-import numpy as np 
+import numpy as np
 
-def treemap_dataframe(
-    topic_tree
-):
+
+def treemap_dataframe(topic_tree):
     """
     Builds a dataframe out of a TopicTree for use in a plotly.express treemap.
     """
@@ -18,8 +17,10 @@ def treemap_dataframe(
         if layer == n_layers:
             # root node!
             clustered = sum(topic_tree.topic_sizes[-1])
-            pc = clustered/topic_tree.n_objects*100
-            return f"Everything | {clustered}/{topic_tree.n_objects} clustered ({pc:.2f}%)"
+            pc = clustered / topic_tree.n_objects * 100
+            return (
+                f"Everything | {clustered}/{topic_tree.n_objects} clustered ({pc:.2f}%)"
+            )
         try:
             return topic_tree.topics[layer][c]
         except Exception:
@@ -42,23 +43,27 @@ def treemap_dataframe(
         parent_id = node_id(parent)
 
         for child in children:
-            rows.append({
-                "id": node_id(child),
-                "parent": parent_id,
-                "label": node_label(child),
-                "value": node_value(child)
-            })
+            rows.append(
+                {
+                    "id": node_id(child),
+                    "parent": parent_id,
+                    "label": node_label(child),
+                    "value": node_value(child),
+                }
+            )
 
     child_ids = {node_id(c) for cs in topic_tree.tree.values() for c in cs}
 
     for node in nodes:
         nid = node_id(node)
         if nid not in child_ids:
-            rows.append({
-                "id": nid,
-                "parent": "",
-                "label": node_label(node),
-                "value": node_value(node)
-            })
+            rows.append(
+                {
+                    "id": nid,
+                    "parent": "",
+                    "label": node_label(node),
+                    "value": node_value(node),
+                }
+            )
 
     return pd.DataFrame(rows)

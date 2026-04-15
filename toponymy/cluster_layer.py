@@ -25,6 +25,7 @@ from toponymy.subtopics import (
 from toponymy.templates import (
     GET_TOPIC_CLUSTER_NAMES_REGEX,
     GET_TOPIC_NAME_REGEX,
+    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
     SUMMARY_KINDS,
     default_extract_topic_names,
 )
@@ -944,46 +945,50 @@ class ClusterLayerSummaryText(ClusterLayerText):
         ), "all_topic_explanations must be provided to name_topics in ClusterLayerSummaryText"
 
         if isinstance(llm, LLMWrapper):
-            self.topic_names, self.topic_summaries, self.topic_explanations = map(
-                list,
-                zip(
-                    *[
-                        (
-                            llm.generate_topic_name(
-                                prompt,
-                                topic_extraction_function=(
-                                    self.prompt_template["layer"]["extract_topic_name"]
-                                    if self.prompt_template
-                                    else lambda json_response: (
-                                        json_response["topic_name"],
-                                        json_response["topic_summary"],
-                                        json_response["topic_explanation"],
-                                    )
-                                ),
-                                get_topic_name_regex=(
-                                    self.prompt_template["layer"].get(
-                                        "get_topic_name_regex", GET_TOPIC_NAME_REGEX
-                                    )
-                                    if self.prompt_template
-                                    else GET_TOPIC_NAME_REGEX
-                                ),
-                                max_tokens=2048,
+            self.topic_names = []
+            self.topic_summaries = []
+            self.topic_explanations = []
+            for prompt in tqdm(
+                self.prompts,
+                desc=f"Generating topic names for layer {self.layer_id}",
+                disable=not self.show_progress_bar,
+                unit="topic",
+                leave=False,
+                position=1,
+            ):
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
+                    result = llm.generate_topic_name(
+                        prompt,
+                        topic_extraction_function=(
+                            self.prompt_template["layer"]["extract_topic_name"]
+                            if self.prompt_template
+                            else lambda json_response: (
+                                json_response["topic_name"],
+                                json_response["topic_summary"],
+                                json_response["topic_explanation"],
                             )
-                            if isinstance(prompt, dict)
-                            or not prompt.startswith("[!SKIP!]: ")
-                            else prompt.removeprefix("[!SKIP!]: ")
-                        )
-                        for prompt in tqdm(
-                            self.prompts,
-                            desc=f"Generating topic names for layer {self.layer_id}",
-                            disable=not self.show_progress_bar,
-                            unit="topic",
-                            leave=False,
-                            position=1,
-                        )
-                    ]
-                ),
-            )
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template["layer"].get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
+                            )
+                            if self.prompt_template
+                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
+                        ),
+                        max_tokens=2048,
+                    )
+                    if isinstance(result, tuple) and len(result) >= 3:
+                        name, summary, explanation = result[0], result[1], result[2]
+                    else:
+                        name, summary, explanation = str(result), "", ""
+                else:
+                    parts = prompt.removeprefix("[!SKIP!]: ").split("\n--\n", 2)
+                    name = parts[0] if len(parts) > 0 else ""
+                    summary = parts[1] if len(parts) > 1 else ""
+                    explanation = parts[2] if len(parts) > 2 else ""
+                self.topic_names.append(name)
+                self.topic_summaries.append(summary)
+                self.topic_explanations.append(explanation)
         elif isinstance(llm, AsyncLLMWrapper):
             # Filter out prompts that are marked to be skipped
             prompts_for_llm = [
@@ -1073,10 +1078,11 @@ class ClusterLayerSummaryText(ClusterLayerText):
                             ),
                             get_topic_name_regex=(
                                 self.prompt_template.get(
-                                    "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                    "get_topic_name_regex",
+                                    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
                                 )
                                 if self.prompt_template
-                                else GET_TOPIC_NAME_REGEX
+                                else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             ),
                         )
                         if name == ""
@@ -1100,10 +1106,10 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
-                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             )
                             if self.prompt_template
-                            else GET_TOPIC_NAME_REGEX
+                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                         ),
                     )
                 )
