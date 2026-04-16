@@ -52,8 +52,7 @@ def default_extract_topic_names(json_response, old_names, topic_name_info_raw):
 
 PROMPT_TEMPLATES = {
     "layer": {
-        "system": jinja2.Template(
-            """
+        "system": jinja2.Template("""
 You are an expert at classifying {{document_type}} from {{corpus_description}} into topics.
 Your task is to analyze information about a group of {{document_type}} and assign a {{summary_kind}} name to this group.
 The response must be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>}
@@ -72,10 +71,8 @@ You should primarily make use of the major and minor subtopics of this group to 
 and ensure the topic name reflects the core essence of *all* major subtopics.
 {% endif %}
 Ensure your entire response is only the JSON object, with no other text before or after it.
-"""
-        ),
-        "user": jinja2.Template(
-            """
+"""),
+        "user": jinja2.Template("""
 Here is the information about the group of {{document_type}}:
 {% if cluster_keywords %}
 - Keywords for this group include: {{", ".join(cluster_keywords)}}
@@ -107,10 +104,8 @@ Here is the information about the group of {{document_type}}:
 
 Based on this information, provide a {{summary_kind}} name for this group.
 Recall the output format: {"topic_name":<NAME>, "topic_specificity":<SCORE>}.
-"""
-        ),
-        "combined": jinja2.Template(
-            """
+"""),
+        "combined": jinja2.Template("""
 You are an expert of classifying {{document_type}} from {{corpus_description}} into topics.
 Below is a information about a group of {{document_type}} from {{corpus_description}} that 
 are all on the same topic and need to be given topic name.
@@ -163,8 +158,7 @@ where SCORE is a value in the range 0 to 1.
         "get_topic_name_regex": GET_TOPIC_NAME_REGEX,
     },
     "disambiguate_topics": {
-        "system": jinja2.Template(
-            """
+        "system": jinja2.Template("""
 You are an expert in {{larger_topic}}. You have been asked to provide more specific and distinguishing names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -186,10 +180,8 @@ The response must be formatted as a single JSON object in the format:
 {"new_topic_name_mapping": {"1. OLD_NAME1": "NEW_NAME1", "2. OLD_NAME2": "NEW_NAME2", ... }, "topic_specificities": [NEW_TOPIC_SCORE1, NEW_TOPIC_SCORE2, ...]}
 where SCORE is a float value between 0.0 and 1.0 representing the quality and specificity of the new name.
 Ensure your entire response is only the JSON object, with no other text before or after it.
-"""
-        ),
-        "user": jinja2.Template(
-            """
+"""),
+        "user": jinja2.Template("""
 Below are the auto-generated topic names, along with keywords, subtopics, and sample {{document_type}} for each topic area.
 
 Original larger topic context: {{larger_topic}}
@@ -227,10 +219,8 @@ Corpus description: {{corpus_description}}
 {% endfor %}
 
 Please provide new {{summary_kind}} names for each topic, following the JSON output format specified.
-"""
-        ),
-        "combined": jinja2.Template(
-            """
+"""),
+        "combined": jinja2.Template("""
 You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -284,8 +274,7 @@ The response should be formatted as JSON in the format
     {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
-"""
-        ),
+"""),
         "extract_topic_names": default_extract_topic_names,
         "get_topic_names_regex": GET_TOPIC_CLUSTER_NAMES_REGEX,
     },
@@ -293,8 +282,7 @@ The response must contain only JSON with no preamble and must have one entry for
 
 MULTILINGUAL_EN_FR_PROMPT_TEMPLATES = {
     "layer": {
-        "system": jinja2.Template(
-            """
+        "system": jinja2.Template("""
 You are an expert at classifying {{document_type}} from {{corpus_description}} into topics.
 Your task is to analyze information about a group of {{document_type}} and assign a {{summary_kind}} name to this group.
 The response must provide english and french topic names and must be in JSON formatted as {"english_topic_name":<NAME>, "nom_du_sujet_en_français":<NOM>, "topic_specificity":<SCORE>}
@@ -313,10 +301,8 @@ You should primarily make use of the major and minor subtopics of this group to 
 and ensure the topic name reflects the core essence of *all* major subtopics.
 {% endif %}
 Ensure your entire response is only the JSON object, with no other text before or after it.
-"""
-        ),
-        "user": jinja2.Template(
-            """
+"""),
+        "user": jinja2.Template("""
 Here is the information about the group of {{document_type}}:
 {% if cluster_keywords %}
 - Keywords for this group include: {{", ".join(cluster_keywords)}}
@@ -348,10 +334,8 @@ Here is the information about the group of {{document_type}}:
 
 Based on this information, provide a {{summary_kind}} name for this group.
 Recall the output format: {"english_topic_name":<NAME>, "nom_du_sujet_en_français":<NOM>, "topic_specificity":<SCORE>}.
-"""
-        ),
-        "combined": jinja2.Template(
-            """
+"""),
+        "combined": jinja2.Template("""
 You are an expert of classifying {{document_type}} from {{corpus_description}} into topics.
 Below is a information about a group of {{document_type}} from {{corpus_description}} that 
 are all on the same topic and need to be given topic name.
@@ -398,14 +382,12 @@ large and diverse range of {{document_type}} contained in it at a glance.
 {%- endif %}
 The response should be in JSON formatted as {"english_topic_name":<NAME>, "nom_du_sujet_en_français":<NOM>, "topic_specificity":<SCORE>} 
 where SCORE is a value in the range 0 to 1.
-"""
-        ),
+"""),
         "extract_topic_name": lambda json_response: f'{json_response["english_topic_name"]} / {json_response["nom_du_sujet_en_français"]}',
         "get_topic_name_regex": r'\{\s*"english_topic_name":\s*.*?,\s*"nom_du_sujet_en_français":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}',
     },
     "disambiguate_topics": {
-        "system": jinja2.Template(
-            """
+        "system": jinja2.Template("""
 You are an expert in {{larger_topic}}. You have been asked to provide more specific and distinguishing names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -427,10 +409,8 @@ The response must be formatted as a single JSON object in the format:
 {"new_topic_name_mapping": {"1. OLD_NAME1 / ANCIEN_NOM1": "NEW_NAME1 / NOUVEAU_NOM1", "2. OLD_NAME2 / ANCIEN_NOM2": "NEW_NAME2 / NOUVEAU_NOM2", ... }, "topic_specificities": [NEW_TOPIC_SCORE1, NEW_TOPIC_SCORE2, ...]}
 where SCORE is a float value between 0.0 and 1.0 representing the quality and specificity of the new name.
 Ensure your entire response is only the JSON object, with no other text before or after it.
-"""
-        ),
-        "user": jinja2.Template(
-            """
+"""),
+        "user": jinja2.Template("""
 Below are the auto-generated topic names, along with keywords, subtopics, and sample {{document_type}} for each topic area.
 
 Original larger topic context: {{larger_topic}}
@@ -468,10 +448,8 @@ Corpus description: {{corpus_description}}
 {% endfor %}
 
 Please provide new {{summary_kind}} names for each topic, following the JSON output format specified.
-"""
-        ),
-        "combined": jinja2.Template(
-            """
+"""),
+        "combined": jinja2.Template("""
 You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -525,8 +503,7 @@ The response should be formatted as JSON in the format
     {"new_topic_name_mapping": {<1. OLD_NAME1 / ANCIEN_NOM1>: <NEW_NAME1 / NOUVEAU_NOM1>, <2. OLD_NAME2 / ANCIEN_NOM2>: <NEW_NAME2 / NOUVEAU_NOM2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
-"""
-        ),
+"""),
         "extract_topic_names": default_extract_topic_names,
         "get_topic_names_regex": GET_TOPIC_CLUSTER_NAMES_REGEX,
     },
@@ -534,8 +511,7 @@ The response must contain only JSON with no preamble and must have one entry for
 
 SUMMARY_PROMPT_TEMPLATES = {
     "layer": {
-        "system": jinja2.Template(
-            """
+        "system": jinja2.Template("""
 You are an expert at classifying {{document_type}} from {{corpus_description}} into topics.
 Your task is to analyze information about a group of {{document_type}} and assign a {{summary_kind}} name to this group,
 as well as providing a short paragraph summary of the topic, and a more detailed explanation of the content of the topic.
@@ -564,10 +540,8 @@ should focus on the full breadth of subtopics to ensure it captures the full bre
 content within the topic.
 {% endif %}
 Ensure your entire response is only the JSON object, with no other text before or after it.
-"""
-        ),
-        "user": jinja2.Template(
-            """
+"""),
+        "user": jinja2.Template("""
 Here is the information about the group of {{document_type}}:
 {% if cluster_keywords %}
 - Keywords for this group include: {{", ".join(cluster_keywords)}}
@@ -605,10 +579,8 @@ Here is the information about the group of {{document_type}}:
 
 Based on this information, provide a {{summary_kind}} name for this group.
 Recall the output format: {"topic_name":<NAME>, "topic_summary":<SUMMARY>, "topic_explanation":<EXPLANATION>, "topic_specificity":<SCORE>}.
-"""
-        ),
-        "combined": jinja2.Template(
-            """
+"""),
+        "combined": jinja2.Template("""
 You are an expert of classifying {{document_type}} from {{corpus_description}} into topics.
 Below is a information about a group of {{document_type}} from {{corpus_description}} that 
 are all on the same topic and need to be given topic name, as well as a short paragraph summary 
@@ -672,8 +644,7 @@ The response should be in JSON formatted as {"topic_name":<NAME>, "topic_summary
 where NAME is the topic name you generate, SUMMARY is a short paragraph summary of the topic, 
 EXPLANATION is a more detailed explanation of the content of the topic, and SCORE is a float value between 0.0 and 1.0,
 representing how specific and well-defined the topic name is given the input information.
-"""
-        ),
+"""),
         "extract_topic_name": lambda json_response: (
             json_response["topic_name"],
             json_response["topic_summary"],
@@ -682,8 +653,7 @@ representing how specific and well-defined the topic name is given the input inf
         "get_topic_name_regex": GET_TOPIC_NAME_AND_SUMMARY_REGEX,
     },
     "disambiguate_topics": {
-        "system": jinja2.Template(
-            """
+        "system": jinja2.Template("""
 You are an expert in {{larger_topic}}. You have been asked to provide more specific and distinguishing names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -705,10 +675,8 @@ The response must be formatted as a single JSON object in the format:
 {"new_topic_name_mapping": {"1. OLD_NAME1": "NEW_NAME1", "2. OLD_NAME2": "NEW_NAME2", ... }, "topic_specificities": [NEW_TOPIC_SCORE1, NEW_TOPIC_SCORE2, ...]}
 where SCORE is a float value between 0.0 and 1.0 representing the quality and specificity of the new name.
 Ensure your entire response is only the JSON object, with no other text before or after it.
-"""
-        ),
-        "user": jinja2.Template(
-            """
+"""),
+        "user": jinja2.Template("""
 Below are the auto-generated topic names, along with keywords, subtopics, and sample {{document_type}} for each topic area.
 
 Original larger topic context: {{larger_topic}}
@@ -752,10 +720,8 @@ Corpus description: {{corpus_description}}
 {% endfor %}
 
 Please provide new {{summary_kind}} names for each topic, following the JSON output format specified.
-"""
-        ),
-        "combined": jinja2.Template(
-            """
+"""),
+        "combined": jinja2.Template("""
 You are an expert in {{larger_topic}}, and have been asked to provide a more specific names for various groups of
 {{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
 
@@ -815,8 +781,7 @@ The response should be formatted as JSON in the format
     {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
-"""
-        ),
+"""),
         "extract_topic_names": default_extract_topic_names,
         "get_topic_names_regex": GET_TOPIC_CLUSTER_NAMES_REGEX,
     },

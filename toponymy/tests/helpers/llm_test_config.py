@@ -3,7 +3,6 @@ from typing import List
 import os
 import pytest
 
-
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {"topic_name": "Machine Learning", "topic_specificity": 0.6}
 

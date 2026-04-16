@@ -2434,6 +2434,7 @@ try:
         PermissionDeniedError,
         BadRequestError,
         NotFoundError,
+        UnprocessableEntityError,
     )
 
     class OpenAINamer(LLMWrapper):
@@ -2488,6 +2489,7 @@ try:
             PermissionDeniedError,
             BadRequestError,
             NotFoundError,
+            UnprocessableEntityError,
         )
 
         def __init__(
