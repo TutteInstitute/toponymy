@@ -68,7 +68,6 @@ dev = [
     "google-generativeai",
     "huggingface-hub<1.0",
     "isort",
-    "llama-cpp-python",
     "mistralai",
     "numpy>=2.0",
     "ollama",
@@ -89,6 +88,14 @@ dev = [
     "umap-learn",
     "pylance",
     "litellm>=1.82.6",
+]
+
+llama = [
+    "llama-cpp-python",
+]
+
+dev-full = [
+    "toponymy[dev,llama]",
 ]
 example-notebooks = [
     "datamapplot>=0.2.2",
