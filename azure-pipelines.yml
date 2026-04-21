@@ -64,6 +64,8 @@ stages:
       timeoutInMinutes: 90   # default is usually 60
       pool:
         vmImage: $(imageName)
+      workspace:
+        clean: all  # Clean workspace before build to free disk space
       strategy:
         matrix:
           linux_py310:
@@ -111,6 +113,8 @@ stages:
       timeoutInMinutes: 90
       pool:
         vmImage: $(imageName)
+      workspace:
+        clean: all  # Clean workspace before build to free disk space
       strategy:
         matrix:
           linux_py311:
