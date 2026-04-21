@@ -130,6 +130,14 @@ class Toponymy:
             verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
         )
 
+        # If the default prompt template is used, but the layer class is ClusterLayerSummaryText, it is
+        # reasonable to switch to the summary prompt templates, if not, the user may be passing their own.
+        if (
+            isinstance(layer_class, ClusterLayerSummaryText)
+            and prompt_template == PROMPT_TEMPLATES
+        ):
+            self.prompt_template = SUMMARY_PROMPT_TEMPLATES
+
     def __sklearn_tags__(self):
         tags = BaseEstimator.__sklearn_tags__(self)
         tags.requires_fit = True
@@ -307,21 +315,25 @@ class Toponymy:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
                     self.cluster_layers_[0].embed_topic_names(self.embedding_model)
 
-                layer.make_subtopics(
-                    self.topic_names_[0],
-                    self.cluster_layers_[0].cluster_labels,
-                    self.cluster_layers_[0].topic_name_embeddings,
-                    self.embedding_model,
-                    method=subtopic_method,
-                )
-
             if _summarize_topics:
+                if i > 0:
+                    layer.make_subtopics(
+                        self.topic_names_[0],
+                        self.cluster_layers_[0].cluster_labels,
+                        self.cluster_layers_[0].topic_name_embeddings,
+                        self.embedding_model,
+                        method=subtopic_method,
+                        topic_summaries=self.topic_summaries_[0],
+                        topic_explanations=self.topic_explanations_[0],
+                    )
                 layer.make_prompts(
                     detail_levels[i],
                     self.topic_names_,
                     self.object_description,
                     self.corpus_description,
                     self.cluster_tree_,
+                    None,
+                    None,
                     self.topic_summaries_,
                     self.topic_explanations_,
                 )
@@ -337,8 +349,18 @@ class Toponymy:
                     self.corpus_description,
                     self.cluster_tree_,
                     self.embedding_model,
+                    self.topic_summaries_,
+                    self.topic_explanations_,
                 )
             else:
+                if i > 0:
+                    layer.make_subtopics(
+                        self.topic_names_[0],
+                        self.cluster_layers_[0].cluster_labels,
+                        self.cluster_layers_[0].topic_name_embeddings,
+                        self.embedding_model,
+                        method=subtopic_method,
+                    )
                 layer.make_prompts(
                     detail_levels[i],
                     self.topic_names_,

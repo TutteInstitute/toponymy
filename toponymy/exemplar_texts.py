@@ -8,6 +8,7 @@ from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
 
 from tqdm.auto import tqdm
+import math
 
 from apricot import SaturatedCoverageSelection
 
@@ -403,9 +404,12 @@ def submodular_selection_exemplars(
             )
             cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
         # Get the objects in this cluster
-        cluster_objects = np.array(objects)[cluster_mask]
+
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
+
+        # Index objects by integer position — no np.array(objects) needed
+        cluster_objects = [objects[i] for i in original_indices]
 
         # If there is an empty cluster emit empty lists
         if len(cluster_objects) == 0:
@@ -488,9 +492,12 @@ def random_exemplars(
     ):
         # Get mask for current cluster
         cluster_mask = cluster_label_vector == cluster_num
-        cluster_objects = np.array(objects)[cluster_mask]
+
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
+
+        # Index objects by integer position — no np.array(objects) needed
+        cluster_objects = [objects[i] for i in original_indices]
 
         # If there is an empty cluster emit empty lists
         if len(cluster_objects) == 0:
@@ -577,11 +584,15 @@ def diverse_exemplars(
         leave=False,
         position=1,
     ):
+
         # Get mask for current cluster
         cluster_mask = cluster_label_vector == cluster_num
-        cluster_objects = np.array(objects)[cluster_mask]
+
         # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
+
+        # Index objects by integer position — no np.array(objects) needed
+        cluster_objects = [objects[i] for i in original_indices]
 
         # If there is an empty cluster emit empty lists
         if len(cluster_objects) == 0:
@@ -590,7 +601,6 @@ def diverse_exemplars(
             continue
 
         cluster_object_vectors = object_vectors[cluster_mask] - null_topic
-
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
             exemplar_distances = pairwise_distances(
@@ -607,18 +617,20 @@ def diverse_exemplars(
             )
 
         # We need more exemplars than we want in case we drop some via diversify
-        n_exemplars_to_take = max((n_exemplars * 2), 16)
+        n_exemplars_to_take = max((n_exemplars**2), 16)
         exemplar_candidates = [
             cluster_objects[i] for i in exemplar_order[:n_exemplars_to_take]
         ]
         candidate_vectors = np.asarray(
             [cluster_object_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
         )
+
         chosen_indices = diversify(
             centroid_vectors[cluster_num] - null_topic,
             candidate_vectors,
             n_exemplars,
             max_alpha=diversify_alpha,
+            tolerance=0.01,
         )[:n_exemplars]
 
         if object_to_text_function is None:
