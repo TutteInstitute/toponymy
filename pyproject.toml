@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toponymy"
-version = "0.4.0"
+version = "0.5.0"
 authors = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 maintainers = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 description = "A library for using large language models to name topics"
