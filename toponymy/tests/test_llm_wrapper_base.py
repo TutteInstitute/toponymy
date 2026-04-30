@@ -11,6 +11,7 @@ import pytest
 class DummySingleWrapper(LLMWrapper):
     model = "dummy-model"
     _supports_debug_callback = True
+
     def _call_llm(self, prompt, temperature, max_tokens):
         return "single-ok"
 
@@ -92,6 +93,7 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
         self, system_prompt, user_prompt, temperature, max_tokens
     ):
         raise DummyAsyncFailFastProviderError("bad config")
+
 
 def test_sync_connectivity_status_uses_plain_call():
     wrapper = DummySingleWrapper()
@@ -208,6 +210,7 @@ def test_handle_exception_reraises_retryable_exception():
     with pytest.raises(RuntimeError, match="retry me"):
         wrapper._handle_exception(RuntimeError("retry me"))
 
+
 def test_safe_call_llm_emits_debug_callback_on_success():
     events = []
 
@@ -229,6 +232,7 @@ def test_safe_call_llm_emits_debug_callback_on_success():
     assert events[0]["raw_response"] == "single-ok"
     assert events[0]["model"] == "dummy-model"
     assert events[0]["wrapper"] == "DummySingleWrapper"
+
 
 def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_success():
 
@@ -277,6 +281,7 @@ def test_safe_call_llm_emits_debug_callback_on_error():
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
 
+
 def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_error():
     events = []
 
@@ -301,4 +306,3 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_error():
     assert events[0]["prompt_index"] == 5
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
-

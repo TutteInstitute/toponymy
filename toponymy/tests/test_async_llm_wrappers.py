@@ -91,6 +91,7 @@ class MockAsyncResponse:
 
         return Response(content)
 
+
 # Test callback support in all wrappers
 @pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS)
 def test_supported_async_namers_do_not_warn_on_callback(namer_cls, kwargs):
@@ -100,13 +101,11 @@ def test_supported_async_namers_do_not_warn_on_callback(namer_cls, kwargs):
         warnings.simplefilter("always")
         namer_cls(callback=callback, **kwargs)
 
-    debug_warnings = [
-        w for w in record
-        if "debug callback" in str(w.message)
-    ]
+    debug_warnings = [w for w in record if "debug callback" in str(w.message)]
 
     assert len(debug_warnings) == 0
     assert namer_cls._supports_debug_callback is True
+
 
 @pytest.mark.parametrize("namer_cls, kwargs", UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS)
 def test_unsupported_async_namers_warn_on_callback(namer_cls, kwargs):
@@ -116,6 +115,7 @@ def test_unsupported_async_namers_warn_on_callback(namer_cls, kwargs):
         namer_cls(callback=callback, **kwargs)
     assert namer_cls._supports_debug_callback is False
 
+
 @pytest.mark.parametrize(
     "namer_cls, kwargs",
     SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS + UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
@@ -124,11 +124,9 @@ def test_async_no_warning_when_no_callback(namer_cls, kwargs):
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter("always")
         namer_cls(callback=None, **kwargs)
-    debug_warnings = [
-        w for w in record
-        if "debug callback" in str(w.message)
-    ]
+    debug_warnings = [w for w in record if "debug callback" in str(w.message)]
     assert len(debug_warnings) == 0
+
 
 # AsyncCohere Tests
 @pytest_asyncio.fixture

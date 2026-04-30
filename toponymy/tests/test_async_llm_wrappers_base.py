@@ -43,7 +43,7 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
 
 class DummySingleWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
-    model="dummy-model"
+    model = "dummy-model"
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
         return "single-ok"
@@ -56,6 +56,7 @@ class DummySingleWrapper(AsyncLLMWrapper):
 
 class DummyBatchWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
+
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
         return ["batch-ok"]
 
@@ -332,9 +333,11 @@ async def test_async_generate_topic_cluster_names_partial_success(
     assert result[1] == fallback_old_names
     validate_cluster_names(result[2])
 
+
 #
 # ASYNC TESTS
 #
+
 
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
