@@ -221,14 +221,12 @@ def test_safe_call_llm_emits_debug_callback_on_success():
         "test prompt",
         temperature=0.4,
         max_tokens=128,
-        prompt_index=2,
     )
 
     assert result == "single-ok"
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_success"
     assert events[0]["prompt"] == "test prompt"
-    assert events[0]["prompt_index"] == 2
     assert events[0]["raw_response"] == "single-ok"
     assert events[0]["model"] == "dummy-model"
     assert events[0]["wrapper"] == "DummySingleWrapper"
@@ -246,7 +244,6 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_success():
         "user prompt",
         temperature=0.4,
         max_tokens=128,
-        prompt_index=3,
     )
 
     assert result == "single-system-ok"
@@ -256,7 +253,6 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_success():
         "system": "system prompt",
         "user": "user prompt",
     }
-    assert events[0]["prompt_index"] == 3
     assert events[0]["raw_response"] == "single-system-ok"
 
 
@@ -271,13 +267,11 @@ def test_safe_call_llm_emits_debug_callback_on_error():
             "test prompt",
             temperature=0.4,
             max_tokens=128,
-            prompt_index=4,
         )
 
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_error"
     assert events[0]["prompt"] == "test prompt"
-    assert events[0]["prompt_index"] == 4
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
 
@@ -294,7 +288,6 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_error():
             "user prompt",
             temperature=0.4,
             max_tokens=128,
-            prompt_index=5,
         )
 
     assert len(events) == 1
@@ -303,6 +296,5 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_error():
         "system": "system prompt",
         "user": "user prompt",
     }
-    assert events[0]["prompt_index"] == 5
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
