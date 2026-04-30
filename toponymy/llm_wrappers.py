@@ -10,8 +10,15 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
-from tenacity import retry, stop_after_attempt, retry_if_exception, AsyncRetrying, wait_random_exponential
+from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable,Any
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    retry_if_exception,
+    AsyncRetrying,
+    wait_random_exponential,
+)
+
 from dataclasses import dataclass
 
 import re
@@ -21,6 +28,7 @@ import json
 import asyncio
 
 import logging
+
 logger = logging.getLogger(__name__)
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -36,6 +44,7 @@ filterwarnings(
     module="litellm",
 )
 
+
 @dataclass
 class CallResult(Generic[T]):
     value: Optional[T] = None
@@ -45,10 +54,12 @@ class CallResult(Generic[T]):
     def ok(self) -> bool:
         return self.error is None
 
+
 class InvalidLLMInputError(ValueError):
     """A custom exception for invalid LLM input. In these cases we do not want to retry, as the input will not change."""
 
     pass
+
 
 class FailFastLLMError(RuntimeError):
     """
@@ -56,9 +67,11 @@ class FailFastLLMError(RuntimeError):
     or provider issue (e.g. bad API key, insufficient permissions, model not found).
     Retrying will not resolve these errors.
     """
+
     def __init__(self, message: str = "", original_exception: Exception | None = None):
         super().__init__(message)
         self.original_exception = original_exception
+
 
 def _should_retry(e: Exception) -> bool:
     if isinstance(e, InvalidLLMInputError):
@@ -66,6 +79,7 @@ def _should_retry(e: Exception) -> bool:
     if isinstance(e, FailFastLLMError):
         return False
     return True
+
 
 class LLMErrorHandlingMixin:
     """
@@ -226,6 +240,7 @@ class DebugCallbackMixin:
                 stacklevel=2,
             )
 
+
 def repair_json_string_backslashes(s: str) -> str:
     """
     Attempts to repair a string that should be JSON by escaping unescaped backslashes.
@@ -378,7 +393,9 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         exc = retry_state.outcome.exception()
         if isinstance(exc, (FailFastLLMError, InvalidLLMInputError)):
             raise exc
-        warn(f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}")
+        warn(
+            f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}"
+        )
         return ""
 
     # @abstractmethod
@@ -394,20 +411,22 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         topic_extraction_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        max_tokens: int = 128,
     ) -> str:
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
-                prompt, temperature, max_tokens=128, routine="generate_topic_names",
+                prompt, temperature, max_tokens=max_tokens, routine="generate_topic_names",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
                 system_prompt=prompt["system"],
                 user_prompt=prompt["user"],
                 temperature=temperature,
-                max_tokens=128,
+                max_tokens=max_tokens,
                 routine="generate_topic_names",
             )
         else:
+            warn(f"Prompt must be a string or a dictionary, got {type(prompt)}")
             raise InvalidLLMInputError(
                 f"Prompt must be a string or a dictionary, got {type(prompt)}"
             )
@@ -415,7 +434,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         topic_name_info = llm_output_to_result(
             topic_name_info_raw, get_topic_name_regex
         )
-        topic_name = str(topic_extraction_function(topic_name_info))
+        result = topic_extraction_function(topic_name_info)
+        topic_name = result if isinstance(result, tuple) else str(result)
         return topic_name
 
     @staticmethod
@@ -448,18 +468,18 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         extract_topic_names_function=default_extract_topic_names,
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
+        max_tokens: int = 1024,
     ) -> List[str]:
-
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
-                prompt, temperature, max_tokens=1024, routine="generate_topic_cluster_names",
+                prompt, temperature, max_tokens=max_tokens, routine="generate_topic_cluster_names",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
                 system_prompt=prompt["system"],
                 user_prompt=prompt["user"],
                 temperature=temperature,
-                max_tokens=1024,
+                max_tokens=max_tokens,
                 routine="generate_topic_cluster_names",
             )
         else:
@@ -470,7 +490,6 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         topic_name_info = llm_output_to_result(
             topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
         )
-
 
         return extract_topic_names_function(
             topic_name_info, old_names, topic_name_info_raw
@@ -544,7 +563,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             "Respond with exactly this JSON and nothing else.\n"
             "Do not use markdown or code blocks.\n\n"
             '{"status": "ok"}'
-            ),
+        ),
         system_prompt: str | None = None,
     ) -> dict:
         result = {
@@ -618,7 +637,6 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             f"{self.__class__.__name__} must implement either _call_single_llm "
             f"or override _call_llm_batch"
         )
-
 
     async def _call_single_llm_with_system(
         self,
@@ -770,13 +788,13 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return await asyncio.gather(*tasks)
 
-
     async def generate_topic_names(
         self,
         prompts: List[Union[str, Dict[str, str]]],
         temperature: float = 0.4,
         extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        max_tokens: int = 128,
     ) -> List[str]:
         """
         Generate topic names for a batch of prompts.
@@ -787,12 +805,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
-            responses = await self._call_llm_batch(prompts, temperature, max_tokens=128)
+            responses = await self._call_llm_batch(
+                prompts, temperature, max_tokens=max_tokens
+            )
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [p["system"] for p in prompts]
             user_prompts = [p["user"] for p in prompts]
             responses = await self._call_llm_with_system_prompt_batch(
-                system_prompts, user_prompts, temperature, max_tokens=128
+                system_prompts, user_prompts, temperature, max_tokens=max_tokens
             )
         else:
             raise InvalidLLMInputError(
@@ -820,7 +840,9 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
             # Attempt to parse the response
             try:
-                topic_name_info = llm_output_to_result(response_text, get_topic_name_regex)
+                topic_name_info = llm_output_to_result(
+                    response_text, get_topic_name_regex
+                )
                 results.append(str(extract_topic_name_function(topic_name_info)))
             except Exception as e:
                 warn(
@@ -837,6 +859,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         extract_topic_names_function=default_extract_topic_names,
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
+        max_tokens: int = 1024,
     ) -> List[List[str]]:
         """
         Generate topic cluster names for a batch of prompts.
@@ -851,13 +874,13 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         # Check the first prompt to determine type
         if isinstance(prompts[0], str):
             responses = await self._call_llm_batch(
-                prompts, temperature, max_tokens=1024
+                prompts, temperature, max_tokens=max_tokens
             )
         elif isinstance(prompts[0], dict) and self.supports_system_prompts:
             system_prompts = [prompt["system"] for prompt in prompts]
             user_prompts = [prompt["user"] for prompt in prompts]
             responses = await self._call_llm_with_system_prompt_batch(
-                system_prompts, user_prompts, temperature, max_tokens=1024
+                system_prompts, user_prompts, temperature, max_tokens=max_tokens
             )
         else:
             raise InvalidLLMInputError(
@@ -1037,6 +1060,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         Optional cleanup hook for LLM wrappers that manage network clients or connection pools.
         """
         pass
+
 
 class LLMWrapperImportError(ImportError):
     """A custom exception for missing package dependencies required by LLM wrappers. In these cases we do not want to retry, as the error will not resolve until the required package is installed."""
@@ -2081,7 +2105,7 @@ try:
         AuthenticationError as AnthropicAuthenticationError,
         PermissionDeniedError as AnthropicPermissionDeniedError,
         BadRequestError as AnthropicBadRequestError,
-        NotFoundError as AnthropicNotFoundError
+        NotFoundError as AnthropicNotFoundError,
     )
 
     class AnthropicNamer(LLMWrapper):
@@ -2125,7 +2149,13 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncAnthropic wrapper instead.
         """
-        FAIL_FAST_EXCEPTIONS = (AnthropicAuthenticationError, AnthropicPermissionDeniedError, AnthropicBadRequestError, AnthropicNotFoundError)
+
+        FAIL_FAST_EXCEPTIONS = (
+            AnthropicAuthenticationError,
+            AnthropicPermissionDeniedError,
+            AnthropicBadRequestError,
+            AnthropicNotFoundError,
+        )
 
         def __init__(
             self,
@@ -2220,7 +2250,13 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
         """
-        FAIL_FAST_EXCEPTIONS = (AnthropicAuthenticationError, AnthropicPermissionDeniedError, AnthropicBadRequestError, AnthropicNotFoundError)
+
+        FAIL_FAST_EXCEPTIONS = (
+            AnthropicAuthenticationError,
+            AnthropicPermissionDeniedError,
+            AnthropicBadRequestError,
+            AnthropicNotFoundError,
+        )
 
         def __init__(
             self,
@@ -2280,7 +2316,6 @@ try:
                     temperature=temperature,
                 )
                 return response.content[0].text
-
 
     class BatchAnthropicNamer(AsyncLLMWrapper):
         """
@@ -2564,8 +2599,13 @@ except:
 
 try:
     import openai
-    from openai import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
-
+    from openai import (
+        AuthenticationError,
+        PermissionDeniedError,
+        BadRequestError,
+        NotFoundError,
+        UnprocessableEntityError,
+    )
 
     class OpenAINamer(LLMWrapper):
         """
@@ -2613,7 +2653,13 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncOpenAI wrapper instead.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
         _supports_debug_callback = True
 
         def __init__(
@@ -2648,6 +2694,7 @@ try:
                 messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
                 response_format={"type": "json_object"},
+                reasoning_effort="none",
             )
             result = response.choices[0].message.content
             return result
@@ -2724,7 +2771,13 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
-        FAIL_FAST_EXCEPTIONS = (AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError)
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
         _supports_debug_callback = True
 
         def __init__(
@@ -2753,10 +2806,7 @@ try:
             self.semaphore = asyncio.Semaphore(max_concurrent_requests)
 
         async def _call_single_llm(
-            self,
-            prompt: str,
-            temperature: float,
-            max_tokens: int
+            self, prompt: str, temperature: float, max_tokens: int
         ) -> str:
             """Call the LLM for a single prompt."""
             async with self.semaphore:
@@ -4155,7 +4205,14 @@ except ImportError:
 
 try:
     import litellm
-    from litellm.exceptions import AuthenticationError, PermissionDeniedError, BadRequestError, NotFoundError, UnprocessableEntityError
+    from litellm.exceptions import (
+        AuthenticationError,
+        PermissionDeniedError,
+        BadRequestError,
+        NotFoundError,
+        UnprocessableEntityError,
+    )
+
     class LiteLLMNamer(LLMWrapper):
         """
         Provides access to any LLM supported by LiteLLM using a unified interface.
@@ -4212,6 +4269,7 @@ try:
         use_json_object: bool
             Whether response_format={"type": "json_object"} will be sent.
         """
+
         FAIL_FAST_EXCEPTIONS = (
             AuthenticationError,
             PermissionDeniedError,
@@ -4241,11 +4299,13 @@ try:
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
-            self.use_json_object = use_json_object # set by user
-            self._resolved_use_json_object: bool | None = None # set internally
+            self.use_json_object = use_json_object  # set by user
+            self._resolved_use_json_object: bool | None = None  # set internally
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
-            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
+            self.completion_kwargs = (
+                dict(completion_kwargs) if completion_kwargs else {}
+            )
 
             filterwarnings(
                 "ignore",
@@ -4296,7 +4356,9 @@ try:
                 supported = litellm.get_supported_openai_params(model=self.model)
                 return "response_format" in (supported or [])
             except Exception:
-                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                logger.warning(
+                    f"Failed to detect json_object support for model {self.model}, assuming not supported"
+                )
                 return False
 
         def _should_use_json_object(self) -> bool:
@@ -4314,12 +4376,14 @@ try:
             max_tokens: int,
         ) -> dict:
             kwargs = dict(self.completion_kwargs)
-            kwargs.update({
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            })
+            kwargs.update(
+                {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+            )
             if self.api_key is not None:
                 kwargs["api_key"] = self.api_key
 
@@ -4396,7 +4460,6 @@ try:
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-
 
     class AsyncLiteLLMNamer(AsyncLLMWrapper):
         """
@@ -4483,8 +4546,8 @@ try:
             api_base: str = None,
             llm_specific_instructions: str = None,
             max_concurrent_requests: int = 10,
-            use_json_object:  bool | None = None,
-            disable_system_prompts:  bool = False,
+            use_json_object: bool | None = None,
+            disable_system_prompts: bool = False,
             completion_kwargs: dict[str, Any] | None = None,
             callback: DebugCallback | None = None,
         ):
@@ -4503,14 +4566,15 @@ try:
             self._resolved_use_json_object: bool | None = None
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
-            self.completion_kwargs = dict(completion_kwargs) if completion_kwargs else {}
+            self.completion_kwargs = (
+                dict(completion_kwargs) if completion_kwargs else {}
+            )
 
         @property
         def supports_system_prompts(self) -> bool:
             if self.disable_system_prompts:
                 return False
             return True
-
 
         def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
             message = str(exc).lower()
@@ -4542,7 +4606,9 @@ try:
                 supported = litellm.get_supported_openai_params(model=self.model)
                 return "response_format" in (supported or [])
             except Exception:
-                logger.warning(f"Failed to detect json_object support for model {self.model}, assuming not supported")
+                logger.warning(
+                    f"Failed to detect json_object support for model {self.model}, assuming not supported"
+                )
                 return False
 
         def _should_use_json_object(self) -> bool:
@@ -4560,12 +4626,14 @@ try:
             max_tokens: int,
         ) -> dict:
             kwargs = dict(self.completion_kwargs)
-            kwargs.update({
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            })
+            kwargs.update(
+                {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+            )
 
             if self.api_key is not None:
                 kwargs["api_key"] = self.api_key
@@ -4577,7 +4645,6 @@ try:
                 kwargs["response_format"] = {"type": "json_object"}
 
             return kwargs
-
 
         async def _acompletion_with_messages(
             self,
@@ -4602,9 +4669,7 @@ try:
             max_tokens: int,
         ) -> str:
             return await self._acompletion_with_messages(
-                messages=[
-                    {"role": "user", "content": prompt + self.extra_prompting}
-                ],
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
                 max_tokens=max_tokens,
             )
@@ -4624,8 +4689,8 @@ try:
                     {"role": "user", "content": user_prompt + self.extra_prompting},
                 ]
             try:
-            # If the model doesn't support system prompts, this will raise an error which we
-            # catch to disable system prompt usage for future calls. Everything else raises as normal.
+                # If the model doesn't support system prompts, this will raise an error which we
+                # catch to disable system prompt usage for future calls. Everything else raises as normal.
                 result = await self._acompletion_with_messages(
                     messages=messages,
                     temperature=temperature,

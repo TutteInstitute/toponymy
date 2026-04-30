@@ -718,9 +718,7 @@ def test_distinguish_topic_names_prompt_custom_template():
     corpus_description = "corpus"
     summary_kind = "summary"
 
-    custom_template = PROMPT_TEMPLATES[
-        "disambiguate_topics"
-    ]  # Using existing template for test
+    custom_template = PROMPT_TEMPLATES  # Using existing template for test
 
     prompt = distinguish_topic_names_prompt(
         topic_indices,
@@ -736,7 +734,7 @@ def test_distinguish_topic_names_prompt_custom_template():
         prompt_template=custom_template,
     )
 
-    expected_prompt = custom_template["combined"].render(
+    expected_prompt = custom_template["disambiguate_topics"]["combined"].render(
         larger_topic="Topic C and Topic D",
         document_type=object_description,
         corpus_description=corpus_description,

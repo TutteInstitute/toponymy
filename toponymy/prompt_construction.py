@@ -250,7 +250,7 @@ def distinguish_topic_names_prompt(
     }
 
     if prompt_template is not None:
-        template_set = prompt_template
+        template_set = prompt_template["disambiguate_topics"]
     else:
         template_set = PROMPT_TEMPLATES["disambiguate_topics"]
 
@@ -498,7 +498,7 @@ def topic_summary_prompt(
             len(tree_subtopics) == 1
             and all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]] != ""
         ):
-            return f"[!SKIP!]: {all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]]}"
+            return f"[!SKIP!]: {all_topic_names[tree_subtopics[0][0]][tree_subtopics[0][1]]}\n--\n{all_topic_summaries[tree_subtopics[0][0]][tree_subtopics[0][1]]}\n--\n{all_topic_explanations[tree_subtopics[0][0]][tree_subtopics[0][1]]}"
 
         # Subtopics one layer down are major subtopics; two layers down are minor
         major_subtopics = [
@@ -580,7 +580,7 @@ def topic_summary_prompt(
     }
 
     if prompt_template is not None:
-        template_set = prompt_template
+        template_set = prompt_template["layer"]
     else:
         template_set = SUMMARY_PROMPT_TEMPLATES["layer"]
 

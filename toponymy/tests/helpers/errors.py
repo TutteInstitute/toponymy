@@ -59,6 +59,7 @@ OPENAI_STATUS_CODES = {
     RateLimitError: 429,
 }
 
+
 def make_httpx_request(url: str) -> httpx.Request:
     return httpx.Request("POST", url)
 
@@ -164,6 +165,7 @@ def make_anthropic_error(error_class):
 
     raise ValueError(f"Unknown error class: {error_class}")
 
+
 # LiteLLM Errors
 
 LITELLM_FAIL_FAST = [
@@ -192,6 +194,7 @@ LITELLM_STATUS_CODES = {
     LiteLLMInternalServerError: 500,
     LiteLLMServiceUnavailableError: 503,
 }
+
 
 def make_litellm_error(error_class, provider_name="openai", model="gpt-4"):
     message = TEST_ERROR_MESSAGE

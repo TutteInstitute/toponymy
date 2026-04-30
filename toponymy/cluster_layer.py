@@ -25,6 +25,7 @@ from toponymy.subtopics import (
 from toponymy.templates import (
     GET_TOPIC_CLUSTER_NAMES_REGEX,
     GET_TOPIC_NAME_REGEX,
+    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
     SUMMARY_KINDS,
     default_extract_topic_names,
 )
@@ -92,7 +93,7 @@ class ClusterLayer(ABC):
         n_exemplars: int = 16,
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        exemplar_delimiters: List[str] = None,
         prompt_format: str = "combined",
         prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
@@ -109,7 +110,8 @@ class ClusterLayer(ABC):
         self.exemplar_delimiters = exemplar_delimiters
         self.prompt_format = prompt_format
         self.prompt_template = prompt_template
-
+        if exemplar_delimiters is None:
+            self.exemplar_delimiters = ['    *"', '"\n']
         # Handle verbose parameters
         self.show_progress_bar, self.verbose = handle_verbose_params(
             verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
@@ -294,12 +296,14 @@ class ClusterLayer(ABC):
                     disambiguation_prompt,
                     [self.topic_names[i] for i in topic_indices],
                     extract_topic_names_function=(
-                        self.prompt_template["extract_topic_names"]
+                        self.prompt_template["disambiguate_topics"][
+                            "extract_topic_names"
+                        ]
                         if self.prompt_template
                         else default_extract_topic_names
                     ),
                     get_topic_names_regex=(
-                        self.prompt_template.get(
+                        self.prompt_template["disambiguate_topics"].get(
                             "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
                         )
                         if self.prompt_template
@@ -322,12 +326,14 @@ class ClusterLayer(ABC):
                         for topic_indices in self.dismbiguation_topic_indices
                     ],
                     extract_topic_names_function=(
-                        self.prompt_template["extract_topic_names"]
+                        self.prompt_template["disambiguate_topics"][
+                            "extract_topic_names"
+                        ]
                         if self.prompt_template
                         else default_extract_topic_names
                     ),
                     get_topic_names_regex=(
-                        self.prompt_template.get(
+                        self.prompt_template["disambiguate_topics"].get(
                             "get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX
                         )
                         if self.prompt_template
@@ -393,7 +399,7 @@ class ClusterLayerText(ClusterLayer):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        exemplar_delimiters: List[str] = None,
         prompt_format: str = "combined",
         prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
@@ -493,7 +499,7 @@ class ClusterLayerText(ClusterLayer):
                         topic_extraction_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
-                            else lambda json_response: json_response["topic_name"]
+                            else lambda json_response: str(json_response["topic_name"])
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
@@ -581,7 +587,9 @@ class ClusterLayerText(ClusterLayer):
                             topic_extraction_function=(
                                 self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
-                                else lambda json_response: json_response["topic_name"]
+                                else lambda json_response: str(
+                                    json_response["topic_name"]
+                                )
                             ),
                             get_topic_name_regex=(
                                 self.prompt_template["layer"].get(
@@ -608,7 +616,7 @@ class ClusterLayerText(ClusterLayer):
                         extract_topic_name_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
-                            else lambda json_response: json_response["topic_name"]
+                            else lambda json_response: str(json_response["topic_name"])
                         ),
                         get_topic_name_regex=(
                             self.prompt_template["layer"].get(
@@ -829,7 +837,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
         exemplars_diversify_alpha: float = 1.0,
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        exemplar_delimiters: List[str] = None,
         prompt_format: str = "combined",
         prompt_template: Optional[str | Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
@@ -938,41 +946,50 @@ class ClusterLayerSummaryText(ClusterLayerText):
         ), "all_topic_explanations must be provided to name_topics in ClusterLayerSummaryText"
 
         if isinstance(llm, LLMWrapper):
-            self.topic_names, self.topic_summaries, self.topic_explanations = map(
-                list,
-                zip(
-                    *[
-                        (
-                            llm.generate_topic_name(
-                                prompt,
-                                topic_extraction_function=(
-                                    self.prompt_template["extract_topic_name"]
-                                    if self.prompt_template
-                                    else None
-                                ),
-                                get_topic_name_regex=(
-                                    self.prompt_template.get(
-                                        "get_topic_name_regex", GET_TOPIC_NAME_REGEX
-                                    )
-                                    if self.prompt_template
-                                    else GET_TOPIC_NAME_REGEX
-                                ),
+            self.topic_names = []
+            self.topic_summaries = []
+            self.topic_explanations = []
+            for prompt in tqdm(
+                self.prompts,
+                desc=f"Generating topic names for layer {self.layer_id}",
+                disable=not self.show_progress_bar,
+                unit="topic",
+                leave=False,
+                position=1,
+            ):
+                if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
+                    result = llm.generate_topic_name(
+                        prompt,
+                        topic_extraction_function=(
+                            self.prompt_template["layer"]["extract_topic_name"]
+                            if self.prompt_template
+                            else lambda json_response: (
+                                json_response["topic_name"],
+                                json_response["topic_summary"],
+                                json_response["topic_explanation"],
                             )
-                            if isinstance(prompt, dict)
-                            or not prompt.startswith("[!SKIP!]: ")
-                            else prompt.removeprefix("[!SKIP!]: ")
-                        )
-                        for prompt in tqdm(
-                            self.prompts,
-                            desc=f"Generating topic names for layer {self.layer_id}",
-                            disable=not self.show_progress_bar,
-                            unit="topic",
-                            leave=False,
-                            position=1,
-                        )
-                    ]
-                ),
-            )
+                        ),
+                        get_topic_name_regex=(
+                            self.prompt_template["layer"].get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
+                            )
+                            if self.prompt_template
+                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
+                        ),
+                        max_tokens=2048,
+                    )
+                    if isinstance(result, tuple) and len(result) >= 3:
+                        name, summary, explanation = result[0], result[1], result[2]
+                    else:
+                        name, summary, explanation = str(result), "", ""
+                else:
+                    parts = prompt.removeprefix("[!SKIP!]: ").split("\n--\n", 2)
+                    name = parts[0] if len(parts) > 0 else ""
+                    summary = parts[1] if len(parts) > 1 else ""
+                    explanation = parts[2] if len(parts) > 2 else ""
+                self.topic_names.append(name)
+                self.topic_summaries.append(summary)
+                self.topic_explanations.append(explanation)
         elif isinstance(llm, AsyncLLMWrapper):
             # Filter out prompts that are marked to be skipped
             prompts_for_llm = [
@@ -984,15 +1001,20 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 llm.generate_topic_names(
                     [prompt for _, prompt in prompts_for_llm],
                     extract_topic_name_function=(
-                        self.prompt_template["extract_topic_name"]
+                        self.prompt_template["layer"]["extract_topic_name"]
                         if self.prompt_template
-                        else None
+                        else lambda json_response: (
+                            json_response["topic_name"],
+                            json_response["topic_summary"],
+                            json_response["topic_explanation"],
+                        )
                     ),
                     get_topic_name_regex=(
-                        self.prompt_template.get("get_topic_name_regex", None)
+                        self.prompt_template["layer"].get("get_topic_name_regex", None)
                         if self.prompt_template
                         else None
                     ),
+                    max_tokens=2048,
                 )
             )
             llm_result_index = 0
@@ -1001,7 +1023,10 @@ class ClusterLayerSummaryText(ClusterLayerText):
             self.topic_explanations = []
             for index, prompt in enumerate(self.prompts):
                 if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
-                    name, summary, explanation = llm_results[llm_result_index]
+                    if llm_results[llm_result_index] == "":
+                        name, summary, explanation = "", "", ""
+                    else:
+                        name, summary, explanation = llm_results[llm_result_index]
                     self.topic_names.append(name)
                     self.topic_summaries.append(summary)
                     self.topic_explanations.append(explanation)
@@ -1048,16 +1073,17 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         llm.generate_topic_name(
                             prompt,
                             topic_extraction_function=(
-                                self.prompt_template["extract_topic_name"]
+                                self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
                                 else lambda json_response: json_response["topic_name"]
                             ),
                             get_topic_name_regex=(
                                 self.prompt_template.get(
-                                    "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                                    "get_topic_name_regex",
+                                    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
                                 )
                                 if self.prompt_template
-                                else GET_TOPIC_NAME_REGEX
+                                else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             ),
                         )
                         if name == ""
@@ -1075,16 +1101,16 @@ class ClusterLayerSummaryText(ClusterLayerText):
                     llm.generate_topic_names(
                         selected_prompts,
                         extract_topic_name_function=(
-                            self.prompt_template["extract_topic_name"]
+                            self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
                             else lambda json_response: json_response["topic_name"]
                         ),
                         get_topic_name_regex=(
-                            self.prompt_template.get(
-                                "get_topic_name_regex", GET_TOPIC_NAME_REGEX
+                            self.prompt_template["layer"].get(
+                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             )
                             if self.prompt_template
-                            else GET_TOPIC_NAME_REGEX
+                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                         ),
                     )
                 )
@@ -1096,7 +1122,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                     "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
                 )
 
-        return self.topic_names
+        return self.topic_names, self.topic_summaries, self.topic_explanations
 
     def make_subtopics(
         self,

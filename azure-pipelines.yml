@@ -61,8 +61,11 @@ stages:
     displayName: Run test suite
     jobs:
     - job: Tests
+      timeoutInMinutes: 90   # default is usually 60
       pool:
         vmImage: $(imageName)
+      workspace:
+        clean: all  # Clean workspace before build to free disk space
       strategy:
         matrix:
           linux_py310:
@@ -107,8 +110,11 @@ stages:
           includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
 
     - job: ExternalTests
+      timeoutInMinutes: 90
       pool:
         vmImage: $(imageName)
+      workspace:
+        clean: all  # Clean workspace before build to free disk space
       strategy:
         matrix:
           linux_py311:
@@ -127,6 +133,7 @@ stages:
     condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/release-'), eq(variables.triggeredByPullRequest, false))
     jobs:
       - job: BuildArtifacts
+        timeoutInMinutes: 90
         displayName: Build source dists and wheels
         pool:
           vmImage: 'ubuntu-latest'

@@ -12,10 +12,10 @@ import glob
 sys.path.insert(0, os.path.abspath(".."))
 sys.path.insert(0, os.path.abspath("."))
 
-project = 'Toponymy'
-copyright = '2025, Leland McInnes and John Healy'
-author = 'Leland McInnes and John Healy'
-release = '0.3'
+project = "Toponymy"
+copyright = "2025, Leland McInnes and John Healy"
+author = "Leland McInnes and John Healy"
+release = "0.3"
 
 master_doc = "index"
 
@@ -30,26 +30,25 @@ extensions = [
     "numpydoc",
     "nbsphinx",
     "sphinx.ext.mathjax",
-    #"sphinx_gallery.gen_gallery",
+    # "sphinx_gallery.gen_gallery",
     # "sphinx_build_compatibility.extension",
 ]
 # this is needed for some reason...
 # see https://github.com/numpy/numpydoc/issues/69
 numpydoc_show_class_members = False
 
-autodoc_default_flags = ['members', 'inherited-members']
+autodoc_default_flags = ["members", "inherited-members"]
 autosummary_generate = True
 
-templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
-
+templates_path = ["_templates"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "sphinx_rtd_theme"
-html_static_path = ['_static']
+html_static_path = ["_static"]
 html_theme_options = {"navigation_depth": 3, "logo_only": False}
 
 html_logo = "toponymy_logo_rtd.png"
