@@ -254,17 +254,16 @@ def topic_tree_html_recursion(
     else:
         topic_name = "<b>Topic Tree</b>"
 
+    gray_val = 0
+    weight_val = 800
     if max_layer > 0:
         if layer == max_layer:
-            gray_val = 0
             weight_val = 900
         else:
-            gray_val = np.sqrt(1.0 - (layer / (max_layer - 1))) * 200
-            weight_val = 200 + (layer / (max_layer - 1)) * 600
+            depth_scale = max(max_layer - 1, 1)
+            gray_val = np.sqrt(1.0 - (layer / depth_scale)) * 200
+            weight_val = 200 + (layer / depth_scale) * 600
             weight_val = round(weight_val / 100) * 100
-    elif layer == 0:
-        gray_val = 0
-        weight_val = 800
 
     gray_val = int(max(0, min(255, gray_val)))
 

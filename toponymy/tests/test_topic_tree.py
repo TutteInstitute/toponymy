@@ -301,6 +301,31 @@ def test_topic_tree_html():
     assert result == expected_result
 
 
+def test_topic_tree_html_single_layer():
+    tree_dict = {(1, 0): [(0, 0), (0, 1)]}
+    topics = [["Leaf A", "Leaf B"], ["Root"]]
+    topic_sizes = [[1, 1], [2]]
+
+    result = topic_tree_html(tree_dict, topics, topic_sizes, 2)
+
+    assert "Root" in result
+    assert "Leaf A" in result
+    assert "Leaf B" in result
+
+
+def test_topic_tree_repr_html_single_layer():
+    tree_dict = {(1, 0): [(0, 0), (0, 1)]}
+    topics = [["Leaf A", "Leaf B"], ["Root"]]
+    topic_sizes = [[1, 1], [2]]
+
+    tree = TopicTree(tree_dict, topics, topic_sizes, 2)
+    result = tree._repr_html_()
+
+    assert "Root" in result
+    assert "Leaf A" in result
+    assert "Leaf B" in result
+
+
 def test_topic_tree_html_with_colors():
     tree_dict = {
         (3, 0): [(2, 0), (2, 1)],
