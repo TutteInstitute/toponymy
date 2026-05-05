@@ -2,6 +2,41 @@ import json
 from typing import List
 import os
 import pytest
+from toponymy.llm_wrappers import (
+    AnthropicNamer,
+    AsyncAnthropicNamer,
+    AsyncAzureAINamer,
+    AsyncCohereNamer,
+    AsyncGoogleGeminiNamer,
+    AsyncHuggingFaceNamer,
+    AsyncLiteLLMNamer,
+    AsyncOllamaNamer,
+    AsyncOpenAINamer,
+    AsyncTogether,
+    AsyncVLLMNamer,
+    AzureAINamer,
+    BatchAnthropicNamer,
+    BatchAzureAINamer,
+    CohereBatchNamer,
+    CohereNamer,
+    GoogleGeminiNamer,
+    HuggingFaceNamer,
+    LiteLLMNamer,
+    LlamaCppNamer,
+    OllamaNamer,
+    OpenAINamer,
+    ReplicateNamer,
+    TogetherNamer,
+    VLLMNamer,
+    AsyncOpenAINamer,
+    AsyncLiteLLMNamer,
+    GoogleGeminiNamer,
+    HuggingFaceNamer,
+    LiteLLMNamer,
+    LlamaCppNamer,
+    OpenAINamer
+)
+
 
 # Mock responses for different scenarios
 VALID_TOPIC_NAME_RESPONSE = {"topic_name": "Machine Learning", "topic_specificity": 0.6}
@@ -71,4 +106,40 @@ LITELLM_PROVIDER_CASES = [
         },
         id="anthropic",
     ),
+]
+
+SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
+    (OpenAINamer, {"api_key": "dummy"}),
+    (LiteLLMNamer, {}),
+]
+UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS =[
+    (HuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
+    (AnthropicNamer, {"api_key": "dummy"}),
+    (TogetherNamer, {"api_key": "dummy"}),
+    (ReplicateNamer, {"api_token": "dummy"}),
+    (AzureAINamer, {"api_key": "dummy", "endpoint": "dummy", "model": "dummy/model"}),
+    (GoogleGeminiNamer, {"api_key": "dummy"}),
+    # exclude namers needing mocking to get around setup
+    #(OllamaNamer, {}),
+    #(VLLMNamer, {}),
+    #(CohereNamer, {"api_key": "dummy"}),
+    #(LlamaCppNamer, {"model_path": "dummy/path/to/model.gguf"}),
+]
+SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS = [
+    (AsyncOpenAINamer, {"api_key": "dummy"}),
+    (AsyncLiteLLMNamer, {}),
+]
+UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS =[
+    (AsyncHuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
+    (AsyncCohereNamer, {"api_key": "dummy"}),
+    (CohereBatchNamer, {"api_key": "dummy"}),
+    (AsyncAnthropicNamer, {"api_key": "dummy"}),
+    (BatchAnthropicNamer, {"api_key": "dummy"}),
+    (AsyncTogether, {"api_key": "dummy"}),
+    (AsyncAzureAINamer, {"api_key": "dummy", "endpoint": "dummy", "model": "dummy/model"}),
+    (BatchAzureAINamer, {"api_key": "dummy", "endpoint": "dummy", "model": "dummy/model"}),
+    (AsyncGoogleGeminiNamer, {"api_key": "dummy"}),
+    # exclude namers needing mocking to get around setup
+    #(AsyncVLLMNamer, {}),
+    #(AsyncOllamaNamer, {}),
 ]
