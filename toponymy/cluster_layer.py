@@ -1075,7 +1075,11 @@ class ClusterLayerSummaryText(ClusterLayerText):
                             topic_extraction_function=(
                                 self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
-                                else lambda json_response: json_response["topic_name"]
+                                else lambda json_response: (
+                                    json_response["topic_name"],
+                                    json_response["topic_summary"],
+                                    json_response["topic_explanation"],
+                                )
                             ),
                             get_topic_name_regex=(
                                 self.prompt_template.get(
