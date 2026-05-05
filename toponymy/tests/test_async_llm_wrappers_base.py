@@ -28,7 +28,8 @@ class DummyAsyncProviderError(Exception):
 
 
 class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
+    _supports_debug_callback = True
+
     FAIL_FAST_EXCEPTIONS = (DummyAsyncProviderError,)
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
@@ -41,6 +42,9 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
 
 
 class DummySingleWrapper(AsyncLLMWrapper):
+    _supports_debug_callback = True
+    model = "dummy-model"
+
     async def _call_single_llm(self, prompt, temperature, max_tokens):
         return "single-ok"
 
@@ -51,6 +55,8 @@ class DummySingleWrapper(AsyncLLMWrapper):
 
 
 class DummyBatchWrapper(AsyncLLMWrapper):
+    _supports_debug_callback = True
+
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
         return ["batch-ok"]
 
@@ -195,7 +201,7 @@ async def test_safe_call_with_retry_result_raises_fail_fast():
     async def fail_fast_fn():
         raise DummyAsyncProviderError("bad config")
 
-    with pytest.raises(FailFastLLMError, match="dummy-model"):
+    with pytest.raises(FailFastLLMError, match="bad config"):
         await wrapper._safe_call_with_retry_result(fail_fast_fn)
 
 
@@ -326,3 +332,58 @@ async def test_async_generate_topic_cluster_names_partial_success(
     validate_cluster_names(result[0])
     assert result[1] == fallback_old_names
     validate_cluster_names(result[2])
+
+
+#
+# ASYNC TESTS
+#
+
+
+@pytest.mark.asyncio
+async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
+    events = []
+
+    wrapper = DummySingleWrapper()
+    wrapper.callback = lambda payload: events.append(payload)
+
+    async def fn(prompt, temperature, max_tokens, **kwargs):
+        return await wrapper._call_single_llm(prompt, temperature, max_tokens)
+
+    result = await wrapper._safe_call_with_retry_result(
+        fn,
+        prompt="test prompt",
+        temperature=0.4,
+        max_tokens=128,
+    )
+
+    assert result.ok
+    assert result.value == "single-ok"
+    assert len(events) == 1
+
+    event = events[0]
+    assert event["event"] == "llm_call_success"
+    assert event["prompt"] == "test prompt"
+    assert event["raw_response"] == "single-ok"
+    assert event["model"] == "dummy-model"
+    assert event["wrapper"] == "DummySingleWrapper"
+
+
+@pytest.mark.asyncio
+async def test_safe_call_with_retry_result_fail_fast_raises_and_no_callback():
+    events = []
+
+    wrapper = DummyAsyncFailFastWrapper()
+    wrapper.callback = lambda payload: events.append(payload)
+
+    async def fn(prompt, temperature, max_tokens, **kwargs):
+        return await wrapper._call_single_llm(prompt, temperature, max_tokens)
+
+    with pytest.raises(FailFastLLMError, match="bad config"):
+        await wrapper._safe_call_with_retry_result(
+            fn,
+            prompt="test prompt",
+            temperature=0.4,
+            max_tokens=128,
+        )
+
+    assert len(events) == 0

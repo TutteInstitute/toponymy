@@ -1,4 +1,5 @@
 import os
+import warnings
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
@@ -22,6 +23,8 @@ from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
     validate_cluster_names,
     LITELLM_PROVIDER_CASES,
+    SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
+    UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
 )
 from toponymy.tests.helpers.errors import (
     ANTHROPIC_FAIL_FAST,
@@ -87,6 +90,42 @@ class MockAsyncResponse:
                 self.message = Message(content)
 
         return Response(content)
+
+
+# Test callback support in all wrappers
+@pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS)
+def test_supported_async_namers_do_not_warn_on_callback(namer_cls, kwargs):
+    callback = lambda payload: None
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        namer_cls(callback=callback, **kwargs)
+
+    debug_warnings = [w for w in record if "debug callback" in str(w.message)]
+
+    assert len(debug_warnings) == 0
+    assert namer_cls._supports_debug_callback is True
+
+
+@pytest.mark.parametrize("namer_cls, kwargs", UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS)
+def test_unsupported_async_namers_warn_on_callback(namer_cls, kwargs):
+    callback = lambda payload: None
+
+    with pytest.warns(UserWarning, match="debug callback") as record:
+        namer_cls(callback=callback, **kwargs)
+    assert namer_cls._supports_debug_callback is False
+
+
+@pytest.mark.parametrize(
+    "namer_cls, kwargs",
+    SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS + UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
+)
+def test_async_no_warning_when_no_callback(namer_cls, kwargs):
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        namer_cls(callback=None, **kwargs)
+    debug_warnings = [w for w in record if "debug callback" in str(w.message)]
+    assert len(debug_warnings) == 0
 
 
 # AsyncCohere Tests
