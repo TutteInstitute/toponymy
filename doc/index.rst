@@ -57,6 +57,7 @@ and a tour of some of the richer functionality and uses cases.
    clustering_options
    keyphrases
    exemplar_texts
+   topic_summaries
    llm_wrappers
    embedding_wrappers
    cluster_layers

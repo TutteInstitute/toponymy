@@ -2694,7 +2694,9 @@ try:
                 messages=[{"role": "user", "content": prompt + self.extra_prompting}],
                 temperature=temperature,
                 response_format={"type": "json_object"},
-                reasoning_effort="none",
+                extra_body={
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
             )
             result = response.choices[0].message.content
             return result
@@ -2715,6 +2717,9 @@ try:
                 ],
                 temperature=temperature,
                 response_format={"type": "json_object"},
+                extra_body={
+                    "chat_template_kwargs": {"enable_thinking": False},
+                },
             )
             result = response.choices[0].message.content
             return result
