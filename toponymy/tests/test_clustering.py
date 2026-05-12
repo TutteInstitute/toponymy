@@ -6,6 +6,7 @@ from toponymy.clustering import (
     _build_cluster_tree,
     ToponymyClusterer,
     KMeansClusterer,
+    EVoCClusterer,
 )
 from toponymy.cluster_layer import ClusterLayerText
 from sklearn.metrics import adjusted_mutual_info_score
@@ -247,7 +248,6 @@ def test_kmeans_clusterer_class():
     )
 
 
-@pytest.mark.skipif(not HAS_EVOC, reason="evoc package not installed")
 def test_evoc_clusterer_class():
     clusterer = EVoCClusterer(
         min_clusters=4,
