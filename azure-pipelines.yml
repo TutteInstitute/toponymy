@@ -146,7 +146,7 @@ stages:
         - script: |
             python -m pip install --upgrade pip
             python -m pip install -U uv
-            uv sync --python "$(python -c 'import sys; print(sys.executable)')"
+            uv sync --group llama --python "$(python -c 'import sys; print(sys.executable)')"
           displayName: 'Install dependencies'
 
         - script: |
