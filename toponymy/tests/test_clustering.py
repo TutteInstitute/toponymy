@@ -16,14 +16,6 @@ from sklearn.datasets import make_blobs
 from sklearn.metrics import pairwise_distances
 from scipy.optimize import linear_sum_assignment
 
-# Try to import EVoCClusterer - it's only available if evoc is installed
-try:
-    from toponymy.clustering import EVoCClusterer
-
-    HAS_EVOC = True
-except ImportError:
-    HAS_EVOC = False
-
 
 def test_centroids_from_labels():
     for i in range(10):
