@@ -8,7 +8,7 @@ from fast_hdbscan.cluster_trees import (
     get_cluster_label_vector,
 )
 from fast_hdbscan.boruvka import parallel_boruvka
-from fast_hdbscan.numba_kdtree import kdtree_to_numba
+from fast_hdbscan.numba_kdtree import build_kdtree
 from sklearn.neighbors import KDTree
 from typing import List, Tuple, Dict, Type, Any, Optional
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
@@ -101,6 +101,7 @@ def build_raw_cluster_layers(
     next_cluster_size_quantile: float = 0.8,
     max_layers: Optional[int] = None,
     verbose: Optional[bool] = None,
+    n_threads: int = -1,
 ) -> List[np.ndarray]:
     """
     Build hierarchical cluster layers from raw data using a KDTree and Boruvka's algorithm.
@@ -122,6 +123,10 @@ def build_raw_cluster_layers(
         The quantile to determine the next minimum cluster size, by default 0.8.
     max_layers : Optional[int], optional
         The maximum number of layers to create, by default None. If None, no limit is imposed.
+    verbose : Optional[bool], optional
+        Whether to print verbose output, by default None.
+    n_threads : int, optional
+        The number of threads to use for parallel computation, by default -1 (use all available cores).
 
     Returns
     -------
@@ -132,11 +137,13 @@ def build_raw_cluster_layers(
     cluster_layers: List[np.ndarray] = []
     min_cluster_size: np.signedinteger = np.intp(base_min_cluster_size)
 
-    sklearn_tree = KDTree(data)
-    numba_tree = kdtree_to_numba(sklearn_tree)
+    numba_tree = build_kdtree(data.astype(np.float32))
     edges, _, _ = parallel_boruvka(
         numba_tree,
+        n_threads,
         min_samples=min_cluster_size if min_samples is None else min_samples,
+        sample_weights=np.zeros(1, dtype=np.float32),
+        reproducible=False,
     )
     sorted_mst = edges[np.argsort(edges.T[2])]
     uncondensed_tree = mst_to_linkage_tree(sorted_mst)
@@ -274,6 +281,7 @@ def create_cluster_layers(
     max_layers: Optional[int] = None,
     verbose: Optional[bool] = None,
     show_progress_bar: Optional[bool] = None,
+    n_threads: int = -1,
     **layer_kwargs,
 ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
     """
@@ -304,6 +312,8 @@ def create_cluster_layers(
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bar : bool, optional, deprecated
         Deprecated. Use verbose instead.
+    n_threads : int, optional
+        The number of threads to use for parallel computation (default is -1, use all available cores).
     **layer_kwargs : Any
         Any additional keyword arguments to be passed to the layer class.
 
@@ -326,6 +336,7 @@ def create_cluster_layers(
         next_cluster_size_quantile=next_cluster_size_quantile,
         max_layers=max_layers,
         verbose=verbose_val,
+        n_threads=n_threads,
     )
     cluster_tree = build_cluster_tree(cluster_labels)
     layers = [
@@ -391,6 +402,8 @@ class ToponymyClusterer(Clusterer):
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bar : bool, optional, deprecated
         Deprecated. Use verbose instead.
+    n_threads : int, optional
+        The number of threads to use for parallel computation (default is -1, use all available cores).
 
     Attributes
     ----------
@@ -411,6 +424,7 @@ class ToponymyClusterer(Clusterer):
         max_layers: Optional[int] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
+        n_threads: int = -1,
     ):
         super().__init__()
         self.min_clusters = min_clusters
@@ -418,6 +432,7 @@ class ToponymyClusterer(Clusterer):
         self.base_min_cluster_size = base_min_cluster_size
         self.base_n_clusters = base_n_clusters
         self.next_cluster_size_quantile = next_cluster_size_quantile
+        self.n_threads = n_threads
         self.max_layers = max_layers
 
         # Handle verbose parameters
@@ -455,6 +470,7 @@ class ToponymyClusterer(Clusterer):
             max_layers=self.max_layers,
             verbose=verbose if verbose is not None else self.verbose,
             show_progress_bar=show_progress_bar,
+            n_threads=self.n_threads,
             **layer_kwargs,
         )
         return self
@@ -628,14 +644,9 @@ try:
                 noise_level=noise_level,
                 base_min_cluster_size=base_min_cluster_size,
                 base_n_clusters=base_n_clusters,
-                min_num_clusters=min_clusters,
+                approx_n_clusters=min_clusters,
                 n_neighbors=n_neighbors,
                 min_samples=min_samples,
-                next_cluster_size_quantile=next_cluster_size_quantile,
-                n_epochs=n_epochs,
-                node_embedding_init=node_embedding_init,
-                symmetrize_graph=symmetrize_graph,
-                node_embedding_dim=node_embedding_dim,
                 neighbor_scale=neighbor_scale,
             )
 

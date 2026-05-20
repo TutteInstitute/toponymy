@@ -28,7 +28,7 @@ dependencies = [
     "scikit-learn>=1.6",
     "vectorizers",
     "scipy",
-    "fast_hdbscan>=0.2.2",
+    "fast_hdbscan>=0.3.2",
     "dataclasses",
     "tqdm",
     "tenacity",
@@ -68,7 +68,7 @@ dev = [
     "google-generativeai",
     "huggingface-hub<1.0",
     "isort",
-    "llama-cpp-python",
+    "matplotlib",
     "mistralai",
     "numpy>=2.0",
     "ollama",
@@ -89,6 +89,9 @@ dev = [
     "umap-learn",
     "pylance",
     "litellm>=1.82.6",
+]
+llama = [
+    "llama-cpp-python",
 ]
 example-notebooks = [
     "datamapplot>=0.2.2",
