@@ -6324,7 +6324,7 @@ requires-dist = [
     { name = "ipykernel", marker = "extra == 'example-notebooks'", specifier = ">=7.2.0" },
     { name = "isort", marker = "extra == 'dev'" },
     { name = "jupyter", marker = "extra == 'example-notebooks'", specifier = ">=1.1.1" },
-    { name = "litellm", marker = "extra == 'dev'", specifier = ">=1.82.6" },
+    { name = "litellm", marker = "extra == 'dev'", specifier = ">=1.83.10" },
     { name = "llama-cpp-python", marker = "extra == 'llama'" },
     { name = "matplotlib", marker = "extra == 'dev'" },
     { name = "mistralai", marker = "extra == 'dev'" },
