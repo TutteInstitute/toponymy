@@ -29,7 +29,6 @@ dependencies = [
     "vectorizers",
     "scipy",
     "fast_hdbscan>=0.3.2",
-    "dataclasses",
     "tqdm",
     "tenacity",
     "httpx",
