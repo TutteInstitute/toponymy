@@ -42,9 +42,10 @@ def test_diversify_fixed_alpha(alpha):
     )
 
     for i, index in enumerate(retained_indices):
+        # Use small tolerance for floating-point comparison to handle precision differences across Python versions
         assert np.all(
             all_pairs_distances[index, retained_indices[:i]]
-            >= alpha * query_distances[distance_to_query_order][index]
+            >= alpha * query_distances[distance_to_query_order][index] - 1e-10
         )
 
 
@@ -88,9 +89,10 @@ def test_diversify_fixed_alpha_no_jit(alpha):
     )
 
     for i, index in enumerate(retained_indices):
+        # Use small tolerance for floating-point comparison to handle precision differences across Python versions
         assert np.all(
             all_pairs_distances[index, retained_indices[:i]]
-            >= alpha * query_distances[distance_to_query_order][index]
+            >= alpha * query_distances[distance_to_query_order][index] - 1e-10
         )
 
 
