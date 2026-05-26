@@ -33,6 +33,9 @@ dependencies = [
     "tenacity",
     "httpx",
     "apricot-select",
+    "jinja2",
+    "transformers>=4.41.0,<5.0.0", # upper bound transformers for compatibility with sentence-transformers
+    "tokenizers",
 ]
 
 [project.urls]
@@ -84,7 +87,6 @@ dev = [
     "sentence-transformers<=5.1.2",
     "together",
     "traitlets",
-    "transformers>=4.41.0,<5.0.0",
     "umap-learn",
     "pylance",
     "litellm>=1.83.10",
