@@ -234,7 +234,7 @@ try:
 
     class MistralEmbedder:
         def __init__(self, api_key: str, model: str = "mistral-embed"):
-            self.client = mistralai.client.MistralClient(api_key=api_key)
+            self.client = mistralai.client.Mistral(api_key=api_key)
             self.model = model
 
         def encode(
@@ -253,7 +253,7 @@ try:
                 desc="embedding texts",
                 disable=(not show_progress_bar_val),
             ):
-                response = self.client.embeddings(
+                response = self.client.embeddings.create(
                     model=self.model, inputs=texts[i : i + 96]
                 )
                 result.append(np.array([item.embedding for item in response.data]))

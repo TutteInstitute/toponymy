@@ -141,7 +141,7 @@ class TestAzureAIEmbedder:
 
 
 class TestMistralEmbedder:
-    @patch("mistralai.client.MistralClient")
+    @patch("toponymy.embedding_wrappers.mistralai.client.Mistral")
     def test_encode(self, mock_mistral_client):
         # Set up mock response
         mock_client = MagicMock()
@@ -154,7 +154,7 @@ class TestMistralEmbedder:
 
         mock_response = MagicMock()
         mock_response.data = [mock_data_item1, mock_data_item2]
-        mock_client.embeddings.return_value = mock_response
+        mock_client.embeddings.create.return_value = mock_response
 
         # Create the embedder and call encode
         embedder = embedders.MistralEmbedder(api_key="fake_key")
@@ -167,7 +167,7 @@ class TestMistralEmbedder:
         np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
 
         # Verify API was called correctly
-        mock_client.embeddings.assert_called_once_with(
+        mock_client.embeddings.create.assert_called_once_with(
             model="mistral-embed", inputs=texts
         )
 
