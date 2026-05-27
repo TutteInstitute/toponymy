@@ -4397,7 +4397,7 @@ try:
             If False (default), system prompt support is detected automatically and will flatten system prompts
             if unsupported for a given model.
 
-        completion_kwargs : dict[str, Any], optional
+        provider_kwargs : dict[str, Any], optional
             Additional keyword arguments passed directly to `litellm.completion()` /
             `litellm.acompletion()`. This allows callers to use LiteLLM-specific
             features such as provider routing, request timeouts, custom headers,
@@ -4437,7 +4437,7 @@ try:
             llm_specific_instructions=None,
             use_json_object: bool = None,
             disable_system_prompts: bool = False,
-            completion_kwargs: dict[str, Any] | None = None,
+            provider_kwargs: dict[str, Any] | None = None,
             callback: DebugCallback | None = None,
         ):
 
@@ -4453,9 +4453,7 @@ try:
             self._resolved_use_json_object: bool | None = None  # set internally
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
-            self.completion_kwargs = (
-                dict(completion_kwargs) if completion_kwargs else {}
-            )
+            self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
 
             filterwarnings(
                 "ignore",
@@ -4519,13 +4517,13 @@ try:
                 self._resolved_use_json_object = self._detect_json_object_support()
             return self._resolved_use_json_object
 
-        def _completion_kwargs(
+        def _provider_kwargs(
             self,
             messages,
             temperature: float,
             max_tokens: int,
         ) -> dict:
-            kwargs = dict(self.completion_kwargs)
+            kwargs = dict(self.provider_kwargs)
             kwargs.update(
                 {
                     "model": self.model,
@@ -4552,7 +4550,7 @@ try:
             max_tokens: int,
         ) -> str:
             response = litellm.completion(
-                **self._completion_kwargs(
+                **self._provider_kwargs(
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
@@ -4661,7 +4659,7 @@ try:
             If None (default), support is detected automatically by check if response_format is supported
             for the specified model. Set to True to force JSON object mode, or False to
             disable it.
-        completion_kwargs : dict[str, Any], optional
+        provider_kwargs : dict[str, Any], optional
             Additional keyword arguments passed directly to `litellm.completion()` /
             `litellm.acompletion()`. This allows callers to use LiteLLM-specific
             features such as provider routing, request timeouts, custom headers,
@@ -4699,7 +4697,7 @@ try:
             max_concurrent_requests: int = 10,
             use_json_object: bool | None = None,
             disable_system_prompts: bool = False,
-            completion_kwargs: dict[str, Any] | None = None,
+            provider_kwargs: dict[str, Any] | None = None,
             callback: DebugCallback | None = None,
         ):
 
@@ -4717,9 +4715,7 @@ try:
             self._resolved_use_json_object: bool | None = None
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
-            self.completion_kwargs = (
-                dict(completion_kwargs) if completion_kwargs else {}
-            )
+            self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
 
         @property
         def supports_system_prompts(self) -> bool:
@@ -4770,13 +4766,13 @@ try:
                 self._resolved_use_json_object = self._detect_json_object_support()
             return self._resolved_use_json_object
 
-        def _completion_kwargs(
+        def _provider_kwargs(
             self,
             messages,
             temperature: float,
             max_tokens: int,
         ) -> dict:
-            kwargs = dict(self.completion_kwargs)
+            kwargs = dict(self.provider_kwargs)
             kwargs.update(
                 {
                     "model": self.model,
@@ -4805,7 +4801,7 @@ try:
         ) -> str:
             async with self.semaphore:
                 response = await litellm.acompletion(
-                    **self._completion_kwargs(
+                    **self._provider_kwargs(
                         messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
