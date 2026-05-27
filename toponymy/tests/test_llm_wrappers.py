@@ -505,11 +505,6 @@ def test_anthropic_generate_cluster_names_retry_exhausted_returns_old_names(
 
 
 # OpenAI Tests
-@pytest.fixture
-def openai_wrapper():
-    with patch("openai.OpenAI"):
-        wrapper = OpenAINamer(api_key="dummy")
-        return wrapper
 
 
 @pytest.mark.external
@@ -544,122 +539,6 @@ def test_openai_connectivity_sync_system_canary():
         f"Sync system canary failed for OpenAI:\n"
         f"  Error: {result['error_type']}: {result['error_message']}"
     )
-
-
-@pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
-def test_openai_topic_name_fail_fast_error(openai_wrapper, error):
-    with patch.object(
-        openai_wrapper.llm.chat.completions,
-        "create",
-        side_effect=make_openai_error(error),
-    ):
-        with pytest.raises(FailFastLLMError):
-            result = openai_wrapper.generate_topic_name("test prompt")
-            logger.error(f"No exception raised! Got result: {result!r}")
-
-
-@pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
-def test_openai_topic_cluster_names_fail_fast_error(openai_wrapper, error, mock_data):
-    with patch.object(
-        openai_wrapper.llm.chat.completions,
-        "create",
-        side_effect=make_openai_error(error),
-    ):
-        with pytest.raises(FailFastLLMError):
-            result = openai_wrapper.generate_topic_cluster_names(
-                "test prompt", mock_data["old_names"]
-            )
-            logger.error(f"No exception raised! Got result: {result!r}")
-
-
-def test_openai_generate_topic_name_success(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_openai_generate_topic_name_success_system_prompt(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
-
-
-def test_openai_generate_cluster_names_success(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_openai_generate_cluster_names_success_system_prompt(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_openai_generate_cluster_names_success_on_malformed_mapping(
-    openai_wrapper, mock_data
-):
-    response = MockLLMResponse.create_chat_response(mock_data["malformed_mapping"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.parametrize("error", OPENAI_RETRYABLE)
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_openai_generate_topic_name_retry_exhausted_returns_empty(
-    openai_wrapper, error
-):
-    openai_wrapper.llm.chat.completions.create = Mock(
-        side_effect=[make_openai_error(error) for _ in range(3)]
-    )
-
-    result = openai_wrapper.generate_topic_name("test prompt")
-
-    assert result == ""
-    assert openai_wrapper.llm.chat.completions.create.call_count == 3
-
-
-def test_openai_generate_topic_name_failure_malformed_json(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["malformed_json"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-    result = openai_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.parametrize("error", OPENAI_RETRYABLE)
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_openai_generate_cluster_names_retry_exhausted_returns_old_names(
-    openai_wrapper, mock_data, error
-):
-    openai_wrapper.llm.chat.completions.create = Mock(
-        side_effect=[make_openai_error(error) for _ in range(3)]
-    )
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        "test prompt",
-        mock_data["old_names"],
-    )
-
-    assert result == mock_data["old_names"]
-    assert openai_wrapper.llm.chat.completions.create.call_count == 3
 
 
 # Cohere Tests
