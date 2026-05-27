@@ -140,12 +140,12 @@ def test_supported_namers_do_not_warn_on_callback(namer_cls, kwargs):
 
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter("always")
-        namer_cls(callback=callback, **kwargs)
+        namer = namer_cls(callback=callback, **kwargs)
 
     debug_warnings = [w for w in record if "debug callback" in str(w.message)]
 
     assert len(debug_warnings) == 0
-    assert namer_cls._supports_debug_callback is True
+    assert namer._supports_debug_callback is True
 
 
 @pytest.mark.parametrize("namer_cls, kwargs", UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
@@ -153,8 +153,8 @@ def test_unsupported_namers_warn_on_callback(namer_cls, kwargs):
     callback = lambda payload: None
 
     with pytest.warns(UserWarning, match="debug callback") as record:
-        namer_cls(callback=callback, **kwargs)
-    assert namer_cls._supports_debug_callback is False
+        namer = namer_cls(callback=callback, **kwargs)
+    assert namer._supports_debug_callback is False
 
 
 @pytest.mark.parametrize(

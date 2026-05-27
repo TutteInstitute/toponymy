@@ -1,3 +1,6 @@
+## This is a temporary file for checking that the old tests still work (once updated appropriately)
+## This can be deleted once we check it works and the coverage matches
+
 import warnings
 
 import pytest
