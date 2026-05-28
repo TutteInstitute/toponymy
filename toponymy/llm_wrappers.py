@@ -1138,9 +1138,13 @@ class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
 ####
 
 
-# Model String Helpers
+# Model String Helpers to convert to LiteLLM-style
 def _openai_model(model: str) -> str:
     return f"openai/{model}" if "/" not in model else model
+
+
+def _anthropic_model(model: str) -> str:
+    return f"anthropic/{model}" if "/" not in model else model
 
 
 try:
@@ -1668,6 +1672,159 @@ except Exception as e:
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
+
+
+def AnthropicNamer(
+    model: str = "claude-haiku-4-5-20251001",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for Anthropic with convenient defaults for
+    topic naming. For more flexibility, use LiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — AnthropicNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Anthropic model to use. Default is "claude-haiku-4-5-20251001".
+        May be in LiteLLM format ("anthropic/claude-haiku-4-5-20251001")
+    api_key : str, optional
+        Anthropic API key. Falls back to the ANTHROPIC_API_KEY environment variable.
+    api_base : str, optional
+        Override the Anthropic API endpoint. Useful for proxies or Anthropic-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the ANTHROPIC_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AnthropicNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AnthropicNamer(model="claude-3-5-20251001", api_key="my-api-key")
+
+    Using an Anthropic-compatible local server::
+
+        namer = AnthropicNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    return LiteLLMNamer(
+        model=_anthropic_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncAnthropicNamer(
+    model: str = "claude-haiku-4-5-20251001",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for Anthropic with convenient defaults.
+    For more flexibility, use AsyncLiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — AnthropicNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Anthropic model to use. Default is "claude-haiku-4-5-20251001". Must be in LiteLLM format ("anthropic/claude-haiku-4-5-20251001")
+        or bare Anthropic format ("claude-haiku-4-5-20251001") — both are accepted.
+    api_key : str, optional
+        Anthropic API key. Falls back to the ANTHROPIC_API_KEY environment variable.
+    api_base : str, optional
+        Override the Anthropic API endpoint. Useful for proxies or Anthropic-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the ANTHROPIC_API_BASE environment variable.
+        Default is the standard Anthropic endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncAnthropicNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncAnthropicNamer(model="claude-3-5-20251001", api_key="my-api-key")
+
+    Using an Anthropic-compatible local server::
+
+        namer = AsyncAnthropicNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    return AsyncLiteLLMNamer(
+        model=_anthropic_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
 
 try:
@@ -2668,221 +2825,6 @@ except:
 try:
     import anthropic
     import time
-    from anthropic import (
-        AuthenticationError as AnthropicAuthenticationError,
-        PermissionDeniedError as AnthropicPermissionDeniedError,
-        BadRequestError as AnthropicBadRequestError,
-        NotFoundError as AnthropicNotFoundError,
-    )
-
-    class AnthropicNamer(LLMWrapper):
-        """
-        Provides access to Anthropic's LLMs with the Toponymy framework. For more information on Anthropic, see
-        https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
-        The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
-        more than sufficient for generating topic names and clusters. You can use more advanced
-        models, but they have diminishing returns for this task, and are more expensive.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
-            in the Anthropic API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        Attributes:
-        -----------
-
-        llm: anthropic.Anthropic
-            The Anthropic LLM client instance.
-
-        model: str
-            The name of the Anthropic model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
-
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncAnthropic wrapper instead.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AnthropicAuthenticationError,
-            AnthropicPermissionDeniedError,
-            AnthropicBadRequestError,
-            AnthropicNotFoundError,
-        )
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "claude-haiku-4-5-20251001",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Anthropic API key is required. Set it as an environment variable ANTHROPIC_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = anthropic.Anthropic(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-            )
-            result = response.content[0].text
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-            )
-            result = response.content[0].text
-            return result
-
-    class AsyncAnthropicNamer(AsyncLLMWrapper):
-        """
-        Provides access to Anthropic's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Anthropic, see https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
-        The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
-        more than sufficient for generating topic names and clusters. You can use more advanced models, but they have diminishing returns for this task,
-        and are more expensive.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
-
-        Parameters:
-        -----------
-
-        api_key: str
-            Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
-            in the Anthropic API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
-
-        Attributes:
-        -----------
-        llm: anthropic.AsyncAnthropic
-            The Anthropic asynchronous LLM client instance.
-
-        model: str
-            The name of the Anthropic model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AnthropicAuthenticationError,
-            AnthropicPermissionDeniedError,
-            AnthropicBadRequestError,
-            AnthropicNotFoundError,
-        )
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "claude-haiku-4-5-20251001",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-
-            api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Anthropic API key is required. Set it as an environment variable ANTHROPIC_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = anthropic.AsyncAnthropic(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            async with self.semaphore:
-                response = await self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": prompt + self.extra_prompting}
-                    ],
-                    temperature=temperature,
-                )
-                return response.content[0].text
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            async with self.semaphore:
-                response = await self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
-                    messages=[
-                        {"role": "user", "content": user_prompt + self.extra_prompting},
-                    ],
-                    temperature=temperature,
-                )
-                return response.content[0].text
 
     class BatchAnthropicNamer(AsyncLLMWrapper):
         """
@@ -3241,14 +3183,14 @@ def OpenAINamer(
     LiteLLMNamer : The underlying namer, supports 100+ providers directly.
     """
     if base_url is not None:
-        warnings.warn(
+        warn(
             "base_url is deprecated, use api_base instead.",
             FutureWarning,
             stacklevel=2,
         )
     api_base = api_base or base_url
     if http_client is not None:
-        warnings.warn(
+        warn(
             "http_client is deprecated. "
             "Pass via provider_kwargs={'http_client': http_client} instead.",
             FutureWarning,
@@ -3346,14 +3288,14 @@ def AsyncOpenAINamer(
     AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
     """
     if base_url is not None:
-        warnings.warn(
+        warn(
             "base_url is deprecated, use api_base instead.",
             FutureWarning,
             stacklevel=2,
         )
     api_base = api_base or base_url
     if organization is not None:
-        warnings.warn(
+        warn(
             "organization is deprecated. "
             "Pass via provider_kwargs={'organization': organization} instead.",
             FutureWarning,

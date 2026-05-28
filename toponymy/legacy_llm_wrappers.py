@@ -9,6 +9,15 @@ from openai import (
     UnprocessableEntityError,
 )
 
+import anthropic
+import time
+from anthropic import (
+    AuthenticationError as AnthropicAuthenticationError,
+    PermissionDeniedError as AnthropicPermissionDeniedError,
+    BadRequestError as AnthropicBadRequestError,
+    NotFoundError as AnthropicNotFoundError,
+)
+
 
 class OpenAINamerLegacy(LLMWrapper):
     """
@@ -250,3 +259,215 @@ class AsyncOpenAINamerLegacy(AsyncLLMWrapper):
     async def close(self):
         """Close the client connection."""
         await self.client.close()
+
+
+## Anthropic Namers
+
+
+class AnthropicNamerLegacy(LLMWrapper):
+    """
+    Provides access to Anthropic's LLMs with the Toponymy framework. For more information on Anthropic, see
+    https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
+    The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
+    more than sufficient for generating topic names and clusters. You can use more advanced
+    models, but they have diminishing returns for this task, and are more expensive.
+
+    Parameters:
+    -----------
+    api_key: str
+        Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
+
+    model: str, optional
+        The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
+        in the Anthropic API, but this is a good balance of performance and cost.
+
+    llm_specific_instructions: str, optional
+        Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+
+    Attributes:
+    -----------
+
+    llm: anthropic.Anthropic
+        The Anthropic LLM client instance.
+
+    model: str
+        The name of the Anthropic model being used.
+
+    extra_prompting: str
+        Additional instructions specific to the LLM, appended to the prompt.
+
+    supports_system_prompts: bool
+        Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
+
+    Note:
+    -----
+    This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
+    consider using the AsyncAnthropic wrapper instead.
+    """
+
+    FAIL_FAST_EXCEPTIONS = (
+        AnthropicAuthenticationError,
+        AnthropicPermissionDeniedError,
+        AnthropicBadRequestError,
+        AnthropicNotFoundError,
+    )
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-haiku-4-5-20251001",
+        llm_specific_instructions=None,
+        callback: DebugCallback | None = None,
+    ):
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Anthropic API key is required. Set it as an environment variable ANTHROPIC_API_KEY or pass it directly to the constructor."
+            )
+
+        self.llm = anthropic.Anthropic(api_key=api_key)
+        self.model = model
+        self.callback = callback
+        self._warn_if_debug_callback_unsupported()
+        self.extra_prompting = (
+            "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+        )
+
+    def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        response = self.llm.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+            temperature=temperature,
+        )
+        result = response.content[0].text
+        return result
+
+    def _call_llm_with_system_prompt(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        response = self.llm.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt + self.extra_prompting},
+            ],
+            temperature=temperature,
+        )
+        result = response.content[0].text
+        return result
+
+
+class AsyncAnthropicNamerLegacy(AsyncLLMWrapper):
+    """
+    Provides access to Anthropic's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+    For more information on Anthropic, see https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
+    The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
+    more than sufficient for generating topic names and clusters. You can use more advanced models, but they have diminishing returns for this task,
+    and are more expensive.
+
+    As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
+    however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
+
+    Parameters:
+    -----------
+
+    api_key: str
+        Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
+
+    model: str, optional
+        The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
+        in the Anthropic API, but this is a good balance of performance and cost.
+
+    llm_specific_instructions: str, optional
+        Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
+
+    Attributes:
+    -----------
+    llm: anthropic.AsyncAnthropic
+        The Anthropic asynchronous LLM client instance.
+
+    model: str
+        The name of the Anthropic model being used.
+
+    extra_prompting: str
+        Additional instructions specific to the LLM, appended to the prompt.
+
+    supports_system_prompts: bool
+        Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
+    """
+
+    FAIL_FAST_EXCEPTIONS = (
+        AnthropicAuthenticationError,
+        AnthropicPermissionDeniedError,
+        AnthropicBadRequestError,
+        AnthropicNotFoundError,
+    )
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-haiku-4-5-20251001",
+        llm_specific_instructions=None,
+        max_concurrent_requests: int = 10,
+        callback: DebugCallback | None = None,
+    ):
+
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Anthropic API key is required. Set it as an environment variable ANTHROPIC_API_KEY or pass it directly to the constructor."
+            )
+
+        self.client = anthropic.AsyncAnthropic(api_key=api_key)
+        self.model = model
+        self.callback = callback
+        self._warn_if_debug_callback_unsupported()
+        self.extra_prompting = (
+            "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+        )
+        self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+    async def _call_single_llm(
+        self, prompt: str, temperature: float, max_tokens: int
+    ) -> str:
+        """Call the LLM for a single prompt."""
+        async with self.semaphore:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+                temperature=temperature,
+            )
+            return response.content[0].text
+
+    async def _call_single_llm_with_system(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> str:
+        """Call the LLM for a single prompt with system prompt."""
+        async with self.semaphore:
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ],
+                temperature=temperature,
+            )
+            return response.content[0].text
