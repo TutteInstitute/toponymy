@@ -3164,369 +3164,214 @@ except:
             super().__init__(*args, **kwds)
 
 
-try:
-    import openai
-    from openai import (
-        AuthenticationError,
-        PermissionDeniedError,
-        BadRequestError,
-        NotFoundError,
-        UnprocessableEntityError,
+## OpenAI Convenience Wrappers
+
+
+def OpenAINamer(
+    model: str = "openai/gpt-4o-mini",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str | None = None,  # deprecated, renamed to api_base
+    http_client: "httpx.Client | None" = None,  # deprecated, pass via provider_kwargs instead
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for OpenAI.
+
+    All namers share the same interface once constructed — OpenAINamer is a
+    convenience entry point, not a special case. For more information on OpenAI, see https://platform.openai.com/docs/models/overview.
+
+    Parameters
+    ----------
+    model : str, optional
+        OpenAI model to use. Default is "gpt-4o-mini", a good balance of
+        quality and cost for topic naming. You can use more advanced models, but they have diminishing returns
+        for this task, and are more expensive. Must be in LiteLLM format ("openai/gpt-4o-mini")
+        or bare OpenAI format ("gpt-4o-mini") — both are accepted.
+    api_key : str, optional
+        OpenAI API key. Falls back to the OPENAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the OpenAI API endpoint. Useful for proxies or OpenAI-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the OPENAI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    use_json_object : bool, optional
+        Request JSON object output via response_format. If None (default),
+        support is detected automatically for the selected model. Set to False
+        to disable if your model doesn't support it.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    http_client : optional
+        Deprecated. Pass via ``provider_kwargs={'http_client': <client>}`` instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = OpenAINamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = OpenAINamer(model="gpt-4o", api_key="my-api-key")
+
+    Using an OpenAI-compatible local server::
+
+        namer = OpenAINamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if base_url is not None:
+        warnings.warn(
+            "base_url is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or base_url
+    if http_client is not None:
+        warnings.warn(
+            "http_client is deprecated. "
+            "Pass via provider_kwargs={'http_client': http_client} instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["http_client"] = http_client
+    return LiteLLMNamer(
+        model=_openai_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
     )
 
-    class OpenAINamerLegacy(LLMWrapper):
-        """
-        Provides access to OpenAI's LLMs with the Toponymy framework. For more information on OpenAI, see
-        https://platform.openai.com/docs/models/overview. You will need an OpenAI API key to use this wrapper.
-        The default model is "gpt-4o-mini", which is a sufficiently powerful model for generating topic names and clusters,
-        but inexpensive in terms of dollars per token. You can use more advanced models, but they have diminishing returns
-        for this task, and are more expensive.
 
-        Parameters:
-        -----------
+def AsyncOpenAINamer(
+    model: str = "openai/gpt-4o-mini",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str | None = None,  # deprecated, renamed to api_base
+    organization: str | None = None,  # deprecated, pass via provider_kwargs instead
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for OpenAI.
 
-        api_key: str
-            Your OpenAI API key. You can set this as an environment variable OPENAI_API_KEY or pass it directly
+    All namers share the same interface once constructed — OpenAINamer is a
+    convenience entry point, not a special case. For more information on OpenAI, see https://platform.openai.com/docs/models/overview.
 
-        model: str, optional
-            The name of the OpenAI model to use. Default is "gpt-4o-mini". You can use any model available
-            in the OpenAI API, but this is a good balance of performance and cost.
+    Parameters
+    ----------
+    model : str, optional
+        OpenAI model to use. Default is "gpt-4o-mini", a good balance of
+        quality and cost for topic naming. You can use more advanced models, but they have diminishing returns
+        for this task, and are more expensive. Must be in LiteLLM format ("openai/gpt-4o-mini")
+        or bare OpenAI format ("gpt-4o-mini") — both are accepted.
+    api_key : str, optional
+        OpenAI API key. Falls back to the OPENAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the OpenAI API endpoint. Useful for proxies or OpenAI-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the OPENAI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    use_json_object : bool, optional
+        Request JSON object output via response_format. If None (default),
+        support is detected automatically for the selected model. Set to False
+        to disable if your model doesn't support it.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the OpenAI API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    organization : str, optional
+        Deprecated. Pass via ``provider_kwargs={'organization': organization}`` instead.
 
-        base_url: str, optional
-            The base URL for the OpenAI API. Default is None, which uses the default OpenAI endpoint.
-            You can set this as an environment variable OPENAI_API_BASE to use a different endpoint, such as
-            a hosted model supporting the openAI API.
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
+    Examples
+    --------
+    Basic usage::
 
-        Attributes:
-        -----------
-        llm: openai.OpenAI
-            The OpenAI LLM client instance.
+        namer = AsyncOpenAINamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        model: str
-            The name of the OpenAI model being used.
+    Using a different model::
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+        namer = AsyncOpenAINamer(model="gpt-4o", api_key="my-api-key")
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
+    Using an OpenAI-compatible local server::
 
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncOpenAI wrapper instead.
-        """
+        namer = AsyncOpenAINamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
 
-        FAIL_FAST_EXCEPTIONS = (
-            AuthenticationError,
-            PermissionDeniedError,
-            BadRequestError,
-            NotFoundError,
-            UnprocessableEntityError,
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if base_url is not None:
+        warnings.warn(
+            "base_url is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-        _supports_debug_callback = True
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gpt-4o-mini",
-            base_url: str = None,
-            http_client: "httpx.Client | None" = None,
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "OpenAI API key is required. Set it as an environment variable OPENAI_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = openai.OpenAI(
-                api_key=api_key, base_url=base_url, http_client=http_client
-            )
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            result = response.choices[0].message.content
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            result = response.choices[0].message.content
-            return result
-
-    def OpenAINamer(
-        model: str = "openai/gpt-4o-mini",
-        api_key: str | None = None,
-        api_base: str | None = None,
-        llm_specific_instructions: str | None = None,
-        provider_kwargs: dict[str, Any] | None = None,
-        callback: DebugCallback | None = None,
-        base_url: str | None = None,  # deprecated, renamed to api_base
-        http_client: "httpx.Client | None" = None,  # deprecated, pass via provider_kwargs instead
-    ) -> LiteLLMNamer:
-        """
-        Create a LiteLLMNamer configured for OpenAI.
-
-        All namers share the same interface once constructed — OpenAINamer is a
-        convenience entry point, not a special case. For more information on OpenAI, see https://platform.openai.com/docs/models/overview.
-
-        Parameters
-        ----------
-        model : str, optional
-            OpenAI model to use. Default is "gpt-4o-mini", a good balance of
-            quality and cost for topic naming. You can use more advanced models, but they have diminishing returns
-            for this task, and are more expensive. Must be in LiteLLM format ("openai/gpt-4o-mini")
-            or bare OpenAI format ("gpt-4o-mini") — both are accepted.
-        api_key : str, optional
-            OpenAI API key. Falls back to the OPENAI_API_KEY environment variable.
-        api_base : str, optional
-            Override the OpenAI API endpoint. Useful for proxies or OpenAI-compatible
-            local servers (e.g. vLLM, LM Studio). Can use the OPENAI_API_BASE environment variable.
-            Default is the standard OpenAI endpoint.
-        use_json_object : bool, optional
-            Request JSON object output via response_format. If None (default),
-            support is detected automatically for the selected model. Set to False
-            to disable if your model doesn't support it.
-        llm_specific_instructions : str, optional
-            Additional instructions appended to every prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-        provider_kwargs : dict, optional
-            Additional keyword arguments passed directly to the LiteLLM completion
-            call. Use for provider-specific features not covered by the parameters
-            above, e.g. ``{"timeout": 30}``.
-        callback : DebugCallback, optional
-            Optional callback function for observability. Called on each LLM
-            request and response with a structured payload. Useful for logging,
-            debugging, or recording prompts and responses to a file.
-        base_url : str, optional
-            Deprecated. Use ``api_base`` instead.
-        http_client : optional
-            Deprecated. Pass via ``provider_kwargs={'http_client': <client>}`` instead.
-
-        Returns
-        -------
-        LiteLLMNamer
-            A fully configured namer ready for use with Toponymy.
-
-        Examples
-        --------
-        Basic usage::
-
-            namer = OpenAINamer(api_key="my-api-key")
-            toponymy = Toponymy(embedding_model=..., llm_namer=namer)
-
-        Using a different model::
-
-            namer = OpenAINamer(model="gpt-4o", api_key="my-api-key")
-
-        Using an OpenAI-compatible local server::
-
-            namer = OpenAINamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
-
-        See Also
-        --------
-        LiteLLMNamer : The underlying namer, supports 100+ providers directly.
-        """
-        if base_url is not None:
-            warnings.warn(
-                "base_url is deprecated, use api_base instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-        api_base = api_base or base_url
-        if http_client is not None:
-            warnings.warn(
-                "http_client is deprecated. "
-                "Pass via provider_kwargs={'http_client': http_client} instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            provider_kwargs = provider_kwargs or {}
-            provider_kwargs["http_client"] = http_client
-        return LiteLLMNamer(
-            model=_openai_model(model),
-            api_key=api_key,
-            api_base=api_base,
-            use_json_object=True,
-            llm_specific_instructions=llm_specific_instructions,
-            provider_kwargs=provider_kwargs,
-            callback=callback,
+    api_base = api_base or base_url
+    if organization is not None:
+        warnings.warn(
+            "organization is deprecated. "
+            "Pass via provider_kwargs={'organization': organization} instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-
-    class AsyncOpenAINamer(AsyncLLMWrapper):
-        """
-        Provides access to OpenAI's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on OpenAI, see https://platform.openai.com/docs/models/overview. You will need an OpenAI API key to use this wrapper.
-        The default model is "gpt-4o-mini", which is a sufficiently powerful model for generating topic names and clusters,
-        but inexpensive in terms of dollars per token. You can use more advanced models, but they have diminishing returns for this task,
-        and are more expensive.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
-
-        Parameters:
-        -----------
-
-        api_key: str
-            Your OpenAI API key. You can set this as an environment variable OPENAI_API_KEY or pass it directly
-
-        model: str, optional
-            The name of the OpenAI model to use. Default is "gpt-4o-mini". You can use any model available
-            in the OpenAI API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the OpenAI API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
-
-        organization: str, optional
-            The OpenAI organization ID to use for the API requests. If not provided, the default organization will be used.
-
-        base_url: str, optional
-            The base URL for the OpenAI API. Default is None, which uses the default OpenAI endpoint.
-            You can set this as an environment variable OPENAI_API_BASE to use a different endpoint, such as
-            a hosted model supporting the openAI API.
-
-        Attributes:
-        -----------
-
-        client: openai.AsyncOpenAI
-            The OpenAI asynchronous LLM client instance.
-
-        model: str
-            The name of the OpenAI model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AuthenticationError,
-            PermissionDeniedError,
-            BadRequestError,
-            NotFoundError,
-            UnprocessableEntityError,
-        )
-        _supports_debug_callback = True
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gpt-4o-mini",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            organization: str = None,
-            base_url: str = None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "OpenAI API key is required. Set it as an environment variable OPENAI_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = openai.AsyncOpenAI(api_key=api_key, organization=organization)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            async with self.semaphore:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "user", "content": prompt + self.extra_prompting},
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                )
-            return response.choices[0].message.content
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            async with self.semaphore:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": user_prompt + self.extra_prompting,
-                        },
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                )
-                return response.choices[0].message.content
-
-        async def close(self):
-            """Close the client connection."""
-            await self.client.close()
-
-except:
-
-    class OpenAINamer(FailedImportLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncOpenAINamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["organization"] = organization
+    return AsyncLiteLLMNamer(
+        model=_openai_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
 
 try:
