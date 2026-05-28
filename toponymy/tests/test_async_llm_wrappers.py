@@ -1051,13 +1051,13 @@ async def test_async_together_batch_processing(async_together_wrapper, mock_data
 
 # Test for AsyncLLMWrapper base class error cases
 @pytest.mark.asyncio
-async def test_async_wrapper_invalid_input(async_openai_wrapper):
+async def test_async_wrapper_invalid_input(async_litellm_wrapper):
     """Test handling of invalid input types."""
     with pytest.raises(ValueError):
-        await async_openai_wrapper.generate_topic_names([123])  # Not a string or dict
+        await async_litellm_wrapper.generate_topic_names([123])  # Not a string or dict
 
     with pytest.raises(ValueError):
-        await async_openai_wrapper.generate_topic_cluster_names(
+        await async_litellm_wrapper.generate_topic_cluster_names(
             ["prompt1", "prompt2"], [["name1", "name2"]]
         )  # Mismatched lengths
 
