@@ -108,9 +108,10 @@ LITELLM_PROVIDER_CASES = [
 ]
 
 SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
-    (AnthropicNamer, {"api_key": "dummy"}),
+    (AnthropicNamer, {}),
     (LiteLLMNamer, {}),
-    (OpenAINamer, {"api_key": "dummy"}),
+    (OpenAINamer, {}),
+    (CohereNamer, {}),
 ]
 UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
     (HuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
@@ -121,17 +122,16 @@ UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
     # exclude namers needing mocking to get around setup
     # (OllamaNamer, {}),
     # (VLLMNamer, {}),
-    # (CohereNamer, {"api_key": "dummy"}),
     # (LlamaCppNamer, {"model_path": "dummy/path/to/model.gguf"}),
 ]
 SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS = [
-    (AsyncAnthropicNamer, {"api_key": "dummy"}),
+    (AsyncAnthropicNamer, {}),
     (AsyncLiteLLMNamer, {}),
-    (AsyncOpenAINamer, {"api_key": "dummy"}),
+    (AsyncOpenAINamer, {}),
+    (AsyncCohereNamer, {}),
 ]
 UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS = [
     (AsyncHuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
-    (AsyncCohereNamer, {"api_key": "dummy"}),
     (CohereBatchNamer, {"api_key": "dummy"}),
     (BatchAnthropicNamer, {"api_key": "dummy"}),
     (AsyncTogether, {"api_key": "dummy"}),

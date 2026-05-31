@@ -1147,6 +1147,10 @@ def _anthropic_model(model: str) -> str:
     return f"anthropic/{model}" if "/" not in model else model
 
 
+def _cohere_model(model: str) -> str:
+    return f"cohere/{model}" if "/" not in model else model
+
+
 try:
     import litellm
     from litellm.exceptions import (
@@ -1827,6 +1831,247 @@ def AsyncAnthropicNamer(
     )
 
 
+def _resolve_cohere_api_key(api_key: str | None) -> str | None:
+    """Helper function to migrate from the old CO_API_KEY environment variable to the new COHERE_API_KEY, while still allowing explicit API keys to take precedence."""
+    if api_key is not None:
+        return api_key
+
+    new_key = os.getenv("COHERE_API_KEY")
+    legacy_key = os.getenv("CO_API_KEY")
+
+    if new_key:
+        return new_key
+
+    if legacy_key:
+        warn(
+            "CO_API_KEY is deprecated and will be removed before 1.0. "
+            "Please rename it to COHERE_API_KEY.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_key
+
+    return None
+
+
+def _resolve_api_base(
+    api_base: str | None,
+    base_url: str | None,
+    env_new: str = "COHERE_API_BASE",
+    env_legacy: str = "CO_API_URL",
+) -> str | None:
+    """Helper function for migrating previous base_url defaults"""
+
+    if api_base is not None:
+        return api_base
+
+    if base_url is not None:
+        warn(
+            "base_url is deprecated. Use api_base instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return base_url
+
+    new_val = os.getenv(env_new)
+    if new_val:
+        return new_val
+
+    legacy_val = os.getenv(env_legacy)
+    if legacy_val:
+        warn(
+            f"{env_legacy} is deprecated. Use {env_new} instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_val
+
+    return None
+
+
+def CohereNamer(
+    model: str = "command-r-08-2024",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str | None = None,  # deprecated, renamed to api_base
+    httpx_client: Optional[httpx.Client] = None,  # deprecated
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for Cohere with convenient defaults for
+    topic naming. For more flexibility, use LiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — CohereNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Cohere model to use. Default is "command-r-08-2024".
+        May be in LiteLLM format ("cohere/command-r-08-2024")
+    api_key : str, optional
+        Cohere API key. Falls back to the COHERE_API_KEY environment variable.
+    api_base : str, optional
+        Override the Cohere API endpoint. Useful for proxies or Cohere-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the COHERE_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    httpx_client : optional
+        Deprecated. Pass via ``provider_kwargs={'httpx_client': <client>}`` instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = CohereNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = CohereNamer(model="command-r-08-2024", api_key="my-api-key")
+
+    Using a Cohere-compatible local server::
+
+        namer = CohereNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if httpx_client is not None:
+        warn(
+            "httpx_client is deprecated. "
+            "Pass via provider_kwargs={'httpx_client': httpx_client} instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["httpx_client"] = httpx_client
+    return LiteLLMNamer(
+        model=_cohere_model(model),
+        api_key=_resolve_cohere_api_key(api_key),
+        api_base=_resolve_api_base(api_base, base_url),
+        use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncCohereNamer(
+    model: str = "command-r-08-2024",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str = None,
+    httpx_client: Optional[httpx.Client] = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for Cohere with convenient defaults.
+    For more flexibility, use AsyncLiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — CohereNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Cohere model to use. Default is "command-r-08-2024". Must be in LiteLLM format ("cohere/command-r-08-2024")
+        or bare Cohere format ("command-r-08-2024") — both are accepted.
+    api_key : str, optional
+        Cohere API key. Falls back to the COHERE_API_KEY environment variable.
+    api_base : str, optional
+        Override the Cohere API endpoint. Useful for proxies or Cohere-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the COHERE_API_BASE environment variable.
+        Default is the standard Cohere endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Cohere API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Cohere API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    httpx_client : optional
+        Deprecated. Pass via ``provider_kwargs={'httpx_client': <client>}`` instead.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncCohereNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncCohereNamer(model="command-r-08-2024", api_key="my-api-key")
+
+    Using a Cohere-compatible local server::
+
+        namer = AsyncCohereNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if httpx_client is not None:
+        warn(
+            "httpx_client is deprecated. "
+            "Pass via provider_kwargs={'httpx_client': httpx_client} instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["httpx_client"] = httpx_client
+    return AsyncLiteLLMNamer(
+        model=_cohere_model(model),
+        api_key=_resolve_cohere_api_key(api_key),
+        api_base=_resolve_api_base(api_base, base_url),
+        disable_system_prompts=False,
+        use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
 try:
     import llama_cpp
 
@@ -2270,282 +2515,6 @@ except ImportError:
 
 try:
     import cohere
-
-    class CohereNamer(LLMWrapper):
-        """
-        Provides access to Cohere's LLMs with the Toponymy framework. For more information on Cohere, see
-        https://docs.cohere.com/docs/llm-overview. You will need a Cohere API key to use this wrapper. The
-        default model is "command-r-08-2024", which is a sufficiently powerful to do a good job of generating
-        topic names and clusters, but inexpensive in terms of dollars per token. You can use more advanced
-        models, but they have diminishing returns for this task, and are more expensive.
-
-        Parameters:
-        -----------
-
-        api_key: str
-            Your Cohere API key. You can set this as an environment variable CO_API_KEY or pass it directly
-
-        model: str, optional
-            The name of the Cohere model to use. Default is "command-r-08-2024". You can use any model available
-            in the Cohere API, but this is a good balance of performance and cost.
-
-        base_url: str, optional
-            The base URL for the Cohere API. Default is "https://api.cohere.com". You can set this as an environment
-            variable CO_API_URL to use a different endpoint, such as for Cohere's private cloud.
-
-        httpx_client: httpx.Client, optional
-            An optional httpx client to use for making requests. If not provided, a default client will be created.
-            This can be useful when using Cohere's private cloud or when you need to customize the HTTP client settings.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-
-        llm: cohere.ClientV2
-            The Cohere LLM client instance.
-
-        model: str
-            The name of the Cohere model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Cohere, this is always True.
-
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncCohere wrapper instead.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "command-r-08-2024",
-            base_url: str = None,
-            httpx_client: Optional[httpx.Client] = None,
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            if base_url is None:
-                base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
-
-            api_key = api_key or os.getenv("CO_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Cohere API key is required. Set it as an environment variable CO_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = cohere.ClientV2(
-                api_key=api_key, base_url=base_url, httpx_client=httpx_client
-            )
-
-            try:
-                self.llm.models.get(model)
-            except cohere.errors.not_found_error.NotFoundError:
-                models = [x.name for x in self.llm.models.list().models]
-                msg = f"Model '{model}' not found, try one of {models}"
-                raise ValueError(msg)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.chat(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                # This results in failures more often than useful output
-                # response_format={"type": "json_object"},
-            )
-            result = response.message.content[0].text
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.chat(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                # This results in failures more often than useful output
-                # response_format={"type": "json_object"},
-            )
-            result = response.message.content[0].text
-            return result
-
-    class AsyncCohereNamer(AsyncLLMWrapper):
-        """
-        Provides access to Cohere's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Cohere, see https://docs.cohere.com/docs/llm-overview. You will need a Cohere API key to use this wrapper.
-        The default model is "command-r-08-2024", which is a sufficiently powerful model for generating topic names and clusters,
-        but inexpensive in terms of dollars per token. You can use more advanced models, but they have diminishing returns for this task,
-        and are more expensive.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particlarly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls."
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Cohere API key. You can set this as an environment variable CO_API_KEY or pass it directly
-
-        model: str, optional
-            The name of the Cohere model to use. Default is "command-r-08-2024". You can use any model available
-            in the Cohere API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Cohere API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the Cohere API. Higher values may improve throughput but could lead to rate limiting.
-
-        base_url: str, optional
-            The base URL for the Cohere API. Default is "https://api.cohere.com". You can set this as an environment
-            variable CO_API_URL to use a different endpoint, such as for Cohere's private cloud.
-
-        httpx_client: httpx.Client, optional
-            An optional httpx client to use for making requests. If not provided, a default client will be created.
-
-        Attributes:
-        -----------
-        llm: cohere.AsyncClientV2
-            The Cohere asynchronous LLM client instance.
-
-        model: str
-            The name of the Cohere model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Cohere, this is always True.
-
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "command-r-08-2024",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            base_url: str = None,
-            httpx_client: Optional[httpx.Client] = None,
-            callback: DebugCallback | None = None,
-        ):
-            if base_url is None:
-                base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
-
-            api_key = api_key or os.getenv("CO_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Cohere API key is required. Set it as an environment variable CO_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = cohere.AsyncClientV2(
-                api_key=api_key, base_url=base_url, httpx_client=httpx_client
-            )
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.llm.chat(
-                        model=self.model,
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.message.content[0].text
-            except Exception as e:
-                warn(f"Cohere API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.llm.chat(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.message.content[0].text
-            except Exception as e:
-                warn(f"Cohere API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
 
     class CohereBatchNamer(FailedImportAsyncLLMWrapper):
         """
@@ -3089,16 +3058,6 @@ try:
             self.client.beta.messages.batches.cancel(batch_id)
 
 except:
-
-    class AnthropicNamer(FailedImportLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncAnthropicNamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
 
     class BatchAnthropicNamer(FailedImportAsyncLLMWrapper):
 

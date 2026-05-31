@@ -129,122 +129,6 @@ def test_async_no_warning_when_no_callback(namer_cls, kwargs):
 
 
 # AsyncCohere Tests
-@pytest_asyncio.fixture
-async def async_cohere_wrapper():
-    with patch("cohere.AsyncClientV2"):
-        wrapper = AsyncCohereNamer(api_key="dummy")
-        yield wrapper
-        # Clean up any resources
-        try:
-            await wrapper.close()
-        except:
-            pass
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_names_success(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(mock_data["valid_topic_name"])
-    async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
-
-    result = await async_cohere_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    validate_topic_name(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_names_system_prompt(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(mock_data["valid_topic_name"])
-    async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
-
-    result = await async_cohere_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
-    assert len(result) == 1
-    validate_topic_name(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_success(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(
-        mock_data["valid_cluster_names"]
-    )
-    async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
-
-    result = await async_cohere_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_system_prompt(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(
-        mock_data["valid_cluster_names"]
-    )
-    async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
-
-    result = await async_cohere_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_malformed_mapping(
-    async_cohere_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_cohere_response(mock_data["malformed_mapping"])
-    async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
-
-    result = await async_cohere_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_names_failure(async_cohere_wrapper):
-    async_cohere_wrapper.llm.chat = AsyncMock(side_effect=Exception("API Error"))
-    result = await async_cohere_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    assert result[0] == ""
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_generate_topic_cluster_names_failure(
-    async_cohere_wrapper, mock_data
-):
-    async_cohere_wrapper.llm.chat = AsyncMock(side_effect=Exception("API Error"))
-    result = await async_cohere_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    assert result[0] == mock_data["old_names"]
-
-
-@pytest.mark.asyncio
-async def test_async_cohere_batch_processing(async_cohere_wrapper, mock_data):
-    response = MockAsyncResponse.create_cohere_response(mock_data["valid_topic_name"])
-    async_cohere_wrapper.llm.chat = AsyncMock(return_value=response)
-
-    # Test batch processing with multiple prompts
-    result = await async_cohere_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
-    assert len(result) == 3
-    assert all(name == "Machine Learning" for name in result)
-
 
 # AsyncAnthropic Tests
 
@@ -371,8 +255,6 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
 
 
 # AsyncOpenAI Tests
-
-
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
@@ -410,6 +292,106 @@ async def test_openai_connectivity_async_system_canary():
         f"Async system canary failed for OpenAI:\n"
         f"  Error: {result['error_type']}: {result['error_message']}"
     )
+
+
+def test_async_openai_namer_default():
+    namer = AsyncOpenAINamer()
+
+    assert namer.model == "openai/gpt-4o-mini"
+    assert namer.use_json_object is True
+    assert namer.disable_system_prompts is False
+
+
+def test_async_openai_namer_provider_kwargs_passthrough():
+    namer = AsyncOpenAINamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_openai_namer_base_url_maps_to_api_base():
+    """Remove once deprecation of base_url complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncOpenAINamer(base_url="http://localhost")
+
+    assert namer.api_base == "http://localhost"
+
+
+def test_async_openai_namer_organization_maps_to_provider_kwargs():
+    """Remove once deprecation of organization complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncOpenAINamer(organization="org-123")
+
+    assert namer.provider_kwargs["organization"] == "org-123"
+
+
+# Async Cohere Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
+async def test_cohere_connectivity_async_plain_canary():
+    """
+    Canary test verifying live async connectivity to the Cohere API
+    using the plain prompt path.
+    """
+    namer = AsyncCohereNamer(api_key=os.getenv("COHERE_API_KEY"))
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Cohere:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
+async def test_cohere_connectivity_async_system_canary():
+    """
+    Canary test verifying live async connectivity to the Cohere API
+    using the system prompt path.
+    """
+    namer = AsyncCohereNamer(api_key=os.getenv("COHERE_API_KEY"))
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for Cohere:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_cohere_namer_default():
+    namer = AsyncCohereNamer()
+
+    assert namer.model == "cohere/command-r-08-2024"
+    assert namer.use_json_object is False  # until prompting is stricter
+    assert namer.disable_system_prompts is False
+
+
+def test_async_cohere_namer_provider_kwargs_passthrough():
+    namer = AsyncCohereNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_cohere_namer_base_url_maps_to_api_base():
+    """Remove once deprecation of base_url complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer(base_url="http://localhost")
+
+    assert namer.api_base == "http://localhost"
+
+
+def test_async_cohere_namer_httpx_client_maps_to_provider_kwargs():
+    """Remove once deprecation of http_client complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer(httpx_client="httpx.Client(timeout=123)")
+
+    assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
 
 
 # AsyncAzureAI Tests
@@ -993,6 +975,18 @@ async def test_async_litellm_generate_topic_cluster_names_system_prompt(
 
     assert len(result) == 1
     validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_batch_processing(async_litellm_wrapper, mock_data):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            ["prompt1", "prompt2", "prompt3"]
+        )
+    assert len(result) == 3
+    assert all(name == "Machine Learning" for name in result)
 
 
 @pytest.mark.asyncio
