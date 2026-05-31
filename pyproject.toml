@@ -21,21 +21,22 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 dependencies = [
+    "apricot-select",
+    "datasets",
+    "fast_hdbscan>=0.3.2",
+    "httpx",
+    "jinja2",
+    "litellm>=1.83.10",
+    "numba>=0.56",
     "numpy>=1.21",
     "pandas>=1.0",
-    "numba>=0.56",
-    "datasets",
     "scikit-learn>=1.6",
-    "vectorizers",
     "scipy",
-    "fast_hdbscan>=0.3.2",
-    "tqdm",
     "tenacity",
-    "httpx",
-    "apricot-select",
-    "jinja2",
-    "transformers>=4.41.0,<5.0.0", # upper bound transformers for compatibility with sentence-transformers
     "tokenizers",
+    "tqdm",
+    "transformers>=4.41.0,<5.0.0", # upper bound transformers for compatibility with sentence-transformers
+    "vectorizers",
 ]
 
 [project.urls]
@@ -89,7 +90,6 @@ dev = [
     "traitlets",
     "umap-learn",
     "pylance",
-    "litellm>=1.83.10",
 ]
 llama = [
     "llama-cpp-python",
