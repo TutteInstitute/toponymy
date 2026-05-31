@@ -128,8 +128,6 @@ def test_async_no_warning_when_no_callback(namer_cls, kwargs):
     assert len(debug_warnings) == 0
 
 
-# AsyncCohere Tests
-
 # AsyncAnthropic Tests
 
 
@@ -712,145 +710,58 @@ async def test_async_google_gemini_batch_processing(
 
 
 # AsyncTogether Tests
-@pytest_asyncio.fixture
-async def async_together_wrapper():
-    with patch("together.AsyncTogether"):
-        wrapper = AsyncTogether(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
-        yield wrapper
-        # Clean up any resources
-        try:
-            await wrapper.close()
-        except:
-            pass
-
-
+@pytest.mark.external
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_names_success(
-    async_together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
+@pytest.mark.skipif(
+    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
+)
+async def test_together_connectivity_async_plain_canary():
+    namer = AsyncTogether(api_key=os.getenv("TOGETHERAI_API_KEY"))
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Together:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = await async_together_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    validate_topic_name(result[0])
 
-
+@pytest.mark.external
 @pytest.mark.asyncio
-async def test_async_together_generate_topic_names_system_prompt(
-    async_together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
+@pytest.mark.skipif(
+    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
+)
+async def test_together_connectivity_async_system_canary():
+    namer = AsyncTogether(api_key=os.getenv("TOGETHERAI_API_KEY"))
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
     )
 
-    result = await async_together_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
-    assert len(result) == 1
-    validate_topic_name(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_together_generate_topic_cluster_names_success(
-    async_together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
+    assert result["success"], (
+        f"Async system canary failed for Together:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = await async_together_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
+
+def test_async_together_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = AsyncTogether(api_key="dummy")
+
+    assert isinstance(namer, AsyncLiteLLMNamer)
 
 
-@pytest.mark.asyncio
-async def test_async_together_generate_topic_cluster_names_system_prompt(
-    async_together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
+def test_async_together_namer_default():
+    namer = AsyncTogether()
 
-    result = await async_together_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
+    assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
 
 
-@pytest.mark.asyncio
-async def test_async_together_generate_topic_names_failure(async_together_wrapper):
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        side_effect=Exception("API Error")
-    )
-    result = await async_together_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    assert result[0] == ""
+def test_async_together_namer_provider_kwargs_passthrough():
+    namer = AsyncTogether(provider_kwargs={"timeout": 123})
 
-
-@pytest.mark.asyncio
-async def test_async_together_generate_topic_cluster_names_failure(
-    async_together_wrapper, mock_data
-):
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        side_effect=Exception("API Error")
-    )
-    result = await async_together_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    assert result[0] == mock_data["old_names"]
-
-
-@pytest.mark.asyncio
-async def test_async_together_batch_processing(async_together_wrapper, mock_data):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    async_together_wrapper.client.chat.completions.create = AsyncMock(
-        return_value=mock_response
-    )
-
-    # Test batch processing with multiple prompts
-    result = await async_together_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
-    assert len(result) == 3
-    assert all(name == "Machine Learning" for name in result)
-
-
-# Test for AsyncLLMWrapper base class error cases
-@pytest.mark.asyncio
-async def test_async_wrapper_invalid_input(async_litellm_wrapper):
-    """Test handling of invalid input types."""
-    with pytest.raises(ValueError):
-        await async_litellm_wrapper.generate_topic_names([123])  # Not a string or dict
-
-    with pytest.raises(ValueError):
-        await async_litellm_wrapper.generate_topic_cluster_names(
-            ["prompt1", "prompt2"], [["name1", "name2"]]
-        )  # Mismatched lengths
+    assert namer.provider_kwargs["timeout"] == 123
 
 
 # LiteLLM Tests
@@ -1234,3 +1145,16 @@ async def test_async_litellm_system_prompt_probe_success_caches_true(
 
     assert result == mock_data["valid_topic_name"]
     assert async_litellm_wrapper._system_prompt_capability is True
+
+
+# Test for AsyncLLMWrapper base class error cases
+@pytest.mark.asyncio
+async def test_async_wrapper_invalid_input(async_litellm_wrapper):
+    """Test handling of invalid input types."""
+    with pytest.raises(ValueError):
+        await async_litellm_wrapper.generate_topic_names([123])  # Not a string or dict
+
+    with pytest.raises(ValueError):
+        await async_litellm_wrapper.generate_topic_cluster_names(
+            ["prompt1", "prompt2"], [["name1", "name2"]]
+        )  # Mismatched lengths

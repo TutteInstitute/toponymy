@@ -335,13 +335,6 @@ def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_da
 
 
 # Anthropic Tests
-@pytest.fixture
-def anthropic_wrapper():
-    with patch("anthropic.Anthropic"):
-        wrapper = AnthropicNamer(api_key="dummy")
-        return wrapper
-
-
 @pytest.mark.external
 @pytest.mark.skipif(
     not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
@@ -872,100 +865,55 @@ def test_google_gemini_generate_cluster_names_failure(google_gemini_wrapper, moc
 
 
 # Together Tests
-@pytest.fixture
-def together_wrapper():
-    with patch("together.Together"):
-        wrapper = TogetherNamer(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
-        return wrapper
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
+)
+def test_together_connectivity_plain_sync_canary():
+    namer = TogetherNamer(api_key=os.getenv("TOGETHERAI_API_KEY"))
+    result = namer.connectivity_status()
 
-
-def test_together_generate_topic_name_success(together_wrapper, mock_data):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
-
-    result = together_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_together_generate_topic_name_success_system_prompt(
-    together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
-
-    result = together_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
+    assert result["success"], (
+        f"Sync plain canary test failed for Together:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
-    validate_topic_name(result)
 
 
-def test_together_generate_cluster_names_success(together_wrapper, mock_data):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
+)
+def test_together_connectivity_sync_system_canary():
+    namer = TogetherNamer(api_key=os.getenv("TOGETHERAI_API_KEY"))
 
-    result = together_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
     )
-    validate_cluster_names(result)
 
-
-def test_together_generate_cluster_names_success_system_prompt(
-    together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
-
-    result = together_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
+    assert result["success"], (
+        f"Async system canary failed:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
-    validate_cluster_names(result)
 
 
-def test_together_generate_cluster_names_success_on_malformed_mapping(
-    together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["malformed_mapping"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
+def test_together_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = TogetherNamer()
 
-    result = together_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert isinstance(namer, LiteLLMNamer)
 
 
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_together_generate_topic_name_failure(together_wrapper):
-    together_wrapper.client.chat.completions.create = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = together_wrapper.generate_topic_name("test prompt")
-    assert result == ""
+def test_together_namer_default():
+    namer = TogetherNamer()
+
+    assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
 
 
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_together_generate_cluster_names_failure(together_wrapper, mock_data):
-    together_wrapper.client.chat.completions.create = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = together_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+def test_together_namer_provider_kwargs_passthrough():
+    namer = TogetherNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
 
 
 # Replicate Tests

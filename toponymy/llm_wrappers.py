@@ -1151,6 +1151,10 @@ def _cohere_model(model: str) -> str:
     return f"cohere/{model}" if "/" not in model else model
 
 
+def _together_model(model: str) -> str:
+    return f"together_ai/{model}" if "together_ai/" not in model else model
+
+
 try:
     import litellm
     from litellm.exceptions import (
@@ -2065,6 +2069,171 @@ def AsyncCohereNamer(
         api_base=_resolve_api_base(api_base, base_url),
         disable_system_prompts=False,
         use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def TogetherNamer(
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for Together AI with convenient defaults for
+    topic naming. For more flexibility, use LiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — TogetherNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Together AI model to use. Default is "meta-llama/Meta-Llama-3-8B-Instruct-Lite".
+        May be in LiteLLM format ("together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+    api_key : str, optional
+        Together AI API key. Falls back to the TOGETHERAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Together AI API endpoint. Can use the TOGETHERAI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = TogetherNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = TogetherNamer(model="meta-llama/Meta-Llama-3-8B-Instruct-Lite", api_key="my-api-key")
+
+    Using a Together AI-compatible local server::
+
+        namer = TogetherNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "TogetherNamer is deprecated and will be removed in a future "
+            "release. Use LiteLLMNamer(model='together_ai/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return LiteLLMNamer(
+        model=_together_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncTogether(
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for Together AI with convenient defaults.
+    For more flexibility, use AsyncLiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — TogetherNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Together AI model to use. Default is "meta-llama/Meta-Llama-3-8B-Instruct-Lite". Must be in LiteLLM format ("together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+        or bare Together AI format ("meta-llama/Meta-Llama-3-8B-Instruct-Lite") — both are accepted.
+    api_key : str, optional
+        Together AI API key. Falls back to the TOGETHERAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Together AI API endpoint. Useful for proxies or Together AI-compatible
+        local servers. Can use the TOGETHERAI_API_BASE environment variable.
+        Default is the standard Together AI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Together AI API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Together AI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncTogether(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncTogether(model="meta-llama/Meta-Llama-3-8B-Instruct-Lite", api_key="my-api-key")
+
+    Using a Together AI-compatible local server::
+
+        namer = AsyncTogether(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "AsyncTogether is deprecated and will be removed in a future "
+            "release. Use AsyncLiteLLMNamer(model='together_ai/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+
+    return AsyncLiteLLMNamer(
+        model=_together_model(model),
+        api_key=api_key,
+        api_base=api_base,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
         provider_kwargs=provider_kwargs,
@@ -3273,240 +3442,6 @@ def AsyncOpenAINamer(
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
-
-
-try:
-    import together
-
-    class TogetherNamer(LLMWrapper):
-        """
-        Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
-        For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf".
-            Available models include various Llama, Mixtral, and other open-source models.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-        client: together.Together
-            The Together client instance.
-
-        model: str
-            The name of the Together model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Together, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "meta-llama/Llama-3-8b-chat-hf",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("TOGETHER_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = together.Together(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content
-
-    class AsyncTogether(AsyncLLMWrapper):
-        """
-        Provides access to Together AI's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        Together AI provides access to various open-source models. For more information on Together AI, see https://together.ai/.
-        You will need a Together API key to use this wrapper.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf".
-            Available models include various Llama, Mixtral, and other open-source models.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Together API. Default is 10.
-
-        Attributes:
-        -----------
-        client: together.AsyncTogether
-            The Together asynchronous client instance.
-
-        model: str
-            The name of the Together model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Together, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "meta-llama/Llama-3-8b-chat-hf",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("TOGETHER_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = together.AsyncTogether(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"Together API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"Together API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def close(self):
-            """Close the client connection."""
-            await self.client.close()
-
-except ImportError:
-
-    class TogetherNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncTogether(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
 
 
 try:

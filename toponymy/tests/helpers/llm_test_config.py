@@ -112,10 +112,10 @@ SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
     (LiteLLMNamer, {}),
     (OpenAINamer, {}),
     (CohereNamer, {}),
+    (TogetherNamer, {}),
 ]
 UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
     (HuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
-    (TogetherNamer, {"api_key": "dummy"}),
     (ReplicateNamer, {"api_token": "dummy"}),
     (AzureAINamer, {"api_key": "dummy", "endpoint": "dummy", "model": "dummy/model"}),
     (GoogleGeminiNamer, {"api_key": "dummy"}),
@@ -129,12 +129,12 @@ SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS = [
     (AsyncLiteLLMNamer, {}),
     (AsyncOpenAINamer, {}),
     (AsyncCohereNamer, {}),
+    (AsyncTogether, {}),
 ]
 UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS = [
     (AsyncHuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
     (CohereBatchNamer, {"api_key": "dummy"}),
     (BatchAnthropicNamer, {"api_key": "dummy"}),
-    (AsyncTogether, {"api_key": "dummy"}),
     (
         AsyncAzureAINamer,
         {"api_key": "dummy", "endpoint": "dummy", "model": "dummy/model"},
