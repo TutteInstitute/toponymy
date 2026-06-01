@@ -530,134 +530,41 @@ def test_cohere_namer_httpx_client_maps_to_provider_kwargs():
 
 
 # AzureAI Tests
-@pytest.fixture
-def azureai_wrapper():
-    with patch("azure.ai.inference.ChatCompletionsClient"):
-        wrapper = AzureAINamer(
-            api_key="dummy",
-            endpoint="https://dummy.services.ai.azure.com/models",
-            model="dummy",
-        )
-        return wrapper
-
-
-def test_azureai_generate_topic_name_success(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_topic_name"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
-
-    result = azureai_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_azureai_generate_topic_name_success_system_prompt(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_topic_name"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
-
-    result = azureai_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("AZURE_AI_API_KEY"), reason="AZURE_AI_API_KEY not set"
+)
+@pytest.mark.skipif(
+    not os.getenv("AZURE_AI_API_BASE"), reason="AZURE_AI_API_BASE not set"
+)
+def test_azureai_connectivity_sync_plain_canary():
+    """
+    Canary test to verify live connectivity to Azure AI API. Tests the plain prompt path.
+    """
+    namer = AzureAINamer(model="gpt-4o")
+    result = namer.connectivity_status()
+    assert result["success"], (
+        f"Sync plain canary test failed for Azure AI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
     )
-    validate_topic_name(result)
 
 
-def test_azureai_generate_cluster_names_success(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_cluster_names"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
+def test_azureai_namer_default():
+    namer = AzureAINamer(model="dummy")
 
-    result = azureai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.model == "azure_ai/dummy"
 
 
-def test_azureai_generate_cluster_names_success_system_prompt(
-    azureai_wrapper, mock_data
-):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_cluster_names"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
+def test_azureai_namer_provider_kwargs_passthrough():
+    namer = AzureAINamer(model="dummy", provider_kwargs={"timeout": 123})
 
-    result = azureai_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_azureai_generate_cluster_names_success_on_malformed_mapping(
-    azureai_wrapper, mock_data
-):
-    response = MockLLMResponse.create_azureai_response(mock_data["malformed_mapping"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
+def test_azureai_namer_endpoint_maps_to_api_base():
+    namer = AzureAINamer(model="dummy", endpoint="http://localhost")
 
-    result = azureai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_azureai_generate_topic_name_failure(azureai_wrapper):
-    azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
-    result = azureai_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_azureai_generate_topic_name_failure_malformed_json(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["malformed_json"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
-    result = azureai_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_azureai_generate_cluster_names_failure(azureai_wrapper, mock_data):
-    azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
-    result = azureai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
-
-
-def test_repair_json_string_backslashes_already_valid():
-    """Test that valid JSON strings are not modified."""
-
-    valid_json = '{"key": "value with \\"quotes\\" inside"}'
-    result = repair_json_string_backslashes(valid_json)
-    assert result == valid_json
-
-
-def test_repair_json_string_backslashes_unescaped():
-    """Test repairing strings with unescaped backslashes."""
-
-    invalid_json = '{"topic_name": "Machine Learning\\ML"}'
-    expected = '{"topic_name": "Machine Learning\\\\ML"}'
-    result = repair_json_string_backslashes(invalid_json)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_mixed():
-    """Test repairing strings with both properly escaped and unescaped backslashes."""
-
-    mixed_json = '{"path": "C:\\Users\\username", "quoted": "with \\"quotes\\""}'
-    expected = '{"path": "C:\\\\Users\\\\username", "quoted": "with \\"quotes\\""}'
-    result = repair_json_string_backslashes(mixed_json)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_all_escape_sequences():
-    """Test that all valid escape sequences are preserved."""
-
-    json_with_escapes = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\x"}'
-    expected = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\\\x"}'
-    result = repair_json_string_backslashes(json_with_escapes)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_empty():
-    """Test with empty string."""
-
-    empty = ""
-    result = repair_json_string_backslashes(empty)
-    assert result == empty
+    assert namer.api_base == "http://localhost"
 
 
 # @pytest.skip("Not quite sure this is right yet")
@@ -1262,3 +1169,46 @@ def test_litellm_system_prompt_probe_success_caches_true(
 
     assert result == mock_data["valid_topic_name"]
     assert litellm_wrapper._system_prompt_capability is True
+
+
+def test_repair_json_string_backslashes_already_valid():
+    """Test that valid JSON strings are not modified."""
+
+    valid_json = '{"key": "value with \\"quotes\\" inside"}'
+    result = repair_json_string_backslashes(valid_json)
+    assert result == valid_json
+
+
+def test_repair_json_string_backslashes_unescaped():
+    """Test repairing strings with unescaped backslashes."""
+
+    invalid_json = '{"topic_name": "Machine Learning\\ML"}'
+    expected = '{"topic_name": "Machine Learning\\\\ML"}'
+    result = repair_json_string_backslashes(invalid_json)
+    assert result == expected
+
+
+def test_repair_json_string_backslashes_mixed():
+    """Test repairing strings with both properly escaped and unescaped backslashes."""
+
+    mixed_json = '{"path": "C:\\Users\\username", "quoted": "with \\"quotes\\""}'
+    expected = '{"path": "C:\\\\Users\\\\username", "quoted": "with \\"quotes\\""}'
+    result = repair_json_string_backslashes(mixed_json)
+    assert result == expected
+
+
+def test_repair_json_string_backslashes_all_escape_sequences():
+    """Test that all valid escape sequences are preserved."""
+
+    json_with_escapes = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\x"}'
+    expected = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\\\x"}'
+    result = repair_json_string_backslashes(json_with_escapes)
+    assert result == expected
+
+
+def test_repair_json_string_backslashes_empty():
+    """Test with empty string."""
+
+    empty = ""
+    result = repair_json_string_backslashes(empty)
+    assert result == empty

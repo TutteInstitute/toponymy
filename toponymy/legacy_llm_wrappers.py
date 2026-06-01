@@ -990,3 +990,289 @@ except ImportError:
     class AsyncTogether(FailedImportAsyncLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
+
+
+try:
+    from azure.ai.inference import ChatCompletionsClient
+    from azure.ai.inference.aio import (
+        ChatCompletionsClient as AsyncChatCompletionsClient,
+    )
+    from azure.ai.inference.models import SystemMessage, UserMessage
+    from azure.core.credentials import AzureKeyCredential
+
+    class AzureAINamerLegacy(LLMWrapper):
+        """
+        Provides access to the Azure AI Foundry LLMs with the Toponymy framework. For more information on Azure AI, see
+        https://learn.microsoft.com/en-us/azure/ai-services/overview. You will need an Azure API key for your Foundry model
+        to use this wrapper. You will need to provide both the endpoint, and the model name per the instiated model on
+        AI Foundry. For more information on creating models with Azure AI Foundry, see https://learn.microsoft.com/en-us/azure/ai-services/ai-foundry/create-models.
+
+        Parameters:
+        -----------
+        api_key: str
+            Your Azure API key. You can set this as an environment variable AZURE_API_KEY or pass it directly
+
+        endpoint: str
+            The endpoint URL for your Azure AI Foundry model. This is typically in the format "https://<your-resource-name>.openai.azure.com/".
+
+        model: str
+            The name of the Azure AI Foundry model to use. This should match the model name you created in Azure AI Foundry.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+            model-specific instructions or context that may help improve the quality of the generated text.
+
+        Attributes:
+        -----------
+
+        llm: azure.ai.inference.ChatCompletionsClient
+            The Azure AI Foundry LLM client instance.
+
+        model: str
+            The name of the Azure AI Foundry model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Azure AI Foundry, this is always True.
+
+        Note:
+        -----
+        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
+        consider using the AsyncAzureAI wrapper instead.
+
+        """
+
+        def __init__(
+            self,
+            api_key: str,
+            endpoint: str,
+            model: str,
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+        ):
+            self.endpoint = endpoint
+            self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            api_key = api_key or os.getenv("AZURE_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "Azure API key is required. Set it as an environment variable AZURE_API_KEY or pass it directly to the constructor."
+                )
+
+            if not endpoint:
+                raise ValueError(
+                    "Azure endpoint is required. Provide the endpoint URL for your Azure AI Foundry model."
+                )
+
+            if not model:
+                raise ValueError(
+                    "Azure model name is required. Provide the name of the Azure AI Foundry model to use."
+                )
+
+            self.llm = ChatCompletionsClient(
+                endpoint=endpoint,
+                credential=AzureKeyCredential(api_key),
+            )
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.llm.complete(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[UserMessage(prompt + self.extra_prompting)],
+                temperature=temperature,
+            )
+            result = response.choices[0].message.content
+            return result
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            response = self.llm.complete(
+                model=self.model,
+                max_tokens=max_tokens,
+                messages=[
+                    SystemMessage(system_prompt),
+                    UserMessage(user_prompt + self.extra_prompting),
+                ],
+                temperature=temperature,
+            )
+            result = response.choices[0].message.content
+            return result
+
+    class AsyncAzureAINamerLegacy(AsyncLLMWrapper):
+        """
+        Provides access to the Azure AI Foundry LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+        For more information on Azure AI, see https://learn.microsoft.com/en-us/azure/ai-services/overview. You will need an Azure API key for your Foundry model
+        to use this wrapper. You will need to provide both the endpoint, and the model name per the instiated model on
+        AI Foundry. For more information on creating models with Azure AI Foundry, see https://learn.microsoft.com/en-us/azure/ai-services/ai-foundry/create-models.
+
+        This wrapper conforms to the AsyncLLMWrapper interface, and is designed for scenarios where you need to process multiple prompts concurrently.
+        This is particularly useful for applications that require high throughput or need to process large volumes of data quickly.
+        As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
+        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
+
+        Parameters:
+        -----------
+        api_key: str
+            Your Azure API key. You can set this as an environment variable AZURE_API_KEY or pass it directly
+
+        endpoint: str
+            The endpoint URL for your Azure AI Foundry model. This is typically in the format "https://<your-resource-name>.openai.azure.com/".
+
+        model: str
+            The name of the Azure AI Foundry model to use. This should match the model name you created in Azure AI Foundry.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+            model-specific instructions or context that may help improve the quality of the generated text.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the Azure AI Foundry API. Default is 10. This can be adjusted based on your
+            application's needs and the rate limits of the Azure AI Foundry API. Higher values may improve throughput but could lead to rate limiting.
+
+        Attributes:
+        -----------
+        client: azure.ai.inference.aio.ChatCompletionsClient
+            The Azure AI Foundry asynchronous LLM client instance.
+
+        model: str
+            The name of the Azure AI Foundry model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Azure AI Foundry, this is always True.
+
+        """
+
+        def __init__(
+            self,
+            api_key: str,
+            endpoint: str,
+            model: str,
+            llm_specific_instructions=None,
+            max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
+        ):
+            api_key = api_key or os.getenv("AZURE_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "Azure API key is required. Set it as an environment variable AZURE_API_KEY or pass it directly to the constructor."
+                )
+
+            if not endpoint:
+                raise ValueError(
+                    "Azure endpoint is required. Provide the endpoint URL for your Azure AI Foundry model."
+                )
+
+            if not model:
+                raise ValueError(
+                    "Azure model name is required. Provide the name of the Azure AI Foundry model to use."
+                )
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.endpoint = endpoint
+            self.model = model
+            self.client = AsyncChatCompletionsClient(
+                endpoint=endpoint,
+                credential=AzureKeyCredential(api_key),
+            )
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+        async def _call_single_llm(
+            self, prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            """Call the LLM for a single prompt."""
+            async with self.semaphore:
+                try:
+                    response = await self.client.complete(
+                        model=self.model,
+                        max_tokens=max_tokens,
+                        messages=[UserMessage(prompt + self.extra_prompting)],
+                        temperature=temperature,
+                    )
+                    return response.choices[0].message.content
+                except Exception as e:
+                    warn(f"Azure API call failed: {str(e)[:100]}...")
+                    return ""
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            """Call the LLM for a single prompt with system prompt."""
+            async with self.semaphore:
+                try:
+                    response = await self.client.complete(
+                        model=self.model,
+                        max_tokens=max_tokens,
+                        messages=[
+                            SystemMessage(system_prompt),
+                            UserMessage(user_prompt + self.extra_prompting),
+                        ],
+                        temperature=temperature,
+                    )
+                    return response.choices[0].message.content
+                except Exception as e:
+                    warn(f"Azure API call failed: {str(e)[:100]}...")
+                    return ""
+
+        async def _call_llm_batch(
+            self, prompts: List[str], temperature: float, max_tokens: int
+        ) -> List[str]:
+            """Process a batch of prompts concurrently."""
+            tasks = [
+                self._call_single_llm(prompt, temperature, max_tokens)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def _call_llm_with_system_prompt_batch(
+            self,
+            system_prompts: List[str],
+            user_prompts: List[str],
+            temperature: float,
+            max_tokens: int,
+        ) -> List[str]:
+            """Process a batch of prompts with system prompts concurrently."""
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError(
+                    "Number of system prompts must match number of user prompts"
+                )
+
+            tasks = [
+                self._call_single_llm_with_system(
+                    sys_prompt, user_prompt, temperature, max_tokens
+                )
+                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+            ]
+            return await asyncio.gather(*tasks)
+
+except ImportError:
+
+    class AzureAINamer(FailedImportLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncAzureAINamer(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)

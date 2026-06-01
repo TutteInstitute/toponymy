@@ -393,109 +393,42 @@ def test_async_cohere_namer_httpx_client_maps_to_provider_kwargs():
 
 
 # AsyncAzureAI Tests
-@pytest_asyncio.fixture
-async def async_azureai_wrapper():
-    with patch("azure.ai.inference.aio.ChatCompletionsClient"):
-        wrapper = AsyncAzureAINamer(
-            api_key="dummy",
-            endpoint="https://dummy.services.ai.azure.com/models",
-            model="dummy",
-        )
-        yield wrapper
-        # Clean up any resources
-        try:
-            await wrapper.close()
-        except:
-            pass
-
-
+@pytest.mark.external
 @pytest.mark.asyncio
-async def test_async_azureai_generate_topic_names_success(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
-    async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
+@pytest.mark.skipif(
+    not os.getenv("AZURE_AI_API_KEY"), reason="AZURE_AI_API_KEY not set"
+)
+async def test_azureai_connectivity_async_plain_canary():
+    """
+    Canary test verifying live async connectivity to the Azure AI API
+    using the plain prompt path.
+    """
+    namer = AsyncAzureAINamer(model="gpt-4o")
 
-    result = await async_azureai_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    validate_topic_name(result[0])
+    result = await namer.connectivity_status()
 
-
-@pytest.mark.asyncio
-async def test_async_azureai_generate_topic_names_system_prompt(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
-    async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
-
-    result = await async_azureai_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
+    assert result["success"], (
+        f"Async plain canary failed for Azure AI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
     )
-    assert len(result) == 1
-    validate_topic_name(result[0])
 
 
-@pytest.mark.asyncio
-async def test_async_azureai_generate_topic_cluster_names_success(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
-    async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
+def test_async_azureai_namer_default():
+    namer = AsyncAzureAINamer(model="dummy")
 
-    result = await async_azureai_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
+    assert namer.model == "azure_ai/dummy"
 
 
-@pytest.mark.asyncio
-async def test_async_azureai_generate_topic_cluster_names_system_prompt(
-    async_azureai_wrapper, mock_data
-):
-    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
-    async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
+def test_async_azureai_namer_provider_kwargs_passthrough():
+    namer = AsyncAzureAINamer(model="dummy", provider_kwargs={"timeout": 123})
 
-    result = await async_azureai_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-@pytest.mark.asyncio
-async def test_async_azureai_generate_topic_names_multiple(
-    async_azureai_wrapper, mock_data
-):
-    """Test processing multiple prompts in a single call."""
-    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
-    async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
+def test_async_azureai_namer_endpoint_maps_to_api_base():
+    namer = AsyncAzureAINamer(model="dummy", endpoint="http://localhost")
 
-    # Test with 3 prompts
-    result = await async_azureai_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
-    assert len(result) == 3
-    for name in result:
-        assert name == "Machine Learning"
-
-
-@pytest.mark.asyncio
-async def test_async_azureai_generate_topic_cluster_names_multiple(
-    async_azureai_wrapper, mock_data
-):
-    """Test processing multiple prompt/old_names pairs in a single call."""
-    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
-    async_azureai_wrapper.client.complete = AsyncMock(return_value=response)
-
-    old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
-    prompts = ["prompt1", "prompt2"]
-
-    result = await async_azureai_wrapper.generate_topic_cluster_names(
-        prompts, old_names_list
-    )
-    assert len(result) == 2
-    validate_cluster_names(result[0])
+    assert namer.api_base == "http://localhost"
 
 
 # AsyncOllama Tests
@@ -889,7 +822,9 @@ async def test_async_litellm_generate_topic_cluster_names_system_prompt(
 
 
 @pytest.mark.asyncio
-async def test_async_litellm_batch_processing(async_litellm_wrapper, mock_data):
+async def test_async_litellm_generate_topic_names_prompt_list(
+    async_litellm_wrapper, mock_data
+):
     response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
@@ -898,6 +833,23 @@ async def test_async_litellm_batch_processing(async_litellm_wrapper, mock_data):
         )
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_prompt_list(
+    async_litellm_wrapper, mock_data
+):
+    """Test processing multiple prompt/old_names pairs in a single call."""
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
+        prompts = ["prompt1", "prompt2"]
+
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            prompts, old_names_list
+        )
+    assert len(result) == 2
+    validate_cluster_names(result[0])
 
 
 @pytest.mark.asyncio
