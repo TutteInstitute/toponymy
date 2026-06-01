@@ -12,7 +12,7 @@ SUMMARY_KINDS = [
 ]
 
 GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
-GET_TOPIC_NAME_AND_SUMMARY_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_summary":\s*.*?,\s*"topic_explanation":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
+GET_TOPIC_NAME_AND_SUMMARY_REGEX = r'\{\s*"topic_analysis":\s*.*?,\s*"topic_summary":\s*.*?,\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
 GET_TOPIC_CLUSTER_NAMES_REGEX = (
     r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
 )
@@ -152,8 +152,7 @@ large and diverse range of {{document_type}} contained in it at a glance.
 {%- endif %}
 The response should be in JSON formatted as {"topic_name":<NAME>, "topic_specificity":<SCORE>} 
 where SCORE is a value in the range 0 to 1.
-"""
-        ),
+"""),
         "extract_topic_name": lambda json_response: str(json_response["topic_name"]),
         "get_topic_name_regex": GET_TOPIC_NAME_REGEX,
     },
@@ -513,30 +512,31 @@ SUMMARY_PROMPT_TEMPLATES = {
     "layer": {
         "system": jinja2.Template("""
 You are an expert at classifying {{document_type}} from {{corpus_description}} into topics.
-Your task is to analyze information about a group of {{document_type}} and assign a {{summary_kind}} name to this group,
-as well as providing a short paragraph summary of the topic, and a more detailed explanation of the content of the topic.
+Your task is to analyze information about a group of {{document_type}} and provide a thorough analysis of the topic,
+a short paragraph summary, and a {{summary_kind}} name for the group.
 
-The response must be in JSON formatted as {"topic_name":<NAME>, "topic_summary":<SUMMARY>, "topic_explanation":<EXPLANATION>, "topic_specificity":<SCORE>}
-where NAME is the topic name you generate, SUMMARY is a short paragraph summary of the topic, 
-EXPLANATION is a more detailed explanation of the content of the topic, and SCORE is a float value between 0.0 and 1.0,
+The response must be in JSON formatted as {"topic_analysis":<ANALYSIS>, "topic_summary":<SUMMARY>, "topic_name":<NAME>, "topic_specificity":<SCORE>}
+where ANALYSIS is a thorough analytical discussion of the topic's content, key themes, sub-areas, and relationships
+(written to inform the summary and name that follow), SUMMARY is a short paragraph summary of the topic,
+NAME is the topic name you generate, and SCORE is a float value between 0.0 and 1.0,
 representing how specific and well-defined the topic name is given the input information.
 A score of 1.0 means a perfectly descriptive and specific name, while 0.0 would be a completely generic or unrelated name.
 {% if is_very_specific_summary %}
+The topic analysis should thoroughly examine the specific details, distinctions, and nuances of the topic.
+The topic summary should be precise and capture the specific aspects of the topic.
 The topic name should be specific to the information given and sufficiently detailed to ensure
-it can be distinguished from other similarly detailed topics. The topic summary should be precise
-and capture the specific aspects of the topic, while the explanation should provide a 
-comprehensive overview of the topic's content and nuances.
+it can be distinguished from other similarly detailed topics.
 {% elif is_general_summary %}
+The topic analysis should survey the full breadth and diversity of sub-areas covered by the topic.
+The topic summary should provide a concise overview of the main themes and ideas encompassed by the topic.
 The topic name should be broad and simple enough to capture the overall sense of the
-large and diverse range of {{document_type}} contained in it at a glance. The topic summary should provide
-a concise overview of the main themes and ideas encompassed by the topic, while the explanation should elaborate 
-on the sumamry providing a more detailed accounting of the full breadth and range of subtopics covered by the topic.
+large and diverse range of {{document_type}} contained in it at a glance.
 {% endif %}
 {% if has_major_subtopics %}
-You should primarily make use of the major and minor subtopics of this group to generate a name,
+You should primarily make use of the major and minor subtopics of this group in your analysis,
 and ensure the topic name reflects the core essence of *all* major subtopics. The topic summary
-should focus on the major and minor subtopics to capture the key themes. The topic explanation
-should focus on the full breadth of subtopics to ensure it captures the full breadth and diversity of 
+should focus on the major and minor subtopics to capture the key themes. The topic analysis
+should cover the full breadth of subtopics to ensure it captures the full breadth and diversity of
 content within the topic.
 {% endif %}
 Ensure your entire response is only the JSON object, with no other text before or after it.
@@ -578,13 +578,13 @@ Here is the information about the group of {{document_type}}:
 {%- endif %}
 
 Based on this information, provide a {{summary_kind}} name for this group.
-Recall the output format: {"topic_name":<NAME>, "topic_summary":<SUMMARY>, "topic_explanation":<EXPLANATION>, "topic_specificity":<SCORE>}.
+Recall the output format: {"topic_analysis":<ANALYSIS>, "topic_summary":<SUMMARY>, "topic_name":<NAME>, "topic_specificity":<SCORE>}.
 """),
         "combined": jinja2.Template("""
 You are an expert of classifying {{document_type}} from {{corpus_description}} into topics.
 Below is a information about a group of {{document_type}} from {{corpus_description}} that 
-are all on the same topic and need to be given topic name, as well as a short paragraph summary 
-of the topic, and a more detailed explanation of the content of the topic.
+are all on the same topic and need to be given a thorough analysis of the topic,
+a short paragraph summary, and a topic name.
 
 {% if cluster_keywords %}
  - Keywords for this group include: {{", ".join(cluster_keywords)}}
@@ -620,35 +620,35 @@ of the topic, and a more detailed explanation of the content of the topic.
 {%- endfor %}
 {%- endif %}
 
-You are to give a {{summary_kind}} name to this group of {{document_type}}, as well as a short paragraph summary of the topic, 
-and a more detailed explanation of the content of the topic.
+You are to provide a thorough analysis of this topic, a short paragraph summary, and a {{summary_kind}} name for this group of {{document_type}}.
 {% if has_major_subtopics -%}
-You should primarily make use of the major and minor subtopics of this group to generate a name,
+You should primarily make use of the major and minor subtopics of this group in your analysis,
 and ensure the topic name reflects the core essence of *all* major subtopics. The topic summary
-should focus on the major and minor subtopics to capture the key themes. The topic explanation
-should focus on the full breadth of subtopics to ensure it captures the full breadth and diversity of 
+should focus on the major and minor subtopics to capture the key themes. The topic analysis
+should cover the full breadth of subtopics to ensure it captures the full breadth and diversity of
 content within the topic.
 {%- endif %}
 {% if is_very_specific_summary %}
+The topic analysis should thoroughly examine the specific details, distinctions, and nuances of the topic.
+The topic summary should be precise and capture the specific aspects of the topic.
 The topic name should be specific to the information given and sufficiently detailed to ensure
-it can be distinguished from other similarly detailed topics. The topic summary should be precise
-and capture the specific aspects of the topic, while the explanation should provide a 
-comprehensive overview of the topic's content and nuances.
+it can be distinguished from other similarly detailed topics.
 {% elif is_general_summary %}
+The topic analysis should survey the full breadth and diversity of sub-areas covered by the topic.
+The topic summary should provide a concise overview of the main themes and ideas encompassed by the topic.
 The topic name should be broad and simple enough to capture the overall sense of the
-large and diverse range of {{document_type}} contained in it at a glance. The topic summary should provide
-a concise overview of the main themes and ideas encompassed by the topic, while the explanation should elaborate 
-on the sumamry providing a more detailed accounting of the full breadth and range of subtopics covered by the topic.
+large and diverse range of {{document_type}} contained in it at a glance.
 {% endif %}
-The response should be in JSON formatted as {"topic_name":<NAME>, "topic_summary":<SUMMARY>, "topic_explanation":<EXPLANATION>, "topic_specificity":<SCORE>}.
-where NAME is the topic name you generate, SUMMARY is a short paragraph summary of the topic, 
-EXPLANATION is a more detailed explanation of the content of the topic, and SCORE is a float value between 0.0 and 1.0,
+The response should be in JSON formatted as {"topic_analysis":<ANALYSIS>, "topic_summary":<SUMMARY>, "topic_name":<NAME>, "topic_specificity":<SCORE>}
+where ANALYSIS is a thorough analytical discussion of the topic's content, key themes, sub-areas, and relationships
+(written to inform the summary and name that follow), SUMMARY is a short paragraph summary of the topic,
+NAME is the topic name you generate, and SCORE is a float value between 0.0 and 1.0,
 representing how specific and well-defined the topic name is given the input information.
 """),
         "extract_topic_name": lambda json_response: (
             json_response["topic_name"],
             json_response["topic_summary"],
-            json_response["topic_explanation"],
+            json_response["topic_analysis"],
         ),
         "get_topic_name_regex": GET_TOPIC_NAME_AND_SUMMARY_REGEX,
     },

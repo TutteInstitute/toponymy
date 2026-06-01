@@ -966,7 +966,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                             else lambda json_response: (
                                 json_response["topic_name"],
                                 json_response["topic_summary"],
-                                json_response["topic_explanation"],
+                                json_response["topic_analysis"],
                             )
                         ),
                         get_topic_name_regex=(
@@ -1006,7 +1006,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         else lambda json_response: (
                             json_response["topic_name"],
                             json_response["topic_summary"],
-                            json_response["topic_explanation"],
+                            json_response["topic_analysis"],
                         )
                     ),
                     get_topic_name_regex=(
@@ -1078,7 +1078,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                                 else lambda json_response: (
                                     json_response["topic_name"],
                                     json_response["topic_summary"],
-                                    json_response["topic_explanation"],
+                                    json_response["topic_analysis"],
                                 )
                             ),
                             get_topic_name_regex=(
