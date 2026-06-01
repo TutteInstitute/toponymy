@@ -577,7 +577,7 @@ Here is the information about the group of {{document_type}}:
 {%- endfor %}
 {%- endif %}
 
-Based on this information, provide a {{summary_kind}} name for this group.
+Based on this information, provide a detailed topic analysis, a summary, and a {{summary_kind}} name for this group.
 Recall the output format: {"topic_analysis":<ANALYSIS>, "topic_summary":<SUMMARY>, "topic_name":<NAME>, "topic_specificity":<SCORE>}.
 """),
         "combined": jinja2.Template("""
