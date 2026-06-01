@@ -539,7 +539,7 @@ should focus on the major and minor subtopics to capture the key themes. The top
 should cover the full breadth of subtopics to ensure it captures the full breadth and diversity of
 content within the topic.
 {% endif %}
-Ensure your entire response is only the JSON object, with no other text before or after it.
+ Ensure your entire response is only the JSON object, with no other text before or after it. Keep all JSON string values on a single line (escape any newlines as \\n).
 """),
         "user": jinja2.Template("""
 Here is the information about the group of {{document_type}}:
