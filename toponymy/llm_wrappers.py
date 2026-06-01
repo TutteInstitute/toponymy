@@ -1,4 +1,5 @@
 import string
+from unittest import result
 from warnings import warn, filterwarnings
 
 import tokenizers
@@ -10,7 +11,7 @@ from toponymy.templates import (
     default_extract_topic_names,
 )
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable,Any
+from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -208,6 +209,7 @@ class DebugCallbackMixin:
     The helper `_warn_if_debug_callback_unsupported` provides a check to warn if
     a debug callback is provided but not supported.
     """
+
     _supports_debug_callback: bool = False
     callback: DebugCallback | None = None
 
@@ -309,12 +311,12 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         pass
 
     def _safe_call_llm(
-            self,
-            prompt: str,
-            temperature: float,
-            max_tokens: int,
-            routine: str | None = None
-        ) -> str:
+        self,
+        prompt: str,
+        temperature: float,
+        max_tokens: int,
+        routine: str | None = None,
+    ) -> str:
         try:
             raw_response = self._call_llm(prompt, temperature, max_tokens)
 
@@ -345,11 +347,12 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             self._handle_exception(e)
 
     def _safe_call_llm_with_system_prompt(
-        self, system_prompt: str,
+        self,
+        system_prompt: str,
         user_prompt: str,
         temperature: float,
         max_tokens: int,
-        routine: str | None = None
+        routine: str | None = None,
     ) -> str:
         prompt_payload = {
             "system": system_prompt,
@@ -412,10 +415,13 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         topic_extraction_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int = 128,
-    ) -> str:
+    ) -> str | tuple:
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
-                prompt, temperature, max_tokens=max_tokens, routine="generate_topic_names",
+                prompt,
+                temperature,
+                max_tokens=max_tokens,
+                routine="generate_topic_names",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
@@ -472,7 +478,10 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
     ) -> List[str]:
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
-                prompt, temperature, max_tokens=max_tokens, routine="generate_topic_cluster_names",
+                prompt,
+                temperature,
+                max_tokens=max_tokens,
+                routine="generate_topic_cluster_names",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
@@ -601,6 +610,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return result
 
+
 class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
     async def _call_single_llm(
@@ -674,7 +684,11 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
 
     async def _call_llm_batch(
-        self, prompts: List[str], temperature: float, max_tokens: int, routine: str | None = None
+        self,
+        prompts: List[str],
+        temperature: float,
+        max_tokens: int,
+        routine: str | None = None,
     ) -> List[CallResult[str]]:
         """
         Process a batch of prompts and return one CallResult per prompt.
@@ -794,6 +808,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        null_result_value="",
         max_tokens: int = 128,
     ) -> List[str]:
         """
@@ -828,14 +843,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         f"Failed to generate topic name with "
                         f"{self.__class__.__name__}: {response.error}"
                     )
-                    results.append("")
+                    results.append(null_result_value)
                     continue
                 response_text = response.value
             else:
                 response_text = response
 
             if not response_text:
-                results.append("")
+                results.append(null_result_value)
                 continue
 
             # Attempt to parse the response
@@ -843,12 +858,16 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 topic_name_info = llm_output_to_result(
                     response_text, get_topic_name_regex
                 )
-                results.append(str(extract_topic_name_function(topic_name_info)))
+                result = extract_topic_name_function(topic_name_info)
+                topic_name = result if isinstance(result, tuple) else str(result)
+                results.append(topic_name)
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
                 )
-                results.append("")  # Fallback to empty string if parsing fails
+                results.append(
+                    null_result_value
+                )  # Fallback to null_result_value if parsing fails
 
         return results
 
@@ -1161,7 +1180,13 @@ try:
             Indicates whether the wrapper supports system prompts. For LlamaCpp, this is always False.
         """
 
-        def __init__(self, model_path: str, llm_specific_instructions=None, callback: DebugCallback | None = None, **kwargs):
+        def __init__(
+            self,
+            model_path: str,
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+            **kwargs,
+        ):
             self.model_path = model_path
             for arg, val in kwargs.items():
                 if arg == "n_ctx":
@@ -1245,7 +1270,13 @@ try:
             Indicates whether the wrapper supports system prompts. For Huggingface, this is always True.
         """
 
-        def __init__(self, model: str, llm_specific_instructions=None, callback: DebugCallback | None = None, **kwargs):
+        def __init__(
+            self,
+            model: str,
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+            **kwargs,
+        ):
             self.model = model
             self.callback = callback
             self._warn_if_debug_callback_unsupported()
@@ -1399,7 +1430,13 @@ try:
             Indicates whether the wrapper supports system prompts. For Huggingface, this is always True.
         """
 
-        def __init__(self, model: str, llm_specific_instructions=None, callback: DebugCallback | None = None, **kwargs):
+        def __init__(
+            self,
+            model: str,
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+            **kwargs,
+        ):
             self.model = model
             self.callback = callback
             self._warn_if_debug_callback_unsupported()
@@ -2653,6 +2690,7 @@ try:
         This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
         consider using the AsyncOpenAI wrapper instead.
         """
+
         FAIL_FAST_EXCEPTIONS = (
             AuthenticationError,
             PermissionDeniedError,
@@ -2770,6 +2808,7 @@ try:
         supports_system_prompts: bool
             Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
         """
+
         FAIL_FAST_EXCEPTIONS = (
             AuthenticationError,
             PermissionDeniedError,
@@ -4538,6 +4577,7 @@ try:
             UnprocessableEntityError,
         )
         _supports_debug_callback = True
+
         def __init__(
             self,
             api_key: str = None,

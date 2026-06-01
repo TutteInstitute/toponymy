@@ -1014,6 +1014,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         if self.prompt_template
                         else None
                     ),
+                    null_result_value=("", "", ""),
                     max_tokens=2048,
                 )
             )
