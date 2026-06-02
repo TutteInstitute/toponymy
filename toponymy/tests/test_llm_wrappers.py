@@ -21,7 +21,6 @@ from toponymy.llm_wrappers import (
     GoogleGeminiNamer,
     TogetherNamer,
     ReplicateNamer,
-    OllamaNamer,
     GoogleGeminiNamer,
 )
 
@@ -362,7 +361,7 @@ def test_anthropic_connectivity_sync_system_canary():
     )
 
     assert result["success"], (
-        f"Async system canary failed:\n"
+        f"Sync system canary failed:\n"
         f"{result['error_type']}: {result['error_message']}"
     )
 
@@ -670,105 +669,44 @@ def test_ollama_generate_cluster_names_failure(ollama_wrapper, mock_data):
 
 
 # Google Gemini Tests
-@pytest.fixture
-def google_gemini_wrapper():
-    with (
-        patch("google.generativeai.configure"),
-        patch("google.generativeai.GenerativeModel"),
-    ):
-        wrapper = GoogleGeminiNamer(api_key="dummy", model="gemini-1.5-flash")
-        return wrapper
+@pytest.mark.external
+@pytest.mark.skipif(not os.getenv("GEMINI_API_KEY"), reason="GEMINI_API_KEY not set")
+@pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
+def test_gemini_connectivity_sync_system_canary():
+    namer = GoogleGeminiNamer()
 
-
-def test_google_gemini_generate_topic_name_success(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
     )
 
-    result = google_gemini_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_google_gemini_generate_topic_name_success_system_prompt(
-    google_gemini_wrapper, mock_data
-):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
+    assert result["success"], (
+        f"Sync system canary failed:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = google_gemini_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
+
+def test_gemini_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = GoogleGeminiNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_google_gemini_generate_cluster_names_success(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+@pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
+def test_gemini_namer_default():
+    namer = GoogleGeminiNamer()
 
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.model == "gemini/gemini-2.5-flash-lite"
+    assert namer.use_json_object is True
+    assert namer.disable_system_prompts is False
 
 
-def test_google_gemini_generate_cluster_names_success_system_prompt(
-    google_gemini_wrapper, mock_data
-):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+@pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
+def test_gemini_namer_provider_kwargs_passthrough():
+    namer = GoogleGeminiNamer(provider_kwargs={"timeout": 123})
 
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_google_gemini_generate_cluster_names_success_on_malformed_mapping(
-    google_gemini_wrapper, mock_data
-):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["malformed_mapping"])
-    )
-
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_google_gemini_generate_topic_name_failure(google_gemini_wrapper):
-    google_gemini_wrapper.model.generate_content = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = google_gemini_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_google_gemini_generate_topic_name_failure_malformed_json(
-    google_gemini_wrapper, mock_data
-):
-    response = MockLLMResponse.create_google_gemini_response(
-        mock_data["malformed_json"]
-    )
-    google_gemini_wrapper.model.generate_content = Mock(return_value=response)
-    result = google_gemini_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_google_gemini_generate_cluster_names_failure(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+    assert namer.provider_kwargs["timeout"] == 123
 
 
 # Together Tests
@@ -776,6 +714,7 @@ def test_google_gemini_generate_cluster_names_failure(google_gemini_wrapper, moc
 @pytest.mark.skipif(
     not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
 )
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_connectivity_plain_sync_canary():
     namer = TogetherNamer(api_key=os.getenv("TOGETHERAI_API_KEY"))
     result = namer.connectivity_status()
@@ -790,6 +729,7 @@ def test_together_connectivity_plain_sync_canary():
 @pytest.mark.skipif(
     not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
 )
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_connectivity_sync_system_canary():
     namer = TogetherNamer(api_key=os.getenv("TOGETHERAI_API_KEY"))
 
@@ -799,7 +739,7 @@ def test_together_connectivity_sync_system_canary():
     )
 
     assert result["success"], (
-        f"Async system canary failed:\n"
+        f"Sync system canary failed:\n"
         f"{result['error_type']}: {result['error_message']}"
     )
 
@@ -811,12 +751,14 @@ def test_together_namer_returns_litellm_namer():
     assert isinstance(namer, LiteLLMNamer)
 
 
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_namer_default():
     namer = TogetherNamer()
 
     assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
 
 
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_namer_provider_kwargs_passthrough():
     namer = TogetherNamer(provider_kwargs={"timeout": 123})
 

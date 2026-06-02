@@ -419,7 +419,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 prompt,
                 temperature,
                 max_tokens=max_tokens,
-                routine="generate_topic_names",
+                routine="generate_topic_name",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
@@ -427,7 +427,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 user_prompt=prompt["user"],
                 temperature=temperature,
                 max_tokens=max_tokens,
-                routine="generate_topic_names",
+                routine="generate_topic_name",
             )
         else:
             warn(f"Prompt must be a string or a dictionary, got {type(prompt)}")
@@ -1157,6 +1157,10 @@ def _together_model(model: str) -> str:
 
 def _azure_model(model: str) -> str:
     return f"azure_ai/{model}" if "azure_ai/" not in model else model
+
+
+def _gemini_model(model: str) -> str:
+    return f"gemini/{model}" if "gemini/" not in model else model
 
 
 try:
@@ -2089,11 +2093,7 @@ def TogetherNamer(
     callback: DebugCallback | None = None,
 ) -> LiteLLMNamer:
     """
-    Create a LiteLLMNamer configured for Together AI with convenient defaults for
-    topic naming. For more flexibility, use LiteLLMNamer directly with the model and parameters of your choice.
-
-    All namers share the same interface once constructed — TogetherNamer is a
-    convenience entry point, not a special case.
+    Deprecated. Use LiteLLMNamer(model="together_ai/<model_name>") instead.
 
     Parameters
     ----------
@@ -2169,11 +2169,7 @@ def AsyncTogether(
     callback: DebugCallback | None = None,
 ) -> AsyncLiteLLMNamer:
     """
-    Create an AsyncLiteLLMNamer configured for Together AI with convenient defaults.
-    For more flexibility, use AsyncLiteLLMNamer directly with the model and parameters of your choice.
-
-    All namers share the same interface once constructed — TogetherNamer is a
-    convenience entry point, not a special case.
+    Deprecated. Use AsyncLiteLLMNamer(model="together_ai/<model_name>") instead.
 
     Parameters
     ----------
@@ -4192,240 +4188,182 @@ except ImportError:
             super().__init__(*args, **kwds)
 
 
-try:
-    import google.generativeai as genai
+def _resolve_gemini_api_key(api_key: str | None) -> str | None:
+    """Helper function to migrate from the old GOOGLE_API_KEY environment variable to the litellm GEMINI_API_KEY, while still allowing explicit API keys to take precedence."""
+    if api_key is not None:
+        return api_key
 
-    class GoogleGeminiNamer(LLMWrapper):
-        """
-        Provides access to Google's Gemini LLMs with the Toponymy framework. For more information on Google Gemini, see
-        https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
-        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
+    new_key = os.getenv("GEMINI_API_KEY")
+    legacy_key = os.getenv("GOOGLE_API_KEY")
 
-        Parameters:
-        -----------
-        api_key: str
-            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
+    if new_key:
+        return new_key
 
-        model: str, optional
-            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
-            "gemini-1.5-pro", "gemini-1.5-flash", etc.
+    if legacy_key:
+        warn(
+            "GOOGLE_API_KEY is deprecated and will be removed. "
+            "Please rename it to GEMINI_API_KEY.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_key
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
+    return None
 
-        Attributes:
-        -----------
-        model: genai.GenerativeModel
-            The Gemini model instance.
 
-        model_name: str
-            The name of the Gemini model being used.
+def GoogleGeminiNamer(
+    model: str = "gemini-2.5-flash-lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+    GoogleGeminiNamer is deprecated and will be removed in a future release. Use LiteLLMNamer(model='gemini/<model_name>') directly instead.
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+    Parameters
+    ----------
+    model : str, optional
+        Google Gemini model to use. Default is "gemini-2.5-flash-lite".
+        May be in LiteLLM format ("google/gemini-2.5-flash-lite")
+    api_key : str, optional
+        Google Gemini API key. Falls back to the GEMINI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Google Gemini API endpoint. Can use the GEMINI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
-        """
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
 
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gemini-1.5-flash",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor."
-                )
+    Examples
+    --------
+    Basic usage::
 
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model)
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.model_name = model
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
+        namer = GoogleGeminiNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            generation_config = genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
+    Using a different model::
 
-            response = self.model.generate_content(
-                prompt + self.extra_prompting, generation_config=generation_config
-            )
-            return response.text
+        namer = GoogleGeminiNamer(model="gemini-2.5-flash-lite",api_key="my-api-key")
 
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            generation_config = genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
+    Using an Anthropic-compatible local server::
 
-            # Gemini doesn't have explicit system prompts, so we combine them
-            combined_prompt = (
-                f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
-            )
+        namer = GoogleGeminiNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
 
-            response = self.model.generate_content(
-                combined_prompt, generation_config=generation_config
-            )
-            return response.text
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "GoogleGeminiNamer is deprecated and will be removed in a future "
+            "release. Use LiteLLMNamer(model='gemini/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return LiteLLMNamer(
+        model=_gemini_model(model),
+        api_key=_resolve_gemini_api_key(api_key),
+        api_base=api_base,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
-    class AsyncGoogleGeminiNamer(AsyncLLMWrapper):
-        """
-        Provides access to Google's Gemini LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Google Gemini, see https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
-        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
 
-        Parameters:
-        -----------
-        api_key: str
-            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
+def AsyncGoogleGeminiNamer(
+    model: str = "gemini-2.5-flash-lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    AsyncGoogleGeminiNamer is deprecated and will be removed in a future release. Use AsyncLiteLLMNamer(model='gemini/<model_name>') directly instead.
 
-        model: str, optional
-            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
-            "gemini-1.5-pro", "gemini-1.5-flash", etc.
+    Parameters
+    ----------
+    model : str, optional
+        Google Gemini model to use. Default is "gemini-2.5-flash-lite", Must be in LiteLLM format ("google/gemini-2.5-flash-lite")
+        or bare Google Gemini format ("gemini-2.5-flash-lite") — both are accepted.
+    api_key : str, optional
+        Google Gemini API key. Falls back to the GEMINI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Google AI Studio API endpoint. Can use the GEMINI_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Gemini API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Gemini API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
 
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Gemini API. Default is 10.
+    Examples
+    --------
+    Basic usage::
 
-        Attributes:
-        -----------
-        model: genai.GenerativeModel
-            The Gemini model instance.
+        namer = AsyncGoogleGeminiNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        model_name: str
-            The name of the Gemini model being used.
+    Using a different model::
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+        namer = AsyncGoogleGeminiNamer(model="gemini-2.5-flash-lite",api_key="my-api-key")
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
-        """
+    Using an Anthropic-compatible local server::
 
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gemini-1.5-flash",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor."
-                )
+        namer = AsyncGoogleGeminiNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
 
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model)
-            self.model_name = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    generation_config = genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens,
-                    )
-
-                    response = await self.model.generate_content_async(
-                        prompt + self.extra_prompting,
-                        generation_config=generation_config,
-                    )
-                    return response.text
-            except Exception as e:
-                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    generation_config = genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens,
-                    )
-
-                    # Gemini doesn't have explicit system prompts, so we combine them
-                    combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
-
-                    response = await self.model.generate_content_async(
-                        combined_prompt, generation_config=generation_config
-                    )
-                    return response.text
-            except Exception as e:
-                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
-except ImportError:
-
-    class GoogleGeminiNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "AsyncGoogleGeminiNamer is deprecated and will be removed in a future "
+            "release. Use AsycLiteLLMNamer(model='gemini/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return AsyncLiteLLMNamer(
+        model=_gemini_model(model),
+        api_key=_resolve_gemini_api_key(api_key),
+        api_base=api_base,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )

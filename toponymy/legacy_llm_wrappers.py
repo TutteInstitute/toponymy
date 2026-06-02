@@ -1276,3 +1276,242 @@ except ImportError:
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
+
+
+try:
+    import google.generativeai as genai
+
+    class GoogleGeminiNamerLegacy(LLMWrapper):
+        """
+        Provides access to Google's Gemini LLMs with the Toponymy framework. For more information on Google Gemini, see
+        https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
+        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
+
+        Parameters:
+        -----------
+        api_key: str
+            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
+
+        model: str, optional
+            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
+            "gemini-1.5-pro", "gemini-1.5-flash", etc.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        Attributes:
+        -----------
+        model: genai.GenerativeModel
+            The Gemini model instance.
+
+        model_name: str
+            The name of the Gemini model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
+        """
+
+        def __init__(
+            self,
+            api_key: str,
+            model: str = "gemini-1.5-flash",
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+        ):
+            api_key = api_key or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor."
+                )
+
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model)
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.model_name = model
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+
+            response = self.model.generate_content(
+                prompt + self.extra_prompting, generation_config=generation_config
+            )
+            return response.text
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            generation_config = genai.types.GenerationConfig(
+                temperature=temperature,
+                max_output_tokens=max_tokens,
+            )
+
+            # Gemini doesn't have explicit system prompts, so we combine them
+            combined_prompt = (
+                f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
+            )
+
+            response = self.model.generate_content(
+                combined_prompt, generation_config=generation_config
+            )
+            return response.text
+
+    class AsyncGoogleGeminiNamerLegacy(AsyncLLMWrapper):
+        """
+        Provides access to Google's Gemini LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+        For more information on Google Gemini, see https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
+        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
+
+        Parameters:
+        -----------
+        api_key: str
+            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
+
+        model: str, optional
+            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
+            "gemini-1.5-pro", "gemini-1.5-flash", etc.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the Gemini API. Default is 10.
+
+        Attributes:
+        -----------
+        model: genai.GenerativeModel
+            The Gemini model instance.
+
+        model_name: str
+            The name of the Gemini model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
+        """
+
+        def __init__(
+            self,
+            api_key: str,
+            model: str = "gemini-1.5-flash",
+            llm_specific_instructions=None,
+            max_concurrent_requests: int = 10,
+            callback: DebugCallback | None = None,
+        ):
+            api_key = api_key or os.getenv("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor."
+                )
+
+            genai.configure(api_key=api_key)
+            self.model = genai.GenerativeModel(model)
+            self.model_name = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+        async def _call_single_llm(
+            self, prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            """Call the LLM for a single prompt."""
+            try:
+                async with self.semaphore:
+                    generation_config = genai.types.GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    )
+
+                    response = await self.model.generate_content_async(
+                        prompt + self.extra_prompting,
+                        generation_config=generation_config,
+                    )
+                    return response.text
+            except Exception as e:
+                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
+                return ""
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            """Call the LLM for a single prompt with system prompt."""
+            try:
+                async with self.semaphore:
+                    generation_config = genai.types.GenerationConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_tokens,
+                    )
+
+                    # Gemini doesn't have explicit system prompts, so we combine them
+                    combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
+
+                    response = await self.model.generate_content_async(
+                        combined_prompt, generation_config=generation_config
+                    )
+                    return response.text
+            except Exception as e:
+                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
+                return ""
+
+        async def _call_llm_batch(
+            self, prompts: List[str], temperature: float, max_tokens: int
+        ) -> List[str]:
+            """Process a batch of prompts concurrently."""
+            tasks = [
+                self._call_single_llm(prompt, temperature, max_tokens)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def _call_llm_with_system_prompt_batch(
+            self,
+            system_prompts: List[str],
+            user_prompts: List[str],
+            temperature: float,
+            max_tokens: int,
+        ) -> List[str]:
+            """Process a batch of prompts with system prompts concurrently."""
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError(
+                    "Number of system prompts must match number of user prompts"
+                )
+
+            tasks = [
+                self._call_single_llm_with_system(
+                    sys_prompt, user_prompt, temperature, max_tokens
+                )
+                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+            ]
+            return await asyncio.gather(*tasks)
+
+except ImportError:
+
+    class GoogleGeminiNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)

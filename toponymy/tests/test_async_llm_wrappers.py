@@ -532,114 +532,45 @@ async def test_async_ollama_batch_processing(async_ollama_wrapper, mock_data):
 
 
 # AsyncGoogleGemini Tests
-@pytest_asyncio.fixture
-async def async_google_gemini_wrapper():
-    with (
-        patch("google.generativeai.configure"),
-        patch("google.generativeai.GenerativeModel"),
-    ):
-        wrapper = AsyncGoogleGeminiNamer(api_key="dummy", model="gemini-1.5-flash")
-        yield wrapper
-
-
+@pytest.mark.external
 @pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_names_success(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
+@pytest.mark.skipif(not os.getenv("GEMINI_API_KEY"), reason="GEMINI_API_KEY not set")
+@pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
+async def test_gemini_connectivity_async_system_canary():
+    namer = AsyncGoogleGeminiNamer()
+
+    result = await namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
     )
 
-    result = await async_google_gemini_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    validate_topic_name(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_names_system_prompt(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
+    assert result["success"], (
+        f"Async system canary failed for Gemini:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = await async_google_gemini_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
-    assert len(result) == 1
-    validate_topic_name(result[0])
+
+def test_async_gemini_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = AsyncGoogleGeminiNamer()
+
+    assert isinstance(namer, AsyncLiteLLMNamer)
 
 
-@pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_cluster_names_success(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+@pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
+def test_async_gemini_namer_default():
+    namer = AsyncGoogleGeminiNamer()
 
-    result = await async_google_gemini_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
+    assert namer.model == "gemini/gemini-2.5-flash-lite"
+    assert namer.use_json_object is True
+    assert namer.disable_system_prompts is False
 
 
-@pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_cluster_names_system_prompt(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+@pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
+def test_async_gemini_namer_provider_kwargs_passthrough():
+    namer = AsyncGoogleGeminiNamer(provider_kwargs={"timeout": 123})
 
-    result = await async_google_gemini_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_names_failure(
-    async_google_gemini_wrapper,
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        side_effect=Exception("API Error")
-    )
-    result = await async_google_gemini_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    assert result[0] == ""
-
-
-@pytest.mark.asyncio
-async def test_async_google_gemini_generate_topic_cluster_names_failure(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        side_effect=Exception("API Error")
-    )
-    result = await async_google_gemini_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    assert result[0] == mock_data["old_names"]
-
-
-@pytest.mark.asyncio
-async def test_async_google_gemini_batch_processing(
-    async_google_gemini_wrapper, mock_data
-):
-    async_google_gemini_wrapper.model.generate_content_async = AsyncMock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
-    )
-
-    # Test batch processing with multiple prompts
-    result = await async_google_gemini_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
-    assert len(result) == 3
-    assert all(name == "Machine Learning" for name in result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
 # AsyncTogether Tests
@@ -648,6 +579,7 @@ async def test_async_google_gemini_batch_processing(
 @pytest.mark.skipif(
     not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
 )
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 async def test_together_connectivity_async_plain_canary():
     namer = AsyncTogether(api_key=os.getenv("TOGETHERAI_API_KEY"))
 
@@ -664,6 +596,7 @@ async def test_together_connectivity_async_plain_canary():
 @pytest.mark.skipif(
     not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
 )
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 async def test_together_connectivity_async_system_canary():
     namer = AsyncTogether(api_key=os.getenv("TOGETHERAI_API_KEY"))
 
@@ -685,12 +618,14 @@ def test_async_together_namer_returns_litellm_namer():
     assert isinstance(namer, AsyncLiteLLMNamer)
 
 
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 def test_async_together_namer_default():
     namer = AsyncTogether()
 
     assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
 
 
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 def test_async_together_namer_provider_kwargs_passthrough():
     namer = AsyncTogether(provider_kwargs={"timeout": 123})
 
