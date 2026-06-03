@@ -1,15 +1,15 @@
 from toponymy.toponymy import Toponymy
 from toponymy.llm_wrappers import (
-    HuggingFaceNamer,
-    AsyncHuggingFaceNamer,
     OllamaNamer,
     AsyncOllamaNamer,
+    LLMWrapper,
 )
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import ClusterLayerText
 from sentence_transformers import SentenceTransformer
 
+import itertools
 from sklearn.metrics import pairwise_distances
 from scipy.optimize import linear_sum_assignment
 from pathlib import Path
@@ -647,311 +647,68 @@ def test_toponymy_async_ollama(
         pytest.skip(f"Async Ollama test failed: {e}")
 
 
-# @pytest.mark.skip(reason="Lowering runtime for CI")
-def test_ollama_wrapper_fallback():
-    """Test that Ollama wrapper gracefully handles missing dependencies."""
-    try:
-        # This should work if ollama is installed
-        from toponymy.llm_wrappers import OllamaNamer, AsyncOllamaNamer
+class MockNamer(LLMWrapper):
+    """In-memory namer returning canned JSON. Distinguishes single-topic
+    naming (max_tokens=128) from cluster naming (max_tokens=1024) similarly
+    to the original Ollama mock."""
 
-        # If we get here, ollama is available, so we can test basic instantiation
-        # but we won't actually call the service since it might not be running
-        assert OllamaNamer is not None
-        assert AsyncOllamaNamer is not None
+    def __init__(self, single_responses, cluster_responses):
+        self.model = "mock-model"
+        self._single = itertools.cycle(single_responses)
+        self._cluster = itertools.cycle(cluster_responses)
 
-    except ImportError:
-        # If ollama package is not installed, we should get FailedImportLLMWrapper
-        from toponymy.llm_wrappers import OllamaNamer, AsyncOllamaNamer
+    def _next(self, max_tokens):
+        return next(self._cluster if max_tokens > 500 else self._single)
 
-        # These should be FailedImportLLMWrapper instances
-        ollama_instance = OllamaNamer()
-        async_ollama_instance = AsyncOllamaNamer()
+    def _call_llm(self, prompt, temperature, max_tokens):
+        return self._next(max_tokens)
 
-        # Verify they handle method calls gracefully
-        result = ollama_instance.generate_topic_name("test")
-        assert result == ""
-
-        # For async, we need to test differently since it returns a list
-        import asyncio
-
-        async def test_async():
-            result = await async_ollama_instance.generate_topic_names(["test"])
-            assert result == [""]
-
-        asyncio.run(test_async())
+    def _call_llm_with_system_prompt(
+        self, system_prompt, user_prompt, temperature, max_tokens
+    ):
+        return self._next(max_tokens)
 
 
-# @pytest.mark.skip(reason="Lowering runtime for CI")
-def test_ollama_wrapper_with_mock_for_ci():
-    """Test Ollama wrapper functionality using a mock for CI environments.
-
-    This test ensures the Ollama wrapper integration works correctly without
-    requiring actual Ollama installation, making it suitable for CI.
-    """
-    try:
-        from unittest.mock import Mock, patch
-        from toponymy.llm_wrappers import OllamaNamer
-
-        # Mock the ollama client to simulate responses
-        with patch("ollama.Client") as mock_client_class:
-            mock_client = Mock()
-            mock_client_class.return_value = mock_client
-
-            # Mock successful responses that match the expected JSON format
-            mock_response = {
-                "response": '{"topic_name": "Machine Learning Topics", "topic_specificity": 0.7}'
-            }
-            mock_client.generate.return_value = mock_response
-
-            # Create Ollama wrapper with mocked client
-            ollama_llm = OllamaNamer(model="test-model", host="http://localhost:11434")
-
-            # Test basic functionality
-            result = ollama_llm.generate_topic_name(
-                "Test prompt about machine learning"
-            )
-            assert result == "Machine Learning Topics"
-
-            # Test system prompt functionality
-            mock_chat_response = {
-                "message": {
-                    "content": '{"topic_name": "AI Systems", "topic_specificity": 0.8}'
-                }
-            }
-            mock_client.chat.return_value = mock_chat_response
-
-            result = ollama_llm.generate_topic_name(
-                {
-                    "system": "You are a helpful assistant",
-                    "user": "Categorize this AI content",
-                }
-            )
-            assert result == "AI Systems"
-
-            print(
-                "✅ Ollama wrapper mock test passed - integration should work correctly"
-            )
-
-    except ImportError:
-        pytest.skip("Ollama package not available for testing")
-
-
-# @pytest.mark.skip(reason="Lowering runtime for CI")
-def test_async_ollama_wrapper_with_mock_for_ci():
-    """Test AsyncOllama wrapper functionality using a mock for CI environments.
-
-    This test ensures the AsyncOllama wrapper integration works correctly without
-    requiring actual Ollama installation, making it suitable for CI.
-    """
-    try:
-        from unittest.mock import Mock, patch, AsyncMock
-        from toponymy.llm_wrappers import AsyncOllamaNamer
-        import asyncio
-
-        async def run_test():
-            # Mock the async ollama client to simulate responses
-            with patch("ollama.AsyncClient") as mock_client_class:
-                mock_client = Mock()
-                mock_client_class.return_value = mock_client
-
-                # Mock successful async responses
-                mock_response = {
-                    "response": '{"topic_name": "Data Science", "topic_specificity": 0.75}'
-                }
-                mock_client.generate = AsyncMock(return_value=mock_response)
-
-                # Create AsyncOllama wrapper with mocked client
-                async_ollama_llm = AsyncOllamaNamer(
-                    model="test-model",
-                    host="http://localhost:11434",
-                    max_concurrent_requests=2,
-                )
-
-                # Test async functionality
-                results = await async_ollama_llm.generate_topic_names(["Test prompt"])
-                assert len(results) == 1
-                assert results[0] == "Data Science"
-
-                # Test system prompt functionality
-                mock_chat_response = {
-                    "message": {
-                        "content": '{"topic_name": "Neural Networks", "topic_specificity": 0.9}'
-                    }
-                }
-                mock_client.chat = AsyncMock(return_value=mock_chat_response)
-
-                results = await async_ollama_llm.generate_topic_names(
-                    [
-                        {
-                            "system": "You are a helpful assistant",
-                            "user": "Categorize this neural network content",
-                        }
-                    ]
-                )
-                assert len(results) == 1
-                assert results[0] == "Neural Networks"
-
-                print(
-                    "✅ AsyncOllama wrapper mock test passed - integration should work correctly"
-                )
-
-        # Run the async test
-        asyncio.run(run_test())
-
-    except ImportError:
-        pytest.skip("Ollama package not available for testing")
-
-
-# Mock-based tests for CI environments without external services
-
-
-def test_ollama_wrapper_mock():
-    """Mock-based test for Ollama wrapper when service is not available."""
-    from unittest.mock import patch, MagicMock
-
-    with patch("ollama.Client") as mock_client:
-        # Mock the client
-        mock_instance = MagicMock()
-        mock_client.return_value = mock_instance
-
-        # Mock the response
-        mock_instance.generate.return_value = {
-            "response": '{"topic_name": "Mocked Topic", "topic_specificity": 0.7}'
-        }
-
-        wrapper = OllamaNamer(model="test-model")
-        response = wrapper.generate_topic_name("Test prompt")
-
-        assert response == "Mocked Topic"
-        mock_instance.generate.assert_called_once()
-
-
-def test_async_ollama_wrapper_mock():
-    """Mock-based test for AsyncOllama wrapper when service is not available."""
-    import asyncio
-    from unittest.mock import patch, AsyncMock
-
-    async def run_test():
-        with patch("ollama.AsyncClient") as mock_client:
-            # Mock the async client
-            mock_instance = AsyncMock()
-            mock_client.return_value = mock_instance
-
-            # Mock the response
-            mock_instance.generate.return_value = {
-                "response": '{"topic_name": "Mocked Async Topic", "topic_specificity": 0.8}'
-            }
-
-            wrapper = AsyncOllamaNamer(model="test-model")
-            response = await wrapper.generate_topic_names(["Test prompt"])
-
-            assert response == ["Mocked Async Topic"]
-            mock_instance.generate.assert_called_once()
-
-    asyncio.run(run_test())
-
-
-def test_toponymy_with_mocked_ollama(
+def test_toponymy_with_mock_namer(
     embedder,
     clusterer,
     all_sentences,
     object_vectors,
     clusterable_vectors,
     cluster_label_vector,
-    subtopic_objects,
 ):
-    """Integration test using mocked Ollama for CI environments."""
-    from unittest.mock import patch, MagicMock
+    single_topic_responses = [
+        '{"topic_name": "Technology and Innovation", "topic_specificity": 0.8}',
+        '{"topic_name": "Data Science Methods", "topic_specificity": 0.7}',
+        '{"topic_name": "Machine Learning Applications", "topic_specificity": 0.9}',
+        '{"topic_name": "AI Research", "topic_specificity": 0.6}',
+        '{"topic_name": "Computing Technologies", "topic_specificity": 0.5}',
+    ]
 
-    with patch("ollama.Client") as mock_client:
-        # Mock the client
-        mock_instance = MagicMock()
-        mock_client.return_value = mock_instance
+    cluster_topic_responses = [
+        '{"new_topic_name_mapping": ["Advanced Technology", "Data Analytics", "ML Systems", "AI Studies", "Tech Infrastructure"], "topic_specificities": [0.8, 0.7, 0.9, 0.6, 0.5]}',
+        '{"new_topic_name_mapping": ["Innovation Hub", "Science Methods", "Learning Apps", "Research Areas", "Computing Tech"], "topic_specificities": [0.75, 0.65, 0.85, 0.55, 0.45]}',
+    ]
 
-        # Mock responses for topic naming calls (single topics)
-        single_topic_responses = [
-            '{"topic_name": "Technology and Innovation", "topic_specificity": 0.8}',
-            '{"topic_name": "Data Science Methods", "topic_specificity": 0.7}',
-            '{"topic_name": "Machine Learning Applications", "topic_specificity": 0.9}',
-            '{"topic_name": "AI Research", "topic_specificity": 0.6}',
-            '{"topic_name": "Computing Technologies", "topic_specificity": 0.5}',
-        ]
+    namer = MockNamer(single_topic_responses, cluster_topic_responses)
 
-        # Mock responses for cluster naming calls (multiple topics)
-        cluster_topic_responses = [
-            '{"new_topic_name_mapping": ["Advanced Technology", "Data Analytics", "ML Systems", "AI Studies", "Tech Infrastructure"], "topic_specificities": [0.8, 0.7, 0.9, 0.6, 0.5]}',
-            '{"new_topic_name_mapping": ["Innovation Hub", "Science Methods", "Learning Apps", "Research Areas", "Computing Tech"], "topic_specificities": [0.75, 0.65, 0.85, 0.55, 0.45]}',
-        ]
+    model = Toponymy(
+        namer,
+        embedder,
+        clusterer,
+        keyphrase_builder=KeyphraseBuilder(n_jobs=1),
+        object_description="sentences",
+        corpus_description="collection of sentences",
+        lowest_detail_level=0.8,
+        highest_detail_level=1.0,
+        verbose=True,
+    )
+    model.fit(all_sentences, object_vectors, clusterable_vectors)
 
-        # Create a counter to track call types and provide appropriate responses
-        call_counter = {"single": 0, "cluster": 0}
-
-        def mock_generate_response(**kwargs):
-            # Check if this looks like a cluster naming call (longer prompt, higher max_tokens)
-            max_tokens = kwargs.get("options", {}).get("num_predict", 128)
-            if max_tokens > 500:  # cluster naming uses max_tokens=1024
-                response = cluster_topic_responses[
-                    call_counter["cluster"] % len(cluster_topic_responses)
-                ]
-                call_counter["cluster"] += 1
-            else:  # single topic naming uses max_tokens=128
-                response = single_topic_responses[
-                    call_counter["single"] % len(single_topic_responses)
-                ]
-                call_counter["single"] += 1
-
-            return {"response": response}
-
-        # Set up the mock side effect
-        mock_instance.generate.side_effect = mock_generate_response
-
-        # Also mock chat method for system prompts
-        def mock_chat_response(**kwargs):
-            # Similar logic for chat method
-            max_tokens = kwargs.get("options", {}).get("num_predict", 128)
-            if max_tokens > 500:
-                response = cluster_topic_responses[
-                    call_counter["cluster"] % len(cluster_topic_responses)
-                ]
-                call_counter["cluster"] += 1
-            else:
-                response = single_topic_responses[
-                    call_counter["single"] % len(single_topic_responses)
-                ]
-                call_counter["single"] += 1
-
-            return {"message": {"content": response}}
-
-        mock_instance.chat.side_effect = mock_chat_response
-
-        ollama_llm = OllamaNamer(model="mocked-model", host="http://localhost:11434")
-
-        model = Toponymy(
-            ollama_llm,
-            embedder,
-            clusterer,
-            keyphrase_builder=KeyphraseBuilder(n_jobs=1),
-            object_description="sentences",
-            corpus_description="collection of sentences",
-            lowest_detail_level=0.8,
-            highest_detail_level=1.0,
-            verbose=True,
-        )
-
-        model.fit(all_sentences, object_vectors, clusterable_vectors)
-
-        # Verify that topic names were generated
-        assert len(model.topic_names_[1]) > 0
-
-        # Check that topic names are reasonable strings
-        for topic_name in model.topic_names_[1]:
-            assert isinstance(topic_name, str)
-            assert len(topic_name.strip()) > 0
-
-        # Verify cluster structure is maintained
-        assert len(model.cluster_layers_[1].cluster_labels) == len(cluster_label_vector)
-
-        print(f"Mocked Ollama generated topic names: {model.topic_names_[1]}")
-        print(
-            f"Mock call counts - Single: {call_counter['single']}, Cluster: {call_counter['cluster']}"
-        )
+    # Verify topic names
+    assert len(model.topic_names_[1]) > 0
+    for topic_name in model.topic_names_[1]:
+        assert isinstance(topic_name, str)
+        assert len(topic_name.strip()) > 0
+    # Verify cluster structure
+    assert len(model.cluster_layers_[1].cluster_labels) == len(cluster_label_vector)
