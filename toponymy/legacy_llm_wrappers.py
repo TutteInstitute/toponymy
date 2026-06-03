@@ -1515,3 +1515,228 @@ except ImportError:
     class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
+
+
+try:
+    import ollama
+
+    class OllamaNamerLegacy(LLMWrapper):
+        """
+        Provides access to Olloma's local LLMs with the Toponymy framework. Ollama allows you to run large language models locally.
+        For more information on Olloma, see https://ollama.ai/. You'll need to have Olloma installed and running locally.
+
+        Parameters:
+        -----------
+        model: str
+            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
+            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
+
+        host: str, optional
+            The host URL for the Olloma API. Default is "http://localhost:11434".
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        Attributes:
+        -----------
+        client: ollama.Client
+            The Olloma client instance.
+
+        model: str
+            The name of the Olloma model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
+        """
+
+        def __init__(
+            self,
+            model: str = "llama3.2",
+            host: str = "http://localhost:11434",
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+        ):
+            self.client = ollama.Client(host=host)
+            self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            response = self.client.generate(
+                model=self.model,
+                prompt=prompt + self.extra_prompting,
+                options={
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                },
+            )
+            return response["response"]
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            response = self.client.chat(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ],
+                options={
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                },
+            )
+            return response["message"]["content"]
+
+    class AsyncOllamaNamerLegacy(AsyncLLMWrapper):
+        """
+        Provides access to Olloma's local LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
+        Olloma allows you to run large language models locally. For more information on Olloma, see https://ollama.ai/.
+        You'll need to have Olloma installed and running locally.
+
+        Parameters:
+        -----------
+        model: str
+            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
+            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
+
+        host: str, optional
+            The host URL for the Olloma API. Default is "http://localhost:11434".
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the Olloma API. Default is 5. Since Olloma runs locally,
+            too many concurrent requests might overwhelm the local resources.
+
+        Attributes:
+        -----------
+        client: ollama.AsyncClient
+            The Olloma asynchronous client instance.
+
+        model: str
+            The name of the Olloma model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
+        """
+
+        def __init__(
+            self,
+            model: str = "llama3.2",
+            host: str = "http://localhost:11434",
+            llm_specific_instructions=None,
+            max_concurrent_requests: int = 5,
+            callback: DebugCallback | None = None,
+        ):
+            self.client = ollama.AsyncClient(host=host)
+            self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+        async def _call_single_llm(
+            self, prompt: str, temperature: float, max_tokens: int
+        ) -> str:
+            """Call the LLM for a single prompt."""
+            try:
+                async with self.semaphore:
+                    response = await self.client.generate(
+                        model=self.model,
+                        prompt=prompt + self.extra_prompting,
+                        options={
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                        },
+                    )
+                    return response["response"]
+            except Exception as e:
+                warn(f"Olloma API call failed: {str(e)[:100]}...")
+                return ""
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            """Call the LLM for a single prompt with system prompt."""
+            try:
+                async with self.semaphore:
+                    response = await self.client.chat(
+                        model=self.model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": user_prompt + self.extra_prompting,
+                            },
+                        ],
+                        options={
+                            "temperature": temperature,
+                            "num_predict": max_tokens,
+                        },
+                    )
+                    return response["message"]["content"]
+            except Exception as e:
+                warn(f"Olloma API call failed: {str(e)[:100]}...")
+                return ""
+
+        async def _call_llm_batch(
+            self, prompts: List[str], temperature: float, max_tokens: int
+        ) -> List[str]:
+            """Process a batch of prompts concurrently."""
+            tasks = [
+                self._call_single_llm(prompt, temperature, max_tokens)
+                for prompt in prompts
+            ]
+            return await asyncio.gather(*tasks)
+
+        async def _call_llm_with_system_prompt_batch(
+            self,
+            system_prompts: List[str],
+            user_prompts: List[str],
+            temperature: float,
+            max_tokens: int,
+        ) -> List[str]:
+            """Process a batch of prompts with system prompts concurrently."""
+            if len(system_prompts) != len(user_prompts):
+                raise ValueError(
+                    "Number of system prompts must match number of user prompts"
+                )
+
+            tasks = [
+                self._call_single_llm_with_system(
+                    sys_prompt, user_prompt, temperature, max_tokens
+                )
+                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
+            ]
+            return await asyncio.gather(*tasks)
+
+except ImportError:
+
+    class OllamaNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncOllamaNamer(FailedImportAsyncLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)

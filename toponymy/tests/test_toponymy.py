@@ -4,10 +4,7 @@ from toponymy.llm_wrappers import (
     AsyncOllamaNamer,
     LLMWrapper,
 )
-from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.cluster_layer import ClusterLayerText
-from sentence_transformers import SentenceTransformer
 
 import itertools
 from sklearn.metrics import pairwise_distances
@@ -384,7 +381,7 @@ def test_toponymy_with_ollama(
             # Use the very small model for testing
             ollama_llm = OllamaNamer(
                 model=model_name,  # Very small model for CI
-                host="http://localhost:11434",
+                api_base="http://localhost:11434",
             )
 
             # Set a timeout for the entire model fitting process
@@ -569,7 +566,7 @@ def test_toponymy_async_ollama(
             # Use async Ollama with very limited concurrency for small models
             async_ollama_llm = AsyncOllamaNamer(
                 model=model_name,  # Very small model for CI
-                host="http://localhost:11434",
+                api_base="http://localhost:11434",
                 max_concurrent_requests=1,  # Very conservative for small models and CI
             )
 

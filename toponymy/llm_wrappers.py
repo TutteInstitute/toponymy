@@ -1163,6 +1163,10 @@ def _gemini_model(model: str) -> str:
     return f"gemini/{model}" if "gemini/" not in model else model
 
 
+def _ollama_model(model: str) -> str:
+    return f"ollama_chat/{model}" if "ollama_chat/" not in model else model
+
+
 try:
     import litellm
     from litellm.exceptions import (
@@ -3963,229 +3967,159 @@ except ImportError:
             super().__init__(*args, **kwds)
 
 
-try:
-    import ollama
+# Ollama
+def OllamaNamer(
+    model: str = "llama3.2",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    host: str | None = None,  # deprecated, renamed to api_base
+) -> LiteLLMNamer:
+    """
+    Convenience wrapper for a LiteLLMNamer configured for local Ollama use.
 
-    class OllamaNamer(LLMWrapper):
-        """
-        Provides access to Olloma's local LLMs with the Toponymy framework. Ollama allows you to run large language models locally.
-        For more information on Olloma, see https://ollama.ai/. You'll need to have Olloma installed and running locally.
+    For Ollama remote API use, use LiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
 
-        Parameters:
-        -----------
-        model: str
-            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
-            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
+    Parameters
+    ----------
+    model : str, optional
+        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
+        or bare Ollama format ("llama3.2") — both are accepted.
+    api_key : str, optional
+        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
+    api_base : str, optional
+        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    host : str, optional
+        Deprecated. Use ``api_base`` instead.
 
-        host: str, optional
-            The host URL for the Olloma API. Default is "http://localhost:11434".
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
+    Examples
+    --------
+    Basic usage::
 
-        Attributes:
-        -----------
-        client: ollama.Client
-            The Olloma client instance.
+        namer = OllamaNamer()
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        model: str
-            The name of the Olloma model being used.
+    Using a different model::
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+        namer = OllamaNamer(model="llama3.2")
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
-        """
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if host is not None:
+        warn(
+            "host is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or host or "http://localhost:11434"
 
-        def __init__(
-            self,
-            model: str = "llama3.2",
-            host: str = "http://localhost:11434",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            self.client = ollama.Client(host=host)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
+    return LiteLLMNamer(
+        model=_ollama_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.client.generate(
-                model=self.model,
-                prompt=prompt + self.extra_prompting,
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            )
-            return response["response"]
 
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.client.chat(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            )
-            return response["message"]["content"]
+def AsyncOllamaNamer(
+    model: str = "llama3.2",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 5,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    host: str | None = None,  # deprecated, renamed to api_base
+) -> LiteLLMNamer:
+    """
+    Convenience wrapper for a AsyncLiteLLMNamer configured for local Ollama use.
 
-    class AsyncOllamaNamer(AsyncLLMWrapper):
-        """
-        Provides access to Olloma's local LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        Olloma allows you to run large language models locally. For more information on Olloma, see https://ollama.ai/.
-        You'll need to have Olloma installed and running locally.
+    For Ollama remote API use, use AsyncLiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
 
-        Parameters:
-        -----------
-        model: str
-            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
-            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
+    Parameters
+    ----------
+    model : str, optional
+        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
+        or bare Ollama format ("llama3.2") — both are accepted.
+    api_key : str, optional
+        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
+    api_base : str, optional
+        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests. Default is 5. This can be adjusted based on your
+        application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    host : str, optional
+        Deprecated. Use ``api_base`` instead.
 
-        host: str, optional
-            The host URL for the Olloma API. Default is "http://localhost:11434".
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
+    Examples
+    --------
+    Basic usage::
 
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Olloma API. Default is 5. Since Olloma runs locally,
-            too many concurrent requests might overwhelm the local resources.
+        namer = AsyncOllamaNamer()
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        Attributes:
-        -----------
-        client: ollama.AsyncClient
-            The Olloma asynchronous client instance.
+    Using a different model::
 
-        model: str
-            The name of the Olloma model being used.
+        namer = AsyncOllamaNamer(model="llama3.2")
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
-        """
-
-        def __init__(
-            self,
-            model: str = "llama3.2",
-            host: str = "http://localhost:11434",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 5,
-            callback: DebugCallback | None = None,
-        ):
-            self.client = ollama.AsyncClient(host=host)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.generate(
-                        model=self.model,
-                        prompt=prompt + self.extra_prompting,
-                        options={
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
-                    )
-                    return response["response"]
-            except Exception as e:
-                warn(f"Olloma API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        options={
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
-                    )
-                    return response["message"]["content"]
-            except Exception as e:
-                warn(f"Olloma API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
-except ImportError:
-
-    class OllamaNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncOllamaNamer(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if host is not None:
+        warn(
+            "host is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or host or "http://localhost:11434"
+    return AsyncLiteLLMNamer(
+        model=_ollama_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
 
 def _resolve_gemini_api_key(api_key: str | None) -> str | None:

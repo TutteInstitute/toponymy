@@ -23,6 +23,7 @@ from toponymy.llm_wrappers import (
     ReplicateNamer,
     GoogleGeminiNamer,
 )
+from conftest import is_ollama_model_available
 
 from toponymy.tests.helpers.llm_test_config import (
     validate_cluster_names,
@@ -32,12 +33,6 @@ from toponymy.tests.helpers.llm_test_config import (
     UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
 )
 from toponymy.tests.helpers.errors import (
-    make_openai_error,
-    OPENAI_FAIL_FAST,
-    OPENAI_RETRYABLE,
-    ANTHROPIC_FAIL_FAST,
-    ANTHROPIC_RETRYABLE,
-    make_anthropic_error,
     LITELLM_FAIL_FAST,
     LITELLM_RETRYABLE,
     make_litellm_error,
@@ -132,7 +127,6 @@ class MockLLMResponse:
         return MockResponse(content)
 
 
-# Test callback support in all wrappers
 @pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
 def test_supported_namers_do_not_warn_on_callback(namer_cls, kwargs):
     callback = lambda payload: None
@@ -582,90 +576,43 @@ def test_azureai_namer_endpoint_maps_to_api_base():
 
 
 # Ollama Tests
-@pytest.fixture
-def ollama_wrapper():
-    with patch("ollama.Client"):
-        wrapper = OllamaNamer(model="llama3.2", host="http://localhost:11434")
-        return wrapper
+def test_ollama_connectivity_plain_sync_canary():
+    model = "llama3.2"
+    if not is_ollama_model_available(model):
+        pytest.skip(f"{model} not available in local Ollama")
+    namer = OllamaNamer(model=model)
+    result = namer.connectivity_status()
 
-
-def test_ollama_generate_topic_name_success(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(
-        return_value={"response": mock_data["valid_topic_name"]}
+    assert result["success"], (
+        f"Sync plain canary test failed for Ollama:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = ollama_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
+
+def test_ollama_namer_returns_litellm_namer():
+    namer = OllamaNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_ollama_generate_topic_name_success_system_prompt(ollama_wrapper, mock_data):
-    ollama_wrapper.client.chat = Mock(
-        return_value={"message": {"content": mock_data["valid_topic_name"]}}
-    )
-
-    result = ollama_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
+def test_ollama_namer_default():
+    namer = OllamaNamer()
+    assert namer.model == "ollama_chat/llama3.2"
+    assert namer.api_base == "http://localhost:11434"
 
 
-def test_ollama_generate_cluster_names_success(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(
-        return_value={"response": mock_data["valid_cluster_names"]}
-    )
+def test_ollama_namer_provider_kwargs_passthrough():
+    namer = OllamaNamer(provider_kwargs={"timeout": 123})
 
-    result = ollama_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_ollama_generate_cluster_names_success_system_prompt(ollama_wrapper, mock_data):
-    ollama_wrapper.client.chat = Mock(
-        return_value={"message": {"content": mock_data["valid_cluster_names"]}}
-    )
+def test_ollama_namer_host_maps_to_api_base():
+    """Remove once deprecation of host is complete"""
+    with pytest.warns(FutureWarning):
+        namer = OllamaNamer(host="http://localhost")
 
-    result = ollama_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_ollama_generate_cluster_names_success_on_malformed_mapping(
-    ollama_wrapper, mock_data
-):
-    ollama_wrapper.client.generate = Mock(
-        return_value={"response": mock_data["malformed_mapping"]}
-    )
-
-    result = ollama_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_ollama_generate_topic_name_failure(ollama_wrapper):
-    ollama_wrapper.client.generate = Mock(side_effect=Exception("API Error"))
-    result = ollama_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_ollama_generate_topic_name_failure_malformed_json(ollama_wrapper, mock_data):
-    response = MockLLMResponse.create_ollama_response(mock_data["malformed_json"])
-    ollama_wrapper.client.generate = Mock(return_value=response)
-    result = ollama_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_ollama_generate_cluster_names_failure(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(side_effect=Exception("API Error"))
-    result = ollama_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+    assert namer.api_base == "http://localhost"
 
 
 # Google Gemini Tests

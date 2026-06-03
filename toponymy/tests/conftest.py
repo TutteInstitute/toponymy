@@ -6,6 +6,7 @@ import pandas as pd
 import json
 import umap
 import pytest
+import httpx
 
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
@@ -43,6 +44,15 @@ def async_llm():
     #     llm_specific_instructions=" /no_think",
     #     max_concurrent_requests=4,
     # )
+
+
+def is_ollama_model_available(model_name):
+    try:
+        response = httpx.get("http://localhost:11434/api/tags")
+        models = [m["name"] for m in response.json()["models"]]
+        return any(model_name in m for m in models)
+    except Exception:
+        return False
 
 
 @pytest.fixture

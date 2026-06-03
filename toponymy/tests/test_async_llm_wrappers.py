@@ -3,7 +3,6 @@ import warnings
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
-
 import pytest_asyncio
 
 from toponymy.llm_wrappers import (
@@ -27,16 +26,12 @@ from toponymy.tests.helpers.llm_test_config import (
     UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
 )
 from toponymy.tests.helpers.errors import (
-    ANTHROPIC_FAIL_FAST,
-    ANTHROPIC_RETRYABLE,
-    make_anthropic_error,
-    OPENAI_FAIL_FAST,
-    OPENAI_RETRYABLE,
-    make_openai_error,
     LITELLM_FAIL_FAST,
     LITELLM_RETRYABLE,
     make_litellm_error,
 )
+
+from conftest import is_ollama_model_available
 
 LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
     "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
@@ -432,103 +427,45 @@ def test_async_azureai_namer_endpoint_maps_to_api_base():
 
 
 # AsyncOllama Tests
-@pytest_asyncio.fixture
-async def async_ollama_wrapper():
-    with patch("ollama.AsyncClient"):
-        wrapper = AsyncOllamaNamer(model="llama3.2", host="http://localhost:11434")
-        yield wrapper
-
-
+@pytest.mark.external
 @pytest.mark.asyncio
-async def test_async_ollama_generate_topic_names_success(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.generate = AsyncMock(
-        return_value={"response": mock_data["valid_topic_name"]}
+async def test_ollama_connectivity_async_plain_canary():
+    """
+    Canary test verifying live async connectivity to the Azure AI API
+    using the plain prompt path.
+    """
+    model = "llama3.2"
+    if not is_ollama_model_available(model):
+        pytest.skip(f"{model} not available in local Ollama")
+    namer = AsyncOllamaNamer(model=model)
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Ollama:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
     )
 
-    result = await async_ollama_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    validate_topic_name(result[0])
+
+def test_async_ollama_namer_default():
+    namer = AsyncOllamaNamer()
+
+    assert namer.model == "ollama_chat/llama3.2"
+    assert namer.api_base == "http://localhost:11434"
 
 
-@pytest.mark.asyncio
-async def test_async_ollama_generate_topic_names_system_prompt(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.chat = AsyncMock(
-        return_value={"message": {"content": mock_data["valid_topic_name"]}}
-    )
+def test_async_ollama_namer_provider_kwargs_passthrough():
+    namer = AsyncOllamaNamer(provider_kwargs={"timeout": 123})
 
-    result = await async_ollama_wrapper.generate_topic_names(
-        [{"system": "system prompt", "user": "test prompt"}]
-    )
-    assert len(result) == 1
-    validate_topic_name(result[0])
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-@pytest.mark.asyncio
-async def test_async_ollama_generate_topic_cluster_names_success(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.generate = AsyncMock(
-        return_value={"response": mock_data["valid_cluster_names"]}
-    )
+def test_async_ollama_namer_host_maps_to_api_base():
+    """Remove once deprecation of host is complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncOllamaNamer(host="http://localhost")
 
-    result = await async_ollama_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_ollama_generate_topic_cluster_names_system_prompt(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.chat = AsyncMock(
-        return_value={"message": {"content": mock_data["valid_cluster_names"]}}
-    )
-
-    result = await async_ollama_wrapper.generate_topic_cluster_names(
-        [{"system": "system prompt", "user": "test prompt"}], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    validate_cluster_names(result[0])
-
-
-@pytest.mark.asyncio
-async def test_async_ollama_generate_topic_names_failure(async_ollama_wrapper):
-    async_ollama_wrapper.client.generate = AsyncMock(side_effect=Exception("API Error"))
-    result = await async_ollama_wrapper.generate_topic_names(["test prompt"])
-    assert len(result) == 1
-    assert result[0] == ""
-
-
-@pytest.mark.asyncio
-async def test_async_ollama_generate_topic_cluster_names_failure(
-    async_ollama_wrapper, mock_data
-):
-    async_ollama_wrapper.client.generate = AsyncMock(side_effect=Exception("API Error"))
-    result = await async_ollama_wrapper.generate_topic_cluster_names(
-        ["test prompt"], [mock_data["old_names"]]
-    )
-    assert len(result) == 1
-    assert result[0] == mock_data["old_names"]
-
-
-@pytest.mark.asyncio
-async def test_async_ollama_batch_processing(async_ollama_wrapper, mock_data):
-    async_ollama_wrapper.client.generate = AsyncMock(
-        return_value={"response": mock_data["valid_topic_name"]}
-    )
-
-    # Test batch processing with multiple prompts
-    result = await async_ollama_wrapper.generate_topic_names(
-        ["prompt1", "prompt2", "prompt3"]
-    )
-    assert len(result) == 3
-    assert all(name == "Machine Learning" for name in result)
+    assert namer.api_base == "http://localhost"
 
 
 # AsyncGoogleGemini Tests

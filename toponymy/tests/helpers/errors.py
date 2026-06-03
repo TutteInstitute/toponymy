@@ -1,4 +1,17 @@
 import httpx
+
+
+def make_httpx_request(url: str) -> httpx.Request:
+    return httpx.Request("POST", url)
+
+
+def make_httpx_response(
+    status_code: int,
+    request: httpx.Request,
+) -> httpx.Response:
+    return httpx.Response(status_code, request=request)
+
+
 from openai import (
     AuthenticationError,
     PermissionDeniedError,
@@ -58,17 +71,6 @@ OPENAI_STATUS_CODES = {
     NotFoundError: 404,
     RateLimitError: 429,
 }
-
-
-def make_httpx_request(url: str) -> httpx.Request:
-    return httpx.Request("POST", url)
-
-
-def make_httpx_response(
-    status_code: int,
-    request: httpx.Request,
-) -> httpx.Response:
-    return httpx.Response(status_code, request=request)
 
 
 def make_openai_error(error_class):
