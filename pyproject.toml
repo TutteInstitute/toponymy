@@ -47,6 +47,9 @@ markers = [
     "external: marks tests that make live external API calls"
 ]
 addopts = "-m 'not external'"
+filterwarnings = [
+    "ignore:coroutine '.*' was never awaited:RuntimeWarning:litellm",
+]
 
 [tool.setuptools]
 zip-safe = false

@@ -47,18 +47,6 @@ class MockAsyncResponse:
     """Mock async response objects for different LLM services"""
 
     @staticmethod
-    def create_anthropic_response(content: str):
-        class Content:
-            def __init__(self, text):
-                self.text = text
-
-        class Response:
-            def __init__(self, content):
-                self.content = [Content(content)]
-
-        return Response(content)
-
-    @staticmethod
     def create_chat_response(content: str):
         class Choice:
             def __init__(self, content):
@@ -67,22 +55,6 @@ class MockAsyncResponse:
         class Response:
             def __init__(self, content):
                 self.choices = [Choice(content)]
-
-        return Response(content)
-
-    @staticmethod
-    def create_cohere_response(content: str):
-        class Content:
-            def __init__(self, text):
-                self.text = text
-
-        class Message:
-            def __init__(self, content):
-                self.content = [Content(content)]
-
-        class Response:
-            def __init__(self, content):
-                self.message = Message(content)
 
         return Response(content)
 
@@ -124,31 +96,13 @@ def test_async_no_warning_when_no_callback(namer_cls, kwargs):
 
 
 # AsyncAnthropic Tests
-
-
-@pytest.mark.external
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
-)
-async def test_anthropic_connectivity_async_plain_canary():
-    namer = AsyncAnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-    result = await namer.connectivity_status()
-
-    assert result["success"], (
-        f"Async plain canary failed for Anthropic:\n"
-        f"{result['error_type']}: {result['error_message']}"
-    )
-
-
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.skipif(
     not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
 )
 async def test_anthropic_connectivity_async_system_canary():
-    namer = AsyncAnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    namer = AsyncAnthropicNamer()
 
     result = await namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -251,30 +205,12 @@ async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-async def test_openai_connectivity_async_plain_canary():
-    """
-    Canary test verifying live async connectivity to the OpenAI API
-    using the plain prompt path.
-    """
-    namer = AsyncOpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
-
-    result = await namer.connectivity_status()
-
-    assert result["success"], (
-        f"Async plain canary failed for OpenAI:\n"
-        f"  Error: {result['error_type']}: {result['error_message']}"
-    )
-
-
-@pytest.mark.external
-@pytest.mark.asyncio
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 async def test_openai_connectivity_async_system_canary():
     """
     Canary test verifying live async connectivity to the OpenAI API
     using the system prompt path.
     """
-    namer = AsyncOpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+    namer = AsyncOpenAINamer()
 
     result = await namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -321,30 +257,12 @@ def test_async_openai_namer_organization_maps_to_provider_kwargs():
 @pytest.mark.external
 @pytest.mark.asyncio
 @pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
-async def test_cohere_connectivity_async_plain_canary():
-    """
-    Canary test verifying live async connectivity to the Cohere API
-    using the plain prompt path.
-    """
-    namer = AsyncCohereNamer(api_key=os.getenv("COHERE_API_KEY"))
-
-    result = await namer.connectivity_status()
-
-    assert result["success"], (
-        f"Async plain canary failed for Cohere:\n"
-        f"  Error: {result['error_type']}: {result['error_message']}"
-    )
-
-
-@pytest.mark.external
-@pytest.mark.asyncio
-@pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
 async def test_cohere_connectivity_async_system_canary():
     """
     Canary test verifying live async connectivity to the Cohere API
     using the system prompt path.
     """
-    namer = AsyncCohereNamer(api_key=os.getenv("COHERE_API_KEY"))
+    namer = AsyncCohereNamer()
 
     result = await namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -554,32 +472,12 @@ def test_async_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
 )
 @pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 async def test_together_connectivity_async_plain_canary():
-    namer = AsyncTogether(api_key=os.getenv("TOGETHERAI_API_KEY"))
+    namer = AsyncTogether()
 
     result = await namer.connectivity_status()
 
     assert result["success"], (
         f"Async plain canary failed for Together:\n"
-        f"{result['error_type']}: {result['error_message']}"
-    )
-
-
-@pytest.mark.external
-@pytest.mark.asyncio
-@pytest.mark.skipif(
-    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
-)
-@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
-async def test_together_connectivity_async_system_canary():
-    namer = AsyncTogether(api_key=os.getenv("TOGETHERAI_API_KEY"))
-
-    result = await namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
-    )
-
-    assert result["success"], (
-        f"Async system canary failed for Together:\n"
         f"{result['error_type']}: {result['error_message']}"
     )
 

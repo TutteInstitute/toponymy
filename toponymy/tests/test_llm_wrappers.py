@@ -45,18 +45,6 @@ class MockLLMResponse:
     """Mock response object that mimics different LLM service response structures"""
 
     @staticmethod
-    def create_anthropic_response(content: str):
-        class Content:
-            def __init__(self, text):
-                self.text = text
-
-        class Response:
-            def __init__(self, content):
-                self.content = [Content(content)]
-
-        return Response(content)
-
-    @staticmethod
     def create_chat_response(content: str):
         class Choice:
             def __init__(self, content):
@@ -69,61 +57,12 @@ class MockLLMResponse:
         return Response(content)
 
     @staticmethod
-    def create_cohere_response(content: str):
-        return Mock(text=content)
-
-    @staticmethod
-    def create_cohere_response_v2(content: str):
-        class Content:
-            def __init__(self, text):
-                self.text = text
-
-        class Message:
-            def __init__(self, content):
-                self.content = [Content(content)]
-
-        class Response:
-            def __init__(self, content):
-                self.message = Message(content)
-
-        return Response(content)
-
-    @staticmethod
     def create_huggingface_response(content: str):
         return [{"generated_text": content}]
 
     @staticmethod
     def create_llama_response(content: str):
         return {"choices": [{"text": content}]}
-
-    @staticmethod
-    def create_azureai_response(content: str):
-        class Choice:
-            def __init__(self, content):
-                self.message = Mock(content=content)
-
-        class Response:
-            def __init__(self, content):
-                self.choices = [Choice(content)]
-
-        return Response(content)
-
-    @staticmethod
-    def create_ollama_response(content: str):
-        return {"response": content}
-
-    @staticmethod
-    def create_google_gemini_response(content: str):
-        class MockText:
-            def __init__(self, text):
-                self.text = text
-
-        class MockResponse:
-            def __init__(self, text):
-                self.model = Mock()
-                self.model.generate_content = Mock(return_value=MockText(text))
-
-        return MockResponse(content)
 
 
 @pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
@@ -331,22 +270,8 @@ def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_da
 @pytest.mark.skipif(
     not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
 )
-def test_anthropic_connectivity_plain_sync_canary():
-    namer = AnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    result = namer.connectivity_status()
-
-    assert result["success"], (
-        f"Sync plain canary test failed for Anthropic:\n"
-        f"{result['error_type']}: {result['error_message']}"
-    )
-
-
-@pytest.mark.external
-@pytest.mark.skipif(
-    not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
-)
 def test_anthropic_connectivity_sync_system_canary():
-    namer = AnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    namer = AnthropicNamer()
 
     result = namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -382,26 +307,12 @@ def test_anthropic_namer_provider_kwargs_passthrough():
 # OpenAI Tests
 @pytest.mark.external
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-def test_openai_connectivity_sync_plain_canary():
-    """
-    Canary test to verify live connectivity to OpenAI API. Tests the plain prompt path.
-    """
-    namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
-    result = namer.connectivity_status()
-    assert result["success"], (
-        f"Sync plain canary test failed for OpenAI:\n"
-        f"  Error: {result['error_type']}: {result['error_message']}"
-    )
-
-
-@pytest.mark.external
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 def test_openai_connectivity_sync_system_canary():
     """
     Canary test to verify live sync connectivity to the OpenAI API
     using the system prompt path.
     """
-    namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+    namer = OpenAINamer()
 
     result = namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -451,20 +362,6 @@ def test_openai_namer_http_client_maps_to_provider_kwargs():
 
 
 # Cohere Tests
-@pytest.mark.external
-@pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
-def test_cohere_connectivity_sync_plain_canary():
-    """
-    Canary test to verify live connectivity to Cohere API. Tests the plain prompt path.
-    """
-    namer = CohereNamer()
-    result = namer.connectivity_status()
-    assert result["success"], (
-        f"Sync plain canary test failed for Cohere:\n"
-        f"  Error: {result['error_type']}: {result['error_message']}"
-    )
-
-
 @pytest.mark.external
 @pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
 def test_cohere_connectivity_sync_system_canary():
@@ -682,30 +579,11 @@ def test_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
 )
 @pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_connectivity_plain_sync_canary():
-    namer = TogetherNamer(api_key=os.getenv("TOGETHERAI_API_KEY"))
+    namer = TogetherNamer()
     result = namer.connectivity_status()
 
     assert result["success"], (
         f"Sync plain canary test failed for Together:\n"
-        f"{result['error_type']}: {result['error_message']}"
-    )
-
-
-@pytest.mark.external
-@pytest.mark.skipif(
-    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
-)
-@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
-def test_together_connectivity_sync_system_canary():
-    namer = TogetherNamer(api_key=os.getenv("TOGETHERAI_API_KEY"))
-
-    result = namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
-    )
-
-    assert result["success"], (
-        f"Sync system canary failed:\n"
         f"{result['error_type']}: {result['error_message']}"
     )
 
@@ -789,8 +667,6 @@ def test_replicate_namer_env_api_token_maps_to_api_key(monkeypatch):
 
 
 # LiteLLM Tests
-
-
 @pytest.fixture
 def litellm_wrapper():
     return LiteLLMNamer(

@@ -23,17 +23,6 @@ from openai import (
     APIError,
 )
 
-from anthropic import (
-    AuthenticationError as AnthropicAuthenticationError,
-    PermissionDeniedError as AnthropicPermissionDeniedError,
-    BadRequestError as AnthropicBadRequestError,
-    NotFoundError as AnthropicNotFoundError,
-    RateLimitError as AnthropicRateLimitError,
-    APITimeoutError as AnthropicAPITimeoutError,
-    APIConnectionError as AnthropicAPIConnectionError,
-    APIStatusError as AnthropicAPIStatusError,
-)
-
 from litellm.exceptions import (
     AuthenticationError as LiteLLMAuthenticationError,
     PermissionDeniedError as LiteLLMPermissionDeniedError,
@@ -107,65 +96,6 @@ def make_openai_error(error_class):
 
     else:
         raise ValueError(f"Unknown error class: {error_class}")
-
-
-## Anthropic errors
-ANTHROPIC_FAIL_FAST = (
-    AnthropicAuthenticationError,
-    AnthropicPermissionDeniedError,
-    AnthropicBadRequestError,
-    AnthropicNotFoundError,
-)
-
-ANTHROPIC_RETRYABLE = (
-    AnthropicRateLimitError,
-    AnthropicAPITimeoutError,
-    AnthropicAPIConnectionError,
-    AnthropicAPIStatusError,
-)
-
-ANTHROPIC_STATUS_CODES = {
-    AnthropicBadRequestError: 400,
-    AnthropicAuthenticationError: 401,
-    AnthropicPermissionDeniedError: 403,
-    AnthropicNotFoundError: 404,
-    AnthropicRateLimitError: 429,
-}
-
-
-def make_anthropic_error(error_class):
-    message = TEST_ERROR_MESSAGE
-    request = make_httpx_request("https://api.anthropic.com/v1/messages")
-    status = ANTHROPIC_STATUS_CODES.get(error_class, 500)
-    response = make_httpx_response(status, request)
-
-    body = {
-        "type": "error",
-        "error": {
-            "type": "test_error",
-            "message": message,
-        },
-    }
-
-    if error_class in (
-        AnthropicAuthenticationError,
-        AnthropicPermissionDeniedError,
-        AnthropicBadRequestError,
-        AnthropicNotFoundError,
-        AnthropicRateLimitError,
-    ):
-        return error_class(message=message, response=response, body=body)
-
-    if error_class is AnthropicAPITimeoutError:
-        return error_class(request=request)
-
-    if error_class is AnthropicAPIConnectionError:
-        return error_class(message=message, request=request)
-
-    if error_class is AnthropicAPIStatusError:
-        return error_class(message=message, response=response, body=body)
-
-    raise ValueError(f"Unknown error class: {error_class}")
 
 
 # LiteLLM Errors
