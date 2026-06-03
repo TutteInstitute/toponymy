@@ -387,6 +387,24 @@ def test_async_cohere_namer_httpx_client_maps_to_provider_kwargs():
     assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
 
 
+def test_async_cohere_namer_env_co_api_key_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    monkeypatch.setenv("CO_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer()
+
+    assert namer.api_key == "dummy"
+
+
+def test_async_cohere_namer_env_co_api_url_maps_to_api_base(monkeypatch):
+    monkeypatch.delenv("COHERE_API_BASE", raising=False)
+    monkeypatch.setenv("CO_API_URL", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer()
+
+    assert namer.api_base == "dummy"
+
+
 # AsyncAzureAI Tests
 @pytest.mark.external
 @pytest.mark.asyncio
@@ -424,6 +442,15 @@ def test_async_azureai_namer_endpoint_maps_to_api_base():
     namer = AsyncAzureAINamer(model="dummy", endpoint="http://localhost")
 
     assert namer.api_base == "http://localhost"
+
+
+def test_async_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("AZURE_AI_API_KEY", raising=False)
+    monkeypatch.setenv("AZURE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncAzureAINamer(model="dummy")
+
+    assert namer.api_key == "dummy"
 
 
 # AsyncOllama Tests
@@ -508,6 +535,15 @@ def test_async_gemini_namer_provider_kwargs_passthrough():
     namer = AsyncGoogleGeminiNamer(provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncGoogleGeminiNamer()
+
+    assert namer.api_key == "dummy"
 
 
 # AsyncTogether Tests

@@ -7,7 +7,6 @@ import os
 
 from toponymy.llm_wrappers import (
     LiteLLMNamer,
-    repair_json_string_backslashes,
     FailFastLLMError,
 )
 from toponymy.llm_wrappers import (
@@ -458,7 +457,7 @@ def test_cohere_connectivity_sync_plain_canary():
     """
     Canary test to verify live connectivity to Cohere API. Tests the plain prompt path.
     """
-    namer = CohereNamer(api_key=os.getenv("COHERE_API_KEY"))
+    namer = CohereNamer()
     result = namer.connectivity_status()
     assert result["success"], (
         f"Sync plain canary test failed for Cohere:\n"
@@ -473,8 +472,7 @@ def test_cohere_connectivity_sync_system_canary():
     Canary test to verify live sync connectivity to the Cohere API
     using the system prompt path.
     """
-    namer = CohereNamer(api_key=os.getenv("COHERE_API_KEY"))
-
+    namer = CohereNamer()
     result = namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
@@ -514,12 +512,30 @@ def test_cohere_namer_base_url_maps_to_api_base():
     assert namer.api_base == "http://localhost"
 
 
+def test_cohere_namer_env_co_api_base_maps_to_api_base(monkeypatch):
+    monkeypatch.delenv("COHERE_API_BASE", raising=False)
+    monkeypatch.setenv("CO_API_URL", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = CohereNamer()
+
+    assert namer.api_base == "dummy"
+
+
 def test_cohere_namer_httpx_client_maps_to_provider_kwargs():
     """Remove once deprecation of http_client complete"""
     with pytest.warns(FutureWarning):
         namer = CohereNamer(httpx_client="httpx.Client(timeout=123)")
 
     assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
+
+
+def test_cohere_namer_env_co_api_url_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    monkeypatch.setenv("CO_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = CohereNamer()
+
+    assert namer.api_key == "dummy"
 
 
 # AzureAI Tests
@@ -560,19 +576,13 @@ def test_azureai_namer_endpoint_maps_to_api_base():
     assert namer.api_base == "http://localhost"
 
 
-# @pytest.skip("Not quite sure this is right yet")
-# def test_importerror_handling():
-#     """Test that import errors are properly handled"""
-#     with patch.dict('sys.modules', {'anthropic': None}):
-#         from importlib import reload
-#         import sys
+def test_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("AZURE_AI_API_KEY", raising=False)
+    monkeypatch.setenv("AZURE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AzureAINamer(model="dummy")
 
-#         # Force reload of the module to trigger ImportError handling
-#         if 'toponymy.llm_wrappers' in sys.modules:
-#             reload(sys.modules['toponymy.llm_wrappers'])
-
-#         # Verify that the Anthropic class is not available
-#         assert 'Anthropic' not in globals()
+    assert namer.api_key == "dummy"
 
 
 # Ollama Tests
@@ -656,6 +666,15 @@ def test_gemini_namer_provider_kwargs_passthrough():
     assert namer.provider_kwargs["timeout"] == 123
 
 
+def test_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = GoogleGeminiNamer()
+
+    assert namer.api_key == "dummy"
+
+
 # Together Tests
 @pytest.mark.external
 @pytest.mark.skipif(
@@ -713,71 +732,60 @@ def test_together_namer_provider_kwargs_passthrough():
 
 
 # Replicate Tests
-@pytest.fixture
-def replicate_wrapper():
-    with patch("replicate.run"):
-        wrapper = ReplicateNamer(api_token="dummy", model="meta/llama-2-70b-chat")
-        return wrapper
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("REPLICATE_API_KEY"), reason="REPLICATE_API_KEY not set"
+)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_connectivity_plain_sync_canary():
+    namer = ReplicateNamer()
+    result = namer.connectivity_status()
+
+    assert result["success"], (
+        f"Sync plain canary test failed for Replicate:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
 
 
-def test_replicate_generate_topic_name_success(replicate_wrapper, mock_data):
-    with patch("replicate.run", return_value=[mock_data["valid_topic_name"]]):
-        result = replicate_wrapper.generate_topic_name("test prompt")
-        validate_topic_name(result)
+def test_replicate_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = ReplicateNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_replicate_generate_topic_name_success_system_prompt(
-    replicate_wrapper, mock_data
-):
-    with patch("replicate.run", return_value=[mock_data["valid_topic_name"]]):
-        result = replicate_wrapper.generate_topic_name(
-            {"system": "system prompt", "user": "test prompt"}
-        )
-        validate_topic_name(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_default():
+    namer = ReplicateNamer()
+
+    assert namer.model == "replicate/meta/llama-2-70b-chat"
+    assert namer.use_json_object is False
 
 
-def test_replicate_generate_cluster_names_success(replicate_wrapper, mock_data):
-    with patch("replicate.run", return_value=[mock_data["valid_cluster_names"]]):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"]
-        )
-        validate_cluster_names(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_provider_kwargs_passthrough():
+    namer = ReplicateNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_replicate_generate_cluster_names_success_system_prompt(
-    replicate_wrapper, mock_data
-):
-    with patch("replicate.run", return_value=[mock_data["valid_cluster_names"]]):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-        )
-        validate_cluster_names(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_api_token_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("REPLICATE_API_KEY", raising=False)
+    with pytest.warns(FutureWarning):
+        namer = ReplicateNamer(api_token="dummy")
+
+    assert namer.api_key == "dummy"
 
 
-def test_replicate_generate_cluster_names_success_on_malformed_mapping(
-    replicate_wrapper, mock_data
-):
-    with patch("replicate.run", return_value=[mock_data["malformed_mapping"]]):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"]
-        )
-        validate_cluster_names(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_env_api_token_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("REPLICATE_API_KEY", raising=False)
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = ReplicateNamer()
 
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_replicate_generate_topic_name_failure(replicate_wrapper):
-    with patch("replicate.run", side_effect=Exception("API Error")):
-        result = replicate_wrapper.generate_topic_name("test prompt")
-        assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_replicate_generate_cluster_names_failure(replicate_wrapper, mock_data):
-    with patch("replicate.run", side_effect=Exception("API Error")):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"]
-        )
-        assert result == mock_data["old_names"]
+    assert namer.api_key == "dummy"
 
 
 # LiteLLM Tests
@@ -1058,46 +1066,3 @@ def test_litellm_system_prompt_probe_success_caches_true(
 
     assert result == mock_data["valid_topic_name"]
     assert litellm_wrapper._system_prompt_capability is True
-
-
-def test_repair_json_string_backslashes_already_valid():
-    """Test that valid JSON strings are not modified."""
-
-    valid_json = '{"key": "value with \\"quotes\\" inside"}'
-    result = repair_json_string_backslashes(valid_json)
-    assert result == valid_json
-
-
-def test_repair_json_string_backslashes_unescaped():
-    """Test repairing strings with unescaped backslashes."""
-
-    invalid_json = '{"topic_name": "Machine Learning\\ML"}'
-    expected = '{"topic_name": "Machine Learning\\\\ML"}'
-    result = repair_json_string_backslashes(invalid_json)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_mixed():
-    """Test repairing strings with both properly escaped and unescaped backslashes."""
-
-    mixed_json = '{"path": "C:\\Users\\username", "quoted": "with \\"quotes\\""}'
-    expected = '{"path": "C:\\\\Users\\\\username", "quoted": "with \\"quotes\\""}'
-    result = repair_json_string_backslashes(mixed_json)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_all_escape_sequences():
-    """Test that all valid escape sequences are preserved."""
-
-    json_with_escapes = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\x"}'
-    expected = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\\\x"}'
-    result = repair_json_string_backslashes(json_with_escapes)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_empty():
-    """Test with empty string."""
-
-    empty = ""
-    result = repair_json_string_backslashes(empty)
-    assert result == empty

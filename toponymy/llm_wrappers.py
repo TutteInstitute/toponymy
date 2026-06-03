@@ -1167,6 +1167,36 @@ def _ollama_model(model: str) -> str:
     return f"ollama_chat/{model}" if "ollama_chat/" not in model else model
 
 
+def _replicate_model(model: str) -> str:
+    return f"replicate/{model}" if "replicate/" not in model else model
+
+
+def _resolve_api_key(
+    api_key: str | None,
+    env_new: str | None,
+    env_legacy: str | None,
+) -> str | None:
+    """Helper function to migrate from the old environment variables to the new ones, while still allowing explicit API keys to take precedence."""
+    if api_key is not None:
+        return api_key
+
+    new_key = os.getenv(env_new)
+    legacy_key = os.getenv(env_legacy)
+
+    if new_key:
+        return new_key
+
+    if legacy_key:
+        warn(
+            f"{env_legacy} is deprecated. Use {env_new} instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_key
+
+    return None
+
+
 try:
     import litellm
     from litellm.exceptions import (
@@ -1847,30 +1877,7 @@ def AsyncAnthropicNamer(
     )
 
 
-def _resolve_cohere_api_key(api_key: str | None) -> str | None:
-    """Helper function to migrate from the old CO_API_KEY environment variable to the new COHERE_API_KEY, while still allowing explicit API keys to take precedence."""
-    if api_key is not None:
-        return api_key
-
-    new_key = os.getenv("COHERE_API_KEY")
-    legacy_key = os.getenv("CO_API_KEY")
-
-    if new_key:
-        return new_key
-
-    if legacy_key:
-        warn(
-            "CO_API_KEY is deprecated and will be removed before 1.0. "
-            "Please rename it to COHERE_API_KEY.",
-            FutureWarning,
-            stacklevel=3,
-        )
-        return legacy_key
-
-    return None
-
-
-def _resolve_api_base(
+def _resolve_cohere_api_base(
     api_base: str | None,
     base_url: str | None,
     env_new: str = "COHERE_API_BASE",
@@ -1984,8 +1991,10 @@ def CohereNamer(
         provider_kwargs["httpx_client"] = httpx_client
     return LiteLLMNamer(
         model=_cohere_model(model),
-        api_key=_resolve_cohere_api_key(api_key),
-        api_base=_resolve_api_base(api_base, base_url),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="COHERE_API_KEY", env_legacy="CO_API_KEY"
+        ),
+        api_base=_resolve_cohere_api_base(api_base, base_url),
         use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
         disable_system_prompts=False,
         llm_specific_instructions=llm_specific_instructions,
@@ -2077,8 +2086,10 @@ def AsyncCohereNamer(
         provider_kwargs["httpx_client"] = httpx_client
     return AsyncLiteLLMNamer(
         model=_cohere_model(model),
-        api_key=_resolve_cohere_api_key(api_key),
-        api_base=_resolve_api_base(api_base, base_url),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="COHERE_API_KEY", env_legacy="CO_API_KEY"
+        ),
+        api_base=_resolve_cohere_api_base(api_base, base_url),
         disable_system_prompts=False,
         use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
         llm_specific_instructions=llm_specific_instructions,
@@ -3448,98 +3459,6 @@ def AsyncOpenAINamer(
     )
 
 
-try:
-    import replicate
-
-    class ReplicateNamer(LLMWrapper):
-        """
-        Provides access to Replicate's LLMs with the Toponymy framework. Replicate provides access to various models including Llama, GPT-J, and others.
-        For more information on Replicate, see https://replicate.com/. You will need a Replicate API token to use this wrapper.
-
-        Parameters:
-        -----------
-        api_token: str
-            Your Replicate API token. You can set this as an environment variable REPLICATE_API_TOKEN or pass it directly.
-
-        model: str, optional
-            The name of the Replicate model to use. Default is "meta/llama-2-70b-chat".
-            Models are specified in the format "owner/model:version" or "owner/model" for latest.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-        model: str
-            The name of the Replicate model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Replicate, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_token: str = None,
-            model: str = "meta/llama-2-70b-chat",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_token = api_token or os.getenv("REPLICATE_API_TOKEN")
-            if not api_token:
-                raise ValueError(
-                    "Replicate API token is required. Set it as an environment variable REPLICATE_API_TOKEN or pass it directly to the constructor."
-                )
-
-            os.environ["REPLICATE_API_TOKEN"] = api_token
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            output = replicate.run(
-                self.model,
-                input={
-                    "prompt": prompt + self.extra_prompting,
-                    "temperature": temperature,
-                    "max_new_tokens": max_tokens,
-                },
-            )
-            return "".join(output)
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            # Replicate models typically handle system prompts differently
-            # We combine them in a chat format
-            combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}\n\nAssistant:"
-
-            output = replicate.run(
-                self.model,
-                input={
-                    "prompt": combined_prompt,
-                    "temperature": temperature,
-                    "max_new_tokens": max_tokens,
-                },
-            )
-            return "".join(output)
-
-except ImportError:
-
-    class ReplicateNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-
 def AzureAINamer(
     model: str,
     api_key: str | None = None,
@@ -3600,7 +3519,9 @@ def AzureAINamer(
     resolved_endpoint = api_base or endpoint
     return LiteLLMNamer(
         model=_azure_model(model),
-        api_key=api_key,
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="AZURE_AI_API_KEY", env_legacy="AZURE_API_KEY"
+        ),
         api_base=resolved_endpoint,
         use_json_object=True,
         disable_system_prompts=False,
@@ -3675,7 +3596,9 @@ def AsyncAzureAINamer(
     resolved_endpoint = api_base or endpoint
     return AsyncLiteLLMNamer(
         model=_azure_model(model),
-        api_key=api_key,
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="AZURE_AI_API_KEY", env_legacy="AZURE_API_KEY"
+        ),
         api_base=resolved_endpoint,
         disable_system_prompts=False,
         use_json_object=True,
@@ -4122,29 +4045,6 @@ def AsyncOllamaNamer(
     )
 
 
-def _resolve_gemini_api_key(api_key: str | None) -> str | None:
-    """Helper function to migrate from the old GOOGLE_API_KEY environment variable to the litellm GEMINI_API_KEY, while still allowing explicit API keys to take precedence."""
-    if api_key is not None:
-        return api_key
-
-    new_key = os.getenv("GEMINI_API_KEY")
-    legacy_key = os.getenv("GOOGLE_API_KEY")
-
-    if new_key:
-        return new_key
-
-    if legacy_key:
-        warn(
-            "GOOGLE_API_KEY is deprecated and will be removed. "
-            "Please rename it to GEMINI_API_KEY.",
-            FutureWarning,
-            stacklevel=3,
-        )
-        return legacy_key
-
-    return None
-
-
 def GoogleGeminiNamer(
     model: str = "gemini-2.5-flash-lite",
     api_key: str | None = None,
@@ -4212,7 +4112,9 @@ def GoogleGeminiNamer(
     )
     return LiteLLMNamer(
         model=_gemini_model(model),
-        api_key=_resolve_gemini_api_key(api_key),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="GEMINI_API_KEY", env_legacy="GOOGLE_API_KEY"
+        ),
         api_base=api_base,
         use_json_object=True,
         disable_system_prompts=False,
@@ -4292,12 +4194,118 @@ def AsyncGoogleGeminiNamer(
     )
     return AsyncLiteLLMNamer(
         model=_gemini_model(model),
-        api_key=_resolve_gemini_api_key(api_key),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="GEMINI_API_KEY", env_legacy="GOOGLE_API_KEY"
+        ),
         api_base=api_base,
         disable_system_prompts=False,
         use_json_object=True,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def _resolve_replicate_api_key(
+    api_key: str | None, api_token: str | None
+) -> str | None:
+    """Helper function to migrate from the old REPLICATE_API_TOKEN environment variable and api_token to the new REPLICATE_API_KEY, while still allowing explicit API keys to take precedence."""
+    if api_key is not None:
+        return api_key
+
+    new_key = os.getenv("REPLICATE_API_KEY")
+    legacy_key = os.getenv("REPLICATE_API_TOKEN")
+
+    if new_key:
+        return new_key
+
+    if api_token is not None:
+        warn(
+            "api_token is deprecated and will be removed before 1.0. "
+            "Please rename it to api_key.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return api_token
+
+    if legacy_key:
+        warn(
+            "REPLICATE_API_TOKEN is deprecated and will be removed before 1.0. "
+            "Please rename it to REPLICATE_API_KEY.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_key
+
+    return None
+
+
+def ReplicateNamer(
+    model: str = "meta/llama-2-70b-chat",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    api_token: str = None,
+) -> LiteLLMNamer:
+    """
+    Deprecated. Use LiteLLMNamer(model="replicate/<model>") directly instead.
+
+    Parameters
+    ----------
+    model : str, optional
+        Replicate model to use. Default is "meta/llama-2-70b-chat".
+        May be in LiteLLM format ("replicate/"meta/llama-2-70b-chat") or bare Replicate format ("meta/llama-2-70b-chat") — both are accepted.
+    api_key : str, optional
+        Replicate API key. Falls back to the REPLICATE_API_KEY environment variable.
+    api_base : str, optional
+        Override the Replicate API endpoint. Falls back to REPLICATE_API_BASE.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    api_token : str, optional
+        Deprecated alias for api_key. Use api_key instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = ReplicateNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "ReplicateNamer is deprecated and will be removed in a future "
+            "release. Use LiteLLMNamer(model='replicate/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return LiteLLMNamer(
+        model=_replicate_model(model),
+        api_key=_resolve_replicate_api_key(api_key=api_key, api_token=api_token),
+        api_base=api_base,
+        use_json_object=False,  # Replicate's API does not support this
+        llm_specific_instructions=llm_specific_instructions,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )

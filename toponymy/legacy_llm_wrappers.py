@@ -1740,3 +1740,95 @@ except ImportError:
     class AsyncOllamaNamer(FailedImportAsyncLLMWrapper):
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
+
+
+try:
+    import replicate
+
+    class ReplicateNamerLegacy(LLMWrapper):
+        """
+        Provides access to Replicate's LLMs with the Toponymy framework. Replicate provides access to various models including Llama, GPT-J, and others.
+        For more information on Replicate, see https://replicate.com/. You will need a Replicate API token to use this wrapper.
+
+        Parameters:
+        -----------
+        api_token: str
+            Your Replicate API token. You can set this as an environment variable REPLICATE_API_TOKEN or pass it directly.
+
+        model: str, optional
+            The name of the Replicate model to use. Default is "meta/llama-2-70b-chat".
+            Models are specified in the format "owner/model:version" or "owner/model" for latest.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        Attributes:
+        -----------
+        model: str
+            The name of the Replicate model being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        supports_system_prompts: bool
+            Indicates whether the wrapper supports system prompts. For Replicate, this is always True.
+        """
+
+        def __init__(
+            self,
+            api_token: str = None,
+            model: str = "meta/llama-2-70b-chat",
+            llm_specific_instructions=None,
+            callback: DebugCallback | None = None,
+        ):
+            api_token = api_token or os.getenv("REPLICATE_API_TOKEN")
+            if not api_token:
+                raise ValueError(
+                    "Replicate API token is required. Set it as an environment variable REPLICATE_API_TOKEN or pass it directly to the constructor."
+                )
+
+            os.environ["REPLICATE_API_TOKEN"] = api_token
+            self.model = model
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            output = replicate.run(
+                self.model,
+                input={
+                    "prompt": prompt + self.extra_prompting,
+                    "temperature": temperature,
+                    "max_new_tokens": max_tokens,
+                },
+            )
+            return "".join(output)
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            # Replicate models typically handle system prompts differently
+            # We combine them in a chat format
+            combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}\n\nAssistant:"
+
+            output = replicate.run(
+                self.model,
+                input={
+                    "prompt": combined_prompt,
+                    "temperature": temperature,
+                    "max_new_tokens": max_tokens,
+                },
+            )
+            return "".join(output)
+
+except ImportError:
+
+    class ReplicateNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)

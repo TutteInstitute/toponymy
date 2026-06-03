@@ -116,10 +116,10 @@ SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
     (AzureAINamer, {"model": "dummy"}),
     (GoogleGeminiNamer, {}),
     (OllamaNamer, {}),
+    (ReplicateNamer, {}),
 ]
 UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS = [
     (HuggingFaceNamer, {"model": "hf-internal-testing/tiny-random-gpt2"}),
-    (ReplicateNamer, {"api_token": "dummy"}),
     # exclude namers needing mocking to get around setup
     # (VLLMNamer, {}),
     # (LlamaCppNamer, {"model_path": "dummy/path/to/model.gguf"}),
