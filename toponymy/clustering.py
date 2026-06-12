@@ -1,23 +1,21 @@
 from abc import ABC, abstractmethod
-import numpy as np
-import numba
-from fast_hdbscan.cluster_trees import (
-    mst_to_linkage_tree,
-    condense_tree,
-    extract_leaves,
-    get_cluster_label_vector,
-)
-from fast_hdbscan.boruvka import parallel_boruvka
-from fast_hdbscan.numba_kdtree import build_kdtree
-from sklearn.neighbors import KDTree
-from typing import List, Tuple, Dict, Type, Any, Optional
-from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
-from typing import List, Tuple, Dict, Type, Any, Optional, NewType
-from toponymy._utils import handle_verbose_params
+from typing import Any, Dict, List, NewType, Optional, Tuple, Type
 
+import numba
+import numpy as np
+from fast_hdbscan.boruvka import parallel_boruvka
+from fast_hdbscan.cluster_trees import condense_tree, extract_leaves
+from fast_hdbscan.numba_kdtree import build_kdtree
+from fast_plscan import PLSCAN
 from sklearn.cluster import KMeans
+from sklearn.neighbors import KDTree
+
+from toponymy._utils import handle_verbose_params
+from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
 
 ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
+
+from fast_hdbscan.cluster_trees import get_cluster_label_vector
 
 
 @numba.njit(cache=True)
@@ -133,6 +131,8 @@ def build_raw_cluster_layers(
     List[np.ndarray]
         A list of numpy arrays, each representing cluster labels for a layer.
     """
+    from fast_hdbscan.cluster_trees import mst_to_linkage_tree
+
     n_samples = data.shape[0]
     cluster_layers: List[np.ndarray] = []
     min_cluster_size: np.signedinteger = np.intp(base_min_cluster_size)
@@ -570,6 +570,153 @@ class KMeansClusterer(Clusterer):
                 show_progress_bar=(
                     show_progress_bar if show_progress_bar is not None else False
                 ),
+                **layer_kwargs,
+            )
+            for i, labels in enumerate(cluster_label_layers)
+        ]
+        return self
+
+    def fit_predict(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+        **layer_kwargs,
+    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+        self.fit(
+            clusterable_vectors,
+            embedding_vectors,
+            layer_class=layer_class,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+            **layer_kwargs,
+        )
+        return self.cluster_layers_, self.cluster_tree_
+
+
+class PLSCANClusterer(Clusterer):
+    """
+    A class for clustering dense vector data in layers using fast_plscan.PLSCAN.
+
+    Parameters
+    ----------
+    min_clusters : int, optional
+        The minimum number of non-noise clusters to keep in a layer (default is 6).
+    min_samples : int, optional
+        The minimum number of samples used by PLSCAN (default is 5).
+    base_min_cluster_size : int, optional
+        The base minimum cluster size passed to PLSCAN (default is 10).
+    max_layers : Optional[int], optional
+        The maximum number of hierarchy layers to keep (default is None).
+    verbose : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    show_progress_bar : bool, optional, deprecated
+        Deprecated. Use verbose instead.
+    n_threads : Optional[int], optional
+        The number of threads to use for PLSCAN (default is -1). If -1, PLSCAN's
+        default thread handling is used. `None` is also passed through unchanged.
+
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary representing the cluster tree.
+    cluster_probabilities_ : List[np.ndarray]
+        Membership probabilities for each returned layer.
+    cluster_cut_sizes_ : List[np.float32]
+        The minimum cluster size cut used to generate each returned layer.
+    """
+
+    def __init__(
+        self,
+        min_clusters: int = 6,
+        min_samples: int = 5,
+        base_min_cluster_size: int = 10,
+        max_layers: Optional[int] = None,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+        n_threads: Optional[int] = -1,
+    ):
+        super().__init__()
+        self.min_clusters = min_clusters
+        self.min_samples = min_samples
+        self.base_min_cluster_size = base_min_cluster_size
+        self.max_layers = max_layers
+        self.n_threads = n_threads
+
+        _, self.verbose = handle_verbose_params(
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
+        )
+
+    def fit(
+        self,
+        clusterable_vectors: np.ndarray,
+        embedding_vectors: np.ndarray,
+        layer_class: Type[ClusterLayer] = ClusterLayerText,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+        **layer_kwargs,
+    ) -> Clusterer:
+        show_progress_bar_val, verbose_output = handle_verbose_params(
+            verbose=verbose if verbose is not None else self.verbose,
+            show_progress_bar=show_progress_bar,
+            default_verbose=False,
+        )
+
+        # Normalize clustering inputs for the upstream PLSCAN engine; keep
+        # embedding_vectors untouched for Toponymy centroid construction.
+        clusterable_vectors = np.ascontiguousarray(
+            clusterable_vectors, dtype=np.float32
+        )
+
+        self.plscan_ = PLSCAN(
+            min_samples=self.min_samples,
+            min_cluster_size=self.base_min_cluster_size,
+            num_threads=None if self.n_threads == -1 else self.n_threads,
+        )
+        self.plscan_.fit(clusterable_vectors)
+
+        raw_cluster_layers = self.plscan_.cluster_layers()
+        filtered_cluster_layers = []
+        for cut_size, labels, probabilities in raw_cluster_layers:
+            n_clusters_in_layer = labels.max() + 1
+            if n_clusters_in_layer < self.min_clusters:
+                continue
+            if verbose_output:
+                print(
+                    f"Layer {len(filtered_cluster_layers)} found {n_clusters_in_layer} clusters"
+                )
+            filtered_cluster_layers.append((cut_size, labels, probabilities))
+            if (
+                self.max_layers is not None
+                and len(filtered_cluster_layers) >= self.max_layers
+            ):
+                break
+
+        if len(filtered_cluster_layers) == 0:
+            raise ValueError(
+                "Not enough clusters found in any PLSCAN layer: "
+                f"min_clusters={self.min_clusters}."
+            )
+
+        cluster_label_layers = [labels for _, labels, _ in filtered_cluster_layers]
+        self.cluster_cut_sizes_ = [
+            cut_size for cut_size, _, _ in filtered_cluster_layers
+        ]
+        self.cluster_probabilities_ = [
+            probabilities for _, _, probabilities in filtered_cluster_layers
+        ]
+        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
+        self.cluster_layers_ = [
+            layer_class(
+                labels,
+                centroids_from_labels(labels, embedding_vectors),
+                layer_id=i,
+                verbose=show_progress_bar_val,
+                show_progress_bar=show_progress_bar_val,
                 **layer_kwargs,
             )
             for i, labels in enumerate(cluster_label_layers)
