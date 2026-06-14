@@ -13,6 +13,11 @@ Main Classes
    :undoc-members:
    :show-inheritance:
 
+.. autoclass:: toponymy.PLSCANClusterer
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. autoclass:: toponymy.ClusterLayerText
    :members:
    :undoc-members:
@@ -22,4 +27,3 @@ Main Classes
    :members:
    :undoc-members:
    :show-inheritance:  
-
