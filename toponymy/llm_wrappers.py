@@ -1,4 +1,5 @@
 import string
+from unittest import result
 from warnings import warn, filterwarnings
 import tokenizers
 import transformers
@@ -413,7 +414,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         topic_extraction_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int = 128,
-    ) -> str:
+    ) -> str | tuple:
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
                 prompt,
@@ -806,6 +807,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        null_result_value="",
         max_tokens: int = 128,
     ) -> List[str]:
         """
@@ -840,14 +842,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         f"Failed to generate topic name with "
                         f"{self.__class__.__name__}: {response.error}"
                     )
-                    results.append("")
+                    results.append(null_result_value)
                     continue
                 response_text = response.value
             else:
                 response_text = response
 
             if not response_text:
-                results.append("")
+                results.append(null_result_value)
                 continue
 
             # Attempt to parse the response
@@ -855,12 +857,16 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 topic_name_info = llm_output_to_result(
                     response_text, get_topic_name_regex
                 )
-                results.append(str(extract_topic_name_function(topic_name_info)))
+                result = extract_topic_name_function(topic_name_info)
+                topic_name = result if isinstance(result, tuple) else str(result)
+                results.append(topic_name)
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
                 )
-                results.append("")  # Fallback to empty string if parsing fails
+                results.append(
+                    null_result_value
+                )  # Fallback to null_result_value if parsing fails
 
         return results
 
