@@ -59,6 +59,45 @@ def test_name_topics_reuses_prior_names_for_matching_point_clouds():
     assert layer._prior_topic_reuse_indices == {0, 1}
 
 
+def test_name_topics_reuses_prior_names_with_shorter_prior_labels():
+    clusterable_vectors = np.array(
+        [
+            [0.0, 0.0],
+            [0.0, 0.1],
+            [10.0, 10.0],
+            [10.0, 10.1],
+            [0.0, 0.05],
+            [10.0, 10.05],
+        ]
+    )
+    previous_cluster_labels = np.array([0, 0, 1, 1])
+    current_cluster_labels = np.array([0, 0, 1, 1, 0, 1])
+    centroid_vectors = np.array([[0.0, 0.05], [10.0, 10.05]])
+
+    previous_layer = ClusterLayerText(previous_cluster_labels, centroid_vectors, 0)
+    previous_layer.topic_names = ["Prior Left", "Prior Right"]
+
+    layer = ClusterLayerText(current_cluster_labels, centroid_vectors.copy(), 0)
+    layer.prompts = ["Name left", "Name right"]
+    layer.disambiguate_topics = lambda *args, **kwargs: None
+
+    llm = CountingLLM()
+    topic_names = layer.name_topics(
+        llm,
+        0.0,
+        [[]],
+        "objects",
+        "collection of objects",
+        previous_layer=previous_layer,
+        clusterable_vectors=clusterable_vectors,
+        cluster_reuse_distance_threshold=0.01,
+    )
+
+    assert topic_names == ["Prior Left", "Prior Right"]
+    assert llm.topic_name_calls == 0
+    assert layer._prior_topic_reuse_indices == {0, 1}
+
+
 def test_name_topics_calls_llm_without_prior_layer():
     cluster_labels = np.array([0, 0, 1, 1])
     centroid_vectors = np.array([[0.0, 0.05], [10.0, 10.05]])

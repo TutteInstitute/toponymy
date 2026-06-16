@@ -54,6 +54,9 @@ class Toponymy:
     previous_cluster_layers: Optional[List[ClusterLayer]]
         Cluster layers from a previous run. When provided, sufficiently similar
         clusters can reuse their prior topic names instead of calling the LLM.
+        Prior cluster label arrays may be shorter than the current dataset for
+        append-only updates; in that case they are treated as labels for the
+        prefix of the current vectors.
     cluster_reuse_distance_threshold: float
         Normalized point-cloud distance threshold below which prior topic names
         are reused.

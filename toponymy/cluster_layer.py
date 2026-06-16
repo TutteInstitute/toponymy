@@ -208,24 +208,33 @@ class ClusterLayer(ABC):
         ):
             return
 
-        if len(self.cluster_labels) != len(previous_layer.cluster_labels):
-            return
         if clusterable_vectors.shape[0] != len(self.cluster_labels):
             return
         if not hasattr(previous_layer, "topic_names"):
             return
+
+        previous_cluster_labels = previous_layer.cluster_labels
+        if len(previous_cluster_labels) > len(self.cluster_labels):
+            return
+
+        current_clusterable_vectors = clusterable_vectors[: len(self.cluster_labels)]
+        previous_clusterable_vectors = clusterable_vectors[
+            : len(previous_cluster_labels)
+        ]
 
         current_topic_count = self.centroid_vectors.shape[0]
         previous_topic_count = len(previous_layer.topic_names)
         if current_topic_count == 0 or previous_topic_count == 0:
             return
 
-        scale = _cluster_point_cloud_scale(clusterable_vectors)
+        scale = _cluster_point_cloud_scale(current_clusterable_vectors)
         available_prior_topic_indices = set(range(previous_topic_count))
         reuse_candidates = []
 
         for topic_index in range(current_topic_count):
-            current_points = clusterable_vectors[self.cluster_labels == topic_index]
+            current_points = current_clusterable_vectors[
+                self.cluster_labels == topic_index
+            ]
             if current_points.shape[0] == 0:
                 continue
 
@@ -235,9 +244,12 @@ class ClusterLayer(ABC):
                 if prior_topic_index not in available_prior_topic_indices:
                     continue
 
-                prior_points = clusterable_vectors[
-                    previous_layer.cluster_labels == prior_topic_index
+                prior_points = previous_clusterable_vectors[
+                    previous_cluster_labels == prior_topic_index
                 ]
+                if prior_points.shape[0] == 0:
+                    continue
+
                 distance = _normalized_symmetric_point_cloud_distance(
                     current_points,
                     prior_points,
