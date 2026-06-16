@@ -105,7 +105,7 @@ llama = [
     "llama-cpp-python",
 ]
 example-notebooks = [
-    "datamapplot>=0.2.2",
+    "datamapplot>=0.7",
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
     "sentence-transformers>=5.1.2",
