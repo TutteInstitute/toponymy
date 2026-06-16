@@ -38,20 +38,3 @@ you can specify the model name and the HuggingFace class will handle the downloa
 
     pip install llama-cpp-python
     pip install transformers
-
-If you want to use LLMs from OpenAI, Cohere, or Anthropic, you will need to install the ``openai``, ``cohere`` or ``anthropic`` 
-packages respectively.
-
-.. code-block:: shell
-
-    pip install openai
-    pip install cohere
-    pip install anthropic
-
-If you are using models on Azure's AI Foundry you will need to install the azure-ai-inference package.
-
-.. code-block:: shell
-
-    pip install azure-ai-inference
-
-You can install some or all of these packages, but you will need to install at least one of them to use Toponymy to its fullest.

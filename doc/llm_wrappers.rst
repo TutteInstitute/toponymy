@@ -10,18 +10,12 @@ Installing required libraries
 -----------------------------
 
 Each wrapper may require specific libraries to be installed. You can install them using pip or uv.
-For example, to enable the use of the OpenAI LLM wrapper you would need to install the `openai` library:
+For example, to enable the use of the  vLLM wrapper you would need to install the `vllm` library:
 ```bash
-pip install openai
+pip install vllm
 ```
 The following wrappers require the following libraries:
 
-- `openai`: For the OpenAI LLM wrapper.
-- `anthropic`: For the Anthropic LLM wrapper.
-- `google-generativeai`: For the Google Gemini wrapper.
-- `azure-ai-inference`: For the Azure AI wrapper.
-- `cohere`: For the Cohere LLM wrapper.
-- `ollama`: For the Ollama LLM wrapper (You will also have to install ollama itself).
 - `llama-cpp-python`: For the Llama.cpp wrapper (this may require a more complex installation process depending on your system).
 - `transformers` and `huggingface-hub`: For the Hugging Face LLM wrapper.
 - `vllm`: For the vLLM wrapper.
@@ -33,6 +27,85 @@ Basic Wrappers
 Basic wrappers provide synchronous access to various LLM services and local models, processing requests sequentially one at a time. This approach makes them particularly well-suited for simple use cases, debugging workflows, or situations where you need to carefully control the rate of API calls to avoid hitting rate limits. Each basic wrapper implements the `LLMWrapper` interface, ensuring a consistent API across different model providers.
 
 These wrappers are designed to handle the core functionality needed for topic modeling workflows. They can generate descriptive names for individual topics based on the most representative documents or keywords, as well as create names for groups of related topics in hierarchical clustering scenarios. The wrappers include built-in temperature control to adjust the creativity and randomness of generated text, automatic retry logic with exponential backoff to handle transient API failures gracefully, and support for system prompts where the underlying model allows it, enabling better instruction following and more consistent outputs.
+
+API-Based Wrappers
+~~~~~~~~~~~~~~~~~~
+
+**OpenAINamer**
+
+The OpenAINamer wrapper provides access to OpenAI's GPT models through their API. It supports the latest GPT models and includes full system prompt support.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import OpenAINamer
+
+    # Initialize with OpenAI API
+    llm = OpenAINamer(
+        api_key="your-openai-api-key",  # Or set OPENAI_API_KEY env var
+        model="gpt-4o-mini",  # Cost-effective model for topic naming
+        llm_specific_instructions="Be precise and domain-appropriate",
+        api_base    ="https://api.openai.com/v1"  # Optional custom endpoint
+    )
+
+**AnthropicNamer**
+
+The AnthropicNamer wrapper provides access to Claude models through Anthropic's API. Claude models are particularly good at following complex instructions and maintaining consistency.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import AnthropicNamer
+
+    # Initialize with Anthropic API
+    llm = AnthropicNamer(
+        api_key="your-anthropic-api-key",  # Or set ANTHROPIC_API_KEY env var
+        model="claude-3-haiku-20240307",  # Fast and cost-effective
+        llm_specific_instructions="Generate coherent, descriptive names"
+    )
+
+**CohereNamer**
+
+The CohereNamer wrapper provides access to Cohere's Command models, which offer good performance for text generation tasks at competitive pricing.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import CohereNamer
+
+    # Initialize with Cohere API
+    llm = CohereNamer(
+        api_key="your-cohere-api-key",  # Or set CO_API_KEY env var
+        model="command-r-08-2024",  # Balanced performance and cost
+        llm_specific_instructions="Keep names concise but informative",
+        api_base="https://api.cohere.com"  # Optional custom endpoint
+    )
+
+**AzureAINamer**
+
+The AzureAINamer wrapper provides access to models through Azure AI services, supporting various models deployed on Azure infrastructure.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import AzureAINamer
+
+    llm = AzureAINamer(
+        api_key="your-azure-api-key",
+        api_base="https://your-endpoint.inference.ai.azure.com",
+        model="your-deployed-model-name",
+        llm_specific_instructions="Generate professional topic names"
+    )
+
+**GoogleGeminiNamer**
+
+The GoogleGeminiNamer wrapper provides access to Google's Gemini models through their API. Gemini models offer competitive performance with good cost efficiency.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import GoogleGeminiNamer
+
+    llm = GoogleGeminiNamer(
+        api_key="your-google-api-key",  # Or set GOOGLE_API_KEY env var
+        model="gemini-1.5-flash",  # Fast and cost-effective
+        llm_specific_instructions="Generate concise, relevant topic names"
+    )
 
 Local Model Wrappers
 ~~~~~~~~~~~~~~~~~~~~
@@ -104,87 +177,6 @@ The OllamaNamer wrapper provides access to locally-run models through the Ollama
 
 **Note**: Requires Ollama to be installed and running locally. Supports a wide variety of models including Llama, Mistral, CodeLlama, and many others.
 
-API-Based Wrappers
-~~~~~~~~~~~~~~~~~~
-
-**OpenAINamer**
-
-The OpenAINamer wrapper provides access to OpenAI's GPT models through their API. It supports the latest GPT models and includes full system prompt support.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import OpenAINamer
-
-    # Initialize with OpenAI API
-    llm = OpenAINamer(
-        api_key="your-openai-api-key",  # Or set OPENAI_API_KEY env var
-        model="gpt-4o-mini",  # Cost-effective model for topic naming
-        llm_specific_instructions="Be precise and domain-appropriate",
-        base_url="https://api.openai.com/v1"  # Optional custom endpoint
-    )
-
-**AnthropicNamer**
-
-The AnthropicNamer wrapper provides access to Claude models through Anthropic's API. Claude models are particularly good at following complex instructions and maintaining consistency.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import AnthropicNamer
-
-    # Initialize with Anthropic API
-    llm = AnthropicNamer(
-        api_key="your-anthropic-api-key",  # Or set ANTHROPIC_API_KEY env var
-        model="claude-3-haiku-20240307",  # Fast and cost-effective
-        llm_specific_instructions="Generate coherent, descriptive names"
-    )
-
-**CohereNamer**
-
-The CohereNamer wrapper provides access to Cohere's Command models, which offer good performance for text generation tasks at competitive pricing.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import CohereNamer
-
-    # Initialize with Cohere API
-    llm = CohereNamer(
-        api_key="your-cohere-api-key",  # Or set CO_API_KEY env var
-        model="command-r-08-2024",  # Balanced performance and cost
-        llm_specific_instructions="Keep names concise but informative",
-        base_url="https://api.cohere.com"  # Optional custom endpoint
-    )
-
-**AzureAINamer**
-
-The AzureAINamer wrapper provides access to models through Azure AI services, supporting various models deployed on Azure infrastructure.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import AzureAINamer
-
-    # Initialize with Azure AI
-    llm = AzureAINamer(
-        api_key="your-azure-api-key",
-        endpoint="https://your-endpoint.inference.ai.azure.com",
-        model="your-deployed-model-name",
-        llm_specific_instructions="Generate professional topic names"
-    )
-
-**GoogleGeminiNamer**
-
-The GoogleGeminiNamer wrapper provides access to Google's Gemini models through their API. Gemini models offer competitive performance with good cost efficiency.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import GoogleGeminiNamer
-
-    # Initialize with Google Gemini API
-    llm = GoogleGeminiNamer(
-        api_key="your-google-api-key",  # Or set GOOGLE_API_KEY env var
-        model="gemini-1.5-flash",  # Fast and cost-effective
-        llm_specific_instructions="Generate concise, relevant topic names"
-    )
-
 ---------------------
 Asynchronous Wrappers
 ---------------------
@@ -193,70 +185,20 @@ Asynchronous wrappers represent a significant step up in capability, enabling co
 
 The primary advantage of asynchronous processing lies in its ability to maximize the utilization of both network resources and API quotas. Instead of waiting for each individual request to complete before starting the next one, async wrappers can maintain multiple requests in flight simultaneously, leading to much better overall throughput. They include sophisticated rate limit management with configurable concurrency controls, allowing you to tune the number of simultaneous requests based on your API provider's limits and your specific needs. This approach also makes more efficient use of network and compute resources, as the system can continue processing other requests while waiting for responses from the API.
 
-**Usage Pattern:**
-
-.. code-block:: python
-
-    import asyncio
-    from toponymy.llm_wrappers import AsyncAnthropicNamer
-    
-    async def process_topics():
-        llm = AsyncAnthropicNamer(
-            api_key="your-api-key",
-            max_concurrent_requests=5  # Control concurrency
-        )
-        
-        # Process multiple prompts concurrently
-        prompts = [prompt1, prompt2, prompt3, ...]
-        results = await llm.generate_topic_names(prompts)
-        
-        await llm.close()  # Clean up resources
-        return results
-    
-    # Run the async function
-    results = asyncio.run(process_topics())
-
 **Available Async Wrappers:**
 
-**AsyncHuggingFaceNamer**
+**AsyncOpenAINamer**
 
-Provides asynchronous access to Hugging Face models. Primarily useful for testing async workflows with local models.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import AsyncHuggingFaceNamer
-
-    llm = AsyncHuggingFaceNamer(
-        model="mistralai/Mistral-7B-Instruct-v0.3",
-        max_concurrent_requests=3  # Limited by local hardware
-    )
-
-**AsyncVLLMNamer**
-
-Asynchronous wrapper for vLLM, offering high-performance batch processing for local model inference.
+Provides asynchronous access to OpenAI's GPT models with configurable concurrency controls.
 
 .. code-block:: python
 
-    from toponymy.llm_wrappers import AsyncVLLMNamer
+    from toponymy.llm_wrappers import AsyncOpenAINamer
 
-    llm = AsyncVLLMNamer(
-        model="mistralai/Mistral-7B-Instruct-v0.3",
-        max_concurrent_requests=10,
-        tensor_parallel_size=2
-    )
-
-**AsyncCohereNamer**
-
-Provides concurrent access to Cohere's API, allowing efficient processing of multiple topic naming requests.
-
-.. code-block:: python
-
-    from toponymy.llm_wrappers import AsyncCohereNamer
-
-    llm = AsyncCohereNamer(
-        api_key="your-cohere-api-key",
-        model="command-r-08-2024",
-        max_concurrent_requests=10  # Adjust based on rate limits
+    llm = AsyncOpenAINamer(
+        api_key="your-openai-api-key",
+        model="gpt-4o-mini",
+        max_concurrent_requests=8
     )
 
 **AsyncAnthropicNamer**
@@ -273,19 +215,20 @@ Enables concurrent processing with Anthropic's Claude models, ideal for large-sc
         max_concurrent_requests=5  # Conservative rate limiting
     )
 
-**AsyncOpenAINamer**
+**AsyncCohereNamer**
 
-Provides asynchronous access to OpenAI's GPT models with configurable concurrency controls.
+Provides concurrent access to Cohere's API, allowing efficient processing of multiple topic naming requests.
 
 .. code-block:: python
 
-    from toponymy.llm_wrappers import AsyncOpenAINamer
+    from toponymy.llm_wrappers import AsyncCohereNamer
 
-    llm = AsyncOpenAINamer(
-        api_key="your-openai-api-key",
-        model="gpt-4o-mini",
-        max_concurrent_requests=8
+    llm = AsyncCohereNamer(
+        api_key="your-cohere-api-key",
+        model="command-r-08-2024",
+        max_concurrent_requests=10  # Adjust based on rate limits
     )
+
 
 **AsyncAzureAINamer**
 
@@ -327,6 +270,34 @@ Enables concurrent processing with Google's Gemini models, allowing efficient ba
         api_key="your-google-api-key",
         model="gemini-1.5-flash",
         max_concurrent_requests=10  # Adjust based on rate limits
+    )
+
+
+**AsyncHuggingFaceNamer**
+
+Provides asynchronous access to Hugging Face models. Primarily useful for testing async workflows with local models.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import AsyncHuggingFaceNamer
+
+    llm = AsyncHuggingFaceNamer(
+        model="mistralai/Mistral-7B-Instruct-v0.3",
+        max_concurrent_requests=3  # Limited by local hardware
+    )
+
+**AsyncVLLMNamer**
+
+Asynchronous wrapper for vLLM, offering high-performance batch processing for local model inference.
+
+.. code-block:: python
+
+    from toponymy.llm_wrappers import AsyncVLLMNamer
+
+    llm = AsyncVLLMNamer(
+        model="mistralai/Mistral-7B-Instruct-v0.3",
+        max_concurrent_requests=10,
+        tensor_parallel_size=2
     )
 
 --------------
@@ -434,9 +405,9 @@ The BatchAzureAINamer wrapper leverages Azure AI's batch processing capabilities
 - Requires careful error handling for failed batches
 - Best for homogeneous workloads (similar prompt types)
 
--------------------------
+--------------------------
 Choosing the Right Wrapper
--------------------------
+--------------------------
 
 Selecting the appropriate wrapper depends on understanding your specific requirements across several key dimensions: cost constraints, processing speed needs, data privacy requirements, and the scale of your topic modeling project. Each type of wrapper represents different trade-offs, and the optimal choice often depends on the specific context of your use case rather than a one-size-fits-all recommendation.
 
