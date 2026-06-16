@@ -94,6 +94,13 @@ dev = [
     "umap-learn",
     "pylance",
 ]
+doc = [
+    "nbsphinx>=0.9.8",
+    "numpydoc>=1.10.0",
+    "sphinx",
+    "sphinx-autobuild",
+    "sphinx-rtd-theme>=3.1.0",
+]
 llama = [
     "llama-cpp-python",
 ]
