@@ -3,6 +3,7 @@ from typing import List, Callable, Any, Optional, Tuple, Union, Dict
 import scipy.sparse
 import numpy as np
 import pandas as pd
+from sklearn.metrics import pairwise_distances
 from toponymy.keyphrases import (
     central_keyphrases,
     information_weighted_keyphrases,
@@ -41,6 +42,44 @@ from tqdm.auto import tqdm
 import asyncio
 from toponymy._utils import handle_verbose_params
 import warnings
+
+
+def _cluster_point_cloud_scale(point_vectors: np.ndarray) -> float:
+    point_vectors = np.asarray(point_vectors)
+    if point_vectors.size == 0:
+        return 1.0
+
+    scale = np.linalg.norm(
+        np.nanmax(point_vectors, axis=0) - np.nanmin(point_vectors, axis=0)
+    )
+    if not np.isfinite(scale) or scale == 0.0:
+        return 1.0
+    return float(scale)
+
+
+def _sample_point_cloud(points: np.ndarray, max_points: int = 256) -> np.ndarray:
+    if points.shape[0] <= max_points:
+        return points
+
+    sample_indices = np.linspace(0, points.shape[0] - 1, max_points).astype(int)
+    return points[sample_indices]
+
+
+def _normalized_symmetric_point_cloud_distance(
+    point_cloud_a: np.ndarray,
+    point_cloud_b: np.ndarray,
+    scale: float,
+) -> float:
+    if point_cloud_a.shape[0] == 0 or point_cloud_b.shape[0] == 0:
+        return np.inf
+
+    sampled_a = _sample_point_cloud(point_cloud_a)
+    sampled_b = _sample_point_cloud(point_cloud_b)
+    distances = pairwise_distances(sampled_a, sampled_b)
+    symmetric_distance = (
+        distances.min(axis=1).mean() + distances.min(axis=0).mean()
+    ) / 2.0
+    return float(symmetric_distance / scale)
 
 
 def run_async(coro):
@@ -122,6 +161,113 @@ class ClusterLayer(ABC):
         self.exemplars: List[List[str]] = []
         self.keyphrases: List[List[str]] = []
         self.subtopics: List[List[str]] = []
+        self._prior_topic_reuse_indices: set[int] = set()
+
+    def _prior_topic_payload(
+        self,
+        prior_layer: "ClusterLayer",
+        prior_topic_index: int,
+        include_summaries: bool = False,
+    ) -> Optional[str]:
+        if not hasattr(prior_layer, "topic_names"):
+            return None
+        if prior_topic_index >= len(prior_layer.topic_names):
+            return None
+
+        topic_name = prior_layer.topic_names[prior_topic_index]
+        if not include_summaries:
+            return topic_name
+
+        topic_summaries = getattr(prior_layer, "topic_summaries", [])
+        topic_explanations = getattr(prior_layer, "topic_explanations", [])
+        topic_summary = (
+            topic_summaries[prior_topic_index]
+            if prior_topic_index < len(topic_summaries)
+            else ""
+        )
+        topic_explanation = (
+            topic_explanations[prior_topic_index]
+            if prior_topic_index < len(topic_explanations)
+            else ""
+        )
+        return f"{topic_name}\n--\n{topic_summary}\n--\n{topic_explanation}"
+
+    def _mark_prompts_for_prior_topic_reuse(
+        self,
+        previous_layer: Optional["ClusterLayer"] = None,
+        clusterable_vectors: Optional[np.ndarray] = None,
+        cluster_reuse_distance_threshold: Optional[float] = None,
+        include_summaries: bool = False,
+    ) -> None:
+        self._prior_topic_reuse_indices = set()
+        if (
+            previous_layer is None
+            or clusterable_vectors is None
+            or cluster_reuse_distance_threshold is None
+            or not hasattr(self, "prompts")
+        ):
+            return
+
+        if len(self.cluster_labels) != len(previous_layer.cluster_labels):
+            return
+        if clusterable_vectors.shape[0] != len(self.cluster_labels):
+            return
+        if not hasattr(previous_layer, "topic_names"):
+            return
+
+        current_topic_count = self.centroid_vectors.shape[0]
+        previous_topic_count = len(previous_layer.topic_names)
+        if current_topic_count == 0 or previous_topic_count == 0:
+            return
+
+        scale = _cluster_point_cloud_scale(clusterable_vectors)
+        available_prior_topic_indices = set(range(previous_topic_count))
+        reuse_candidates = []
+
+        for topic_index in range(current_topic_count):
+            current_points = clusterable_vectors[self.cluster_labels == topic_index]
+            if current_points.shape[0] == 0:
+                continue
+
+            best_prior_index = None
+            best_distance = np.inf
+            for prior_topic_index in range(previous_topic_count):
+                if prior_topic_index not in available_prior_topic_indices:
+                    continue
+
+                prior_points = clusterable_vectors[
+                    previous_layer.cluster_labels == prior_topic_index
+                ]
+                distance = _normalized_symmetric_point_cloud_distance(
+                    current_points,
+                    prior_points,
+                    scale,
+                )
+                if distance < best_distance:
+                    best_distance = distance
+                    best_prior_index = prior_topic_index
+
+            if (
+                best_prior_index is not None
+                and best_distance <= cluster_reuse_distance_threshold
+            ):
+                reuse_candidates.append((best_distance, topic_index, best_prior_index))
+
+        for _, topic_index, prior_topic_index in sorted(reuse_candidates):
+            if prior_topic_index not in available_prior_topic_indices:
+                continue
+
+            payload = self._prior_topic_payload(
+                previous_layer,
+                prior_topic_index,
+                include_summaries=include_summaries,
+            )
+            if payload is None:
+                continue
+
+            self.prompts[topic_index] = f"[!SKIP!]: {payload}"
+            self._prior_topic_reuse_indices.add(topic_index)
+            available_prior_topic_indices.remove(prior_topic_index)
 
     @abstractmethod
     def name_topics(
@@ -135,6 +281,9 @@ class ClusterLayer(ABC):
         embedding_model: Optional[TextEmbedderProtocol] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
+        previous_layer: Optional["ClusterLayer"] = None,
+        clusterable_vectors: Optional[np.ndarray] = None,
+        cluster_reuse_distance_threshold: Optional[float] = None,
     ) -> List[str]:
         pass
 
@@ -231,6 +380,23 @@ class ClusterLayer(ABC):
             for topic_indices in self.dismbiguation_topic_indices
             for i in range(0, len(topic_indices), max_topics_per_prompt)
         ]
+        frozen_topic_indices = getattr(self, "_prior_topic_reuse_indices", set())
+        if frozen_topic_indices:
+            self.dismbiguation_topic_indices = [
+                np.array(
+                    [
+                        topic_index
+                        for topic_index in topic_indices
+                        if topic_index not in frozen_topic_indices
+                    ]
+                )
+                for topic_indices in self.dismbiguation_topic_indices
+            ]
+            self.dismbiguation_topic_indices = [
+                topic_indices
+                for topic_indices in self.dismbiguation_topic_indices
+                if len(topic_indices) > 1
+            ]
 
         self.disambiguation_prompts = [
             distinguish_topic_names_prompt(
@@ -490,7 +656,16 @@ class ClusterLayerText(ClusterLayer):
         embedding_model: Optional[TextEmbedderProtocol] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
+        previous_layer: Optional[ClusterLayer] = None,
+        clusterable_vectors: Optional[np.ndarray] = None,
+        cluster_reuse_distance_threshold: Optional[float] = None,
     ) -> List[str]:
+        self._mark_prompts_for_prior_topic_reuse(
+            previous_layer=previous_layer,
+            clusterable_vectors=clusterable_vectors,
+            cluster_reuse_distance_threshold=cluster_reuse_distance_threshold,
+        )
+
         if isinstance(llm, LLMWrapper):
             self.topic_names = [
                 (
@@ -599,16 +774,20 @@ class ClusterLayerText(ClusterLayer):
                                 else GET_TOPIC_NAME_REGEX
                             ),
                         )
-                        if name == ""
+                        if name == "" and index not in self._prior_topic_reuse_indices
                         else name
                     )
-                    for name, prompt in zip(self.topic_names, self.prompts)
+                    for index, (name, prompt) in enumerate(
+                        zip(self.topic_names, self.prompts)
+                    )
                 ]
             elif isinstance(llm, AsyncLLMWrapper):
                 selected_prompts = [
                     prompt
-                    for name, prompt in zip(self.topic_names, self.prompts)
-                    if name == ""
+                    for index, (name, prompt) in enumerate(
+                        zip(self.topic_names, self.prompts)
+                    )
+                    if name == "" and index not in self._prior_topic_reuse_indices
                 ]
                 llm_results = run_async(
                     llm.generate_topic_names(
@@ -628,7 +807,10 @@ class ClusterLayerText(ClusterLayer):
                     )
                 )
                 for i in range(len(self.topic_names)):
-                    if self.topic_names[i] == "":
+                    if (
+                        self.topic_names[i] == ""
+                        and i not in self._prior_topic_reuse_indices
+                    ):
                         self.topic_names[i] = llm_results.pop(0)
             else:
                 raise ValueError(
@@ -937,6 +1119,9 @@ class ClusterLayerSummaryText(ClusterLayerText):
         embedding_model: Optional[TextEmbedderProtocol] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
+        previous_layer: Optional[ClusterLayer] = None,
+        clusterable_vectors: Optional[np.ndarray] = None,
+        cluster_reuse_distance_threshold: Optional[float] = None,
     ) -> List[str]:
         assert (
             all_topic_summaries is not None
@@ -944,6 +1129,13 @@ class ClusterLayerSummaryText(ClusterLayerText):
         assert (
             all_topic_explanations is not None
         ), "all_topic_explanations must be provided to name_topics in ClusterLayerSummaryText"
+
+        self._mark_prompts_for_prior_topic_reuse(
+            previous_layer=previous_layer,
+            clusterable_vectors=clusterable_vectors,
+            cluster_reuse_distance_threshold=cluster_reuse_distance_threshold,
+            include_summaries=True,
+        )
 
         if isinstance(llm, LLMWrapper):
             self.topic_names = []
@@ -1091,16 +1283,20 @@ class ClusterLayerSummaryText(ClusterLayerText):
                                 else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                             ),
                         )
-                        if name == ""
+                        if name == "" and index not in self._prior_topic_reuse_indices
                         else name
                     )
-                    for name, prompt in zip(self.topic_names, self.prompts)
+                    for index, (name, prompt) in enumerate(
+                        zip(self.topic_names, self.prompts)
+                    )
                 ]
             elif isinstance(llm, AsyncLLMWrapper):
                 selected_prompts = [
                     prompt
-                    for name, prompt in zip(self.topic_names, self.prompts)
-                    if name == ""
+                    for index, (name, prompt) in enumerate(
+                        zip(self.topic_names, self.prompts)
+                    )
+                    if name == "" and index not in self._prior_topic_reuse_indices
                 ]
                 llm_results = run_async(
                     llm.generate_topic_names(
@@ -1120,7 +1316,10 @@ class ClusterLayerSummaryText(ClusterLayerText):
                     )
                 )
                 for i in range(len(self.topic_names)):
-                    if self.topic_names[i] == "":
+                    if (
+                        self.topic_names[i] == ""
+                        and i not in self._prior_topic_reuse_indices
+                    ):
                         self.topic_names[i] = llm_results.pop(0)
             else:
                 raise ValueError(

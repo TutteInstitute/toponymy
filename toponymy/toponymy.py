@@ -8,7 +8,7 @@ from toponymy.cluster_layer import (
 from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
 from toponymy.embedding_wrappers import TextEmbedderProtocol
-from toponymy.templates import PROMPT_TEMPLATES
+from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_PROMPT_TEMPLATES
 from toponymy._utils import handle_verbose_params
 
 from sklearn.base import BaseEstimator
@@ -16,6 +16,7 @@ from sklearn.utils.validation import check_is_fitted
 import numpy as np
 
 from tqdm.auto import tqdm
+from itertools import zip_longest
 
 from typing import List, Any, Optional, Type, Dict, Tuple
 
@@ -50,6 +51,12 @@ class Toponymy:
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bars: bool, deprecated
         Deprecated. Use verbose instead.
+    previous_cluster_layers: Optional[List[ClusterLayer]]
+        Cluster layers from a previous run. When provided, sufficiently similar
+        clusters can reuse their prior topic names instead of calling the LLM.
+    cluster_reuse_distance_threshold: float
+        Normalized point-cloud distance threshold below which prior topic names
+        are reused.
 
     Attributes:
     -----------
@@ -110,6 +117,8 @@ class Toponymy:
         lowest_detail_level: float = 0.0,
         highest_detail_level: float = 1.0,
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
+        previous_cluster_layers: Optional[List[ClusterLayer]] = None,
+        cluster_reuse_distance_threshold: float = 0.05,
         verbose: Optional[bool] = None,
         show_progress_bars: Optional[bool] = None,
     ):
@@ -123,6 +132,8 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
+        self.previous_cluster_layers = previous_cluster_layers
+        self.cluster_reuse_distance_threshold = cluster_reuse_distance_threshold
         self.prompt_template = prompt_template
 
         # Handle verbose parameters
@@ -289,13 +300,22 @@ class Toponymy:
             )
 
         # Iterate through the layers and build the topic names
-        for i, layer in tqdm(
-            enumerate(self.cluster_layers_),
+        previous_cluster_layers = self.previous_cluster_layers or []
+        for i, (layer, previous_layer) in tqdm(
+            enumerate(
+                zip_longest(
+                    self.cluster_layers_,
+                    previous_cluster_layers[: len(self.cluster_layers_)],
+                )
+            ),
             desc=f"Building topic names by layer",
             disable=not self.show_progress_bars,
             total=len(self.cluster_layers_),
             unit="layer",
         ):
+            if layer is None:
+                continue
+
             if i > 0:  # Skip layer 0 exemplars as we already did them
                 layer.make_exemplar_texts(
                     objects,
@@ -351,6 +371,11 @@ class Toponymy:
                     self.embedding_model,
                     self.topic_summaries_,
                     self.topic_explanations_,
+                    previous_layer=previous_layer,
+                    clusterable_vectors=self.clusterable_vectors_,
+                    cluster_reuse_distance_threshold=(
+                        self.cluster_reuse_distance_threshold
+                    ),
                 )
             else:
                 if i > 0:
@@ -376,6 +401,11 @@ class Toponymy:
                     self.corpus_description,
                     self.cluster_tree_,
                     self.embedding_model,
+                    previous_layer=previous_layer,
+                    clusterable_vectors=self.clusterable_vectors_,
+                    cluster_reuse_distance_threshold=(
+                        self.cluster_reuse_distance_threshold
+                    ),
                 )
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
 
