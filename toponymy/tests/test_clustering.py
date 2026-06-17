@@ -5,7 +5,13 @@ from sklearn.datasets import make_blobs
 from sklearn.metrics import adjusted_mutual_info_score, pairwise_distances
 
 from toponymy.cluster_layer import ClusterLayerText
-from toponymy.clustering import build_raw_cluster_layers, centroids_from_labels
+# fmt: off
+from toponymy.clustering import (KMeansClusterer, PLSCANClusterer,
+                                 ToponymyClusterer, _build_cluster_tree,
+                                 build_cluster_tree, build_raw_cluster_layers,
+                                 centroids_from_labels, create_cluster_layers)
+
+# fmt: on
 
 # Try to import EVoCClusterer - check if evoc is compatible with current fast_hdbscan
 try:
@@ -62,8 +68,6 @@ def test_centroids_from_labels_no_jit():
 
 
 def test_build_cluster_tree():
-    from toponymy.clustering import build_cluster_tree
-
     clusterable_data = np.vstack(
         [
             make_blobs(
@@ -106,8 +110,6 @@ def test_build_cluster_tree():
 
 
 def test_build_cluster_tree_no_jit():
-    from toponymy.clustering import _build_cluster_tree
-
     clusterable_data = np.vstack(
         [
             make_blobs(
@@ -157,8 +159,6 @@ def test_build_cluster_tree_no_jit():
 
 
 def test_clusterer_class():
-    from toponymy.clustering import ToponymyClusterer, create_cluster_layers
-
     clusterer = ToponymyClusterer(
         min_clusters=4,
         min_samples=5,
@@ -227,8 +227,6 @@ def test_clusterer_class():
 
 
 def test_kmeans_clusterer_class():
-    from toponymy.clustering import KMeansClusterer
-
     clusterer = KMeansClusterer(
         min_clusters=4,
         base_n_clusters=64,
@@ -261,14 +259,11 @@ def test_kmeans_clusterer_class():
 
 def test_plscan_clusterer_import():
     from toponymy import PLSCANClusterer as ImportedPLSCANClusterer
-    from toponymy.clustering import PLSCANClusterer
 
     assert ImportedPLSCANClusterer is PLSCANClusterer
 
 
 def test_plscan_clusterer_fit_returns_self():
-    from toponymy.clustering import PLSCANClusterer
-
     clusterer = PLSCANClusterer(
         min_clusters=4,
         min_samples=5,
@@ -292,7 +287,7 @@ def test_plscan_clusterer_fit_returns_self():
     )
 
     assert result is clusterer
-    assert len(clusterer.cluster_layers_) >= 1
+    assert len(clusterer.cluster_layers_) > 1
     assert len(clusterer.cluster_layers_) == len(clusterer.cluster_probabilities_)
     assert len(clusterer.cluster_layers_) == len(clusterer.cluster_persistence_scores_)
     np.testing.assert_array_equal(
@@ -321,8 +316,6 @@ def test_plscan_clusterer_fit_returns_self():
 
 
 def test_plscan_clusterer_fit_predict_returns_layers_and_tree():
-    from toponymy.clustering import PLSCANClusterer
-
     clusterable_data, _ = make_blobs(
         n_samples=2000,
         n_features=10,
@@ -367,8 +360,6 @@ def test_plscan_clusterer_fit_predict_returns_layers_and_tree():
 
 
 def test_plscan_clusterer_centroids_use_embedding_vectors():
-    from toponymy.clustering import PLSCANClusterer
-
     clusterable_data, _ = make_blobs(
         n_samples=1000,
         n_features=2,
@@ -398,8 +389,6 @@ def test_plscan_clusterer_centroids_use_embedding_vectors():
 
 
 def test_plscan_clusterer_raises_for_too_few_clusters():
-    from toponymy.clustering import PLSCANClusterer
-
     clusterable_data, _ = make_blobs(
         n_samples=300,
         n_features=2,
@@ -468,8 +457,6 @@ def test_evoc_clusterer_class():
 
 
 def test_max_layers_limit():
-    from toponymy.clustering import ToponymyClusterer
-
     """Test that max_layers parameter correctly limits the number of hierarchy levels."""
     # Create test data with many potential clusters
     np.random.seed(42)

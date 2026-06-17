@@ -685,10 +685,17 @@ class PLSCANClusterer(Clusterer):
         )
         filtered_cluster_layers = []
         for labels, probabilities, persistence_score in raw_cluster_layers:
+            # Normalize labels to be contiguous, preserving noise as -1
+            unique_labels, inverse = np.unique(labels, return_inverse=True)
+            if unique_labels.size > 0 and unique_labels[0] == -1:
+                labels = inverse - 1
+            else:
+                labels = inverse
+
             n_clusters_in_layer = labels.max() + 1
             if n_clusters_in_layer < self.min_clusters:
                 continue
-            if verbose_output:
+            if self.verbose:
                 print(
                     f"Layer {len(filtered_cluster_layers)} found {n_clusters_in_layer} clusters"
                 )
