@@ -3,7 +3,7 @@ PLSCANClusterer
 ================
 
 ``PLSCANClusterer`` is a Toponymy ``Clusterer`` wrapper around
-``fast_plscan.PLSCAN``. It is useful when you want PLSCAN-based layered
+``fast_hdbscan.PLSCAN``. It is useful when you want PLSCAN-based layered
 clustering inside Toponymy while still using the standard Toponymy clusterer
 interface. It does not replace ``ToponymyClusterer``; it is an alternative
 clusterer for users who specifically want PLSCAN's persistence-based cluster
@@ -46,7 +46,8 @@ Basic usage
 
    # PLSCAN metadata retained for the returned layers
    clusterer.cluster_probabilities_
-   clusterer.cluster_cut_sizes_
+   clusterer.cluster_persistence_scores_
+   clusterer.plscan_min_cluster_sizes_
 
 ``cluster_layers`` is the list of Toponymy cluster layer objects. ``cluster_tree``
 maps clusters between neighboring layers.
@@ -54,9 +55,10 @@ maps clusters between neighboring layers.
 Notes
 -----
 
-* ``clusterable_vectors`` are passed to ``fast_plscan.PLSCAN.fit(...)``.
+* ``clusterable_vectors`` are passed to ``fast_hdbscan.PLSCAN.fit(...)``.
 * ``embedding_vectors`` are used for Toponymy centroid construction.
 * ``-1`` labels are preserved as noise or unlabelled points.
-* ``cluster_probabilities_`` and ``cluster_cut_sizes_`` are stored on the
-  clusterer object for the returned layers.
-* ``n_threads=-1`` uses the upstream PLSCAN default thread behavior.
+* ``cluster_probabilities_`` and ``cluster_persistence_scores_`` are stored on
+  the clusterer object for the returned layers.
+* ``plscan_min_cluster_sizes_`` stores the ``min_cluster_sizes_`` trace exposed
+  by ``fast_hdbscan.PLSCAN``.

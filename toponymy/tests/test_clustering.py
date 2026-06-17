@@ -264,7 +264,6 @@ def test_plscan_clusterer_import():
     from toponymy.clustering import PLSCANClusterer
 
     assert ImportedPLSCANClusterer is PLSCANClusterer
-    assert PLSCANClusterer().n_threads == -1
 
 
 def test_plscan_clusterer_fit_returns_self():
@@ -274,7 +273,6 @@ def test_plscan_clusterer_fit_returns_self():
         min_clusters=4,
         min_samples=5,
         base_min_cluster_size=10,
-        n_threads=1,
     )
 
     clusterable_data, clusterable_labels = make_blobs(
@@ -296,7 +294,10 @@ def test_plscan_clusterer_fit_returns_self():
     assert result is clusterer
     assert len(clusterer.cluster_layers_) >= 1
     assert len(clusterer.cluster_layers_) == len(clusterer.cluster_probabilities_)
-    assert len(clusterer.cluster_layers_) == len(clusterer.cluster_cut_sizes_)
+    assert len(clusterer.cluster_layers_) == len(clusterer.cluster_persistence_scores_)
+    np.testing.assert_array_equal(
+        clusterer.plscan_min_cluster_sizes_, clusterer.plscan_.min_cluster_sizes_
+    )
     assert isinstance(clusterer.cluster_tree_, dict)
 
     for layer, probabilities in zip(
@@ -336,7 +337,6 @@ def test_plscan_clusterer_fit_predict_returns_layers_and_tree():
         min_clusters=4,
         min_samples=5,
         base_min_cluster_size=10,
-        n_threads=1,
     )
     layers_filtered, tree_filtered = clusterer_filtered.fit_predict(
         clusterable_vectors=clusterable_data,
@@ -355,7 +355,6 @@ def test_plscan_clusterer_fit_predict_returns_layers_and_tree():
         min_samples=5,
         base_min_cluster_size=10,
         max_layers=1,
-        n_threads=1,
     )
     layers_limited, tree_limited = clusterer_limited.fit_predict(
         clusterable_vectors=clusterable_data,
@@ -384,7 +383,6 @@ def test_plscan_clusterer_centroids_use_embedding_vectors():
         min_clusters=4,
         min_samples=5,
         base_min_cluster_size=10,
-        n_threads=1,
     )
     layers, _ = clusterer.fit_predict(
         clusterable_vectors=clusterable_data,
@@ -416,7 +414,6 @@ def test_plscan_clusterer_raises_for_too_few_clusters():
         min_clusters=50,
         min_samples=5,
         base_min_cluster_size=10,
-        n_threads=1,
     )
 
     with pytest.raises(

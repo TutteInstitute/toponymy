@@ -3,10 +3,10 @@ from typing import Any, Dict, List, NewType, Optional, Tuple, Type
 
 import numba
 import numpy as np
+from fast_hdbscan import PLSCAN
 from fast_hdbscan.boruvka import parallel_boruvka
 from fast_hdbscan.cluster_trees import condense_tree, extract_leaves
 from fast_hdbscan.numba_kdtree import build_kdtree
-from fast_plscan import PLSCAN
 from sklearn.cluster import KMeans
 from sklearn.neighbors import KDTree
 
@@ -598,7 +598,7 @@ class KMeansClusterer(Clusterer):
 
 class PLSCANClusterer(Clusterer):
     """
-    A class for clustering dense vector data in layers using fast_plscan.PLSCAN.
+    A class for clustering dense vector data in layers using fast_hdbscan.PLSCAN.
 
     Parameters
     ----------
@@ -614,9 +614,6 @@ class PLSCANClusterer(Clusterer):
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bar : bool, optional, deprecated
         Deprecated. Use verbose instead.
-    n_threads : Optional[int], optional
-        The number of threads to use for PLSCAN (default is -1). If -1, PLSCAN's
-        default thread handling is used. `None` is also passed through unchanged.
 
     Attributes
     ----------
@@ -626,8 +623,11 @@ class PLSCANClusterer(Clusterer):
         A dictionary representing the cluster tree.
     cluster_probabilities_ : List[np.ndarray]
         Membership probabilities for each returned layer.
-    cluster_cut_sizes_ : List[np.float32]
-        The minimum cluster size cut used to generate each returned layer.
+    cluster_persistence_scores_ : List[float]
+        Persistence scores for each returned layer.
+    plscan_min_cluster_sizes_ : Optional[np.ndarray]
+        The minimum cluster sizes explored by PLSCAN, when exposed by the
+        upstream implementation.
     """
 
     def __init__(
@@ -638,14 +638,12 @@ class PLSCANClusterer(Clusterer):
         max_layers: Optional[int] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
-        n_threads: Optional[int] = -1,
     ):
         super().__init__()
         self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.base_min_cluster_size = base_min_cluster_size
         self.max_layers = max_layers
-        self.n_threads = n_threads
 
         _, self.verbose = handle_verbose_params(
             verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
@@ -674,14 +672,19 @@ class PLSCANClusterer(Clusterer):
 
         self.plscan_ = PLSCAN(
             min_samples=self.min_samples,
-            min_cluster_size=self.base_min_cluster_size,
-            num_threads=None if self.n_threads == -1 else self.n_threads,
+            base_min_cluster_size=self.base_min_cluster_size,
+            max_layers=self.max_layers if self.max_layers is not None else 10,
+            verbose=verbose_output,
         )
         self.plscan_.fit(clusterable_vectors)
 
-        raw_cluster_layers = self.plscan_.cluster_layers()
+        raw_cluster_layers = zip(
+            self.plscan_.cluster_layers_,
+            self.plscan_.membership_strength_layers_,
+            self.plscan_.layer_persistence_scores_,
+        )
         filtered_cluster_layers = []
-        for cut_size, labels, probabilities in raw_cluster_layers:
+        for labels, probabilities, persistence_score in raw_cluster_layers:
             n_clusters_in_layer = labels.max() + 1
             if n_clusters_in_layer < self.min_clusters:
                 continue
@@ -689,7 +692,7 @@ class PLSCANClusterer(Clusterer):
                 print(
                     f"Layer {len(filtered_cluster_layers)} found {n_clusters_in_layer} clusters"
                 )
-            filtered_cluster_layers.append((cut_size, labels, probabilities))
+            filtered_cluster_layers.append((labels, probabilities, persistence_score))
             if (
                 self.max_layers is not None
                 and len(filtered_cluster_layers) >= self.max_layers
@@ -702,13 +705,16 @@ class PLSCANClusterer(Clusterer):
                 f"min_clusters={self.min_clusters}."
             )
 
-        cluster_label_layers = [labels for _, labels, _ in filtered_cluster_layers]
-        self.cluster_cut_sizes_ = [
-            cut_size for cut_size, _, _ in filtered_cluster_layers
-        ]
+        cluster_label_layers = [labels for labels, _, _ in filtered_cluster_layers]
         self.cluster_probabilities_ = [
-            probabilities for _, _, probabilities in filtered_cluster_layers
+            probabilities for _, probabilities, _ in filtered_cluster_layers
         ]
+        self.cluster_persistence_scores_ = [
+            persistence_score for _, _, persistence_score in filtered_cluster_layers
+        ]
+        self.plscan_min_cluster_sizes_ = getattr(
+            self.plscan_, "min_cluster_sizes_", None
+        )
         self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
         self.cluster_layers_ = [
             layer_class(
