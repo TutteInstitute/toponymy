@@ -24,12 +24,33 @@
 # LLM wrapper, and fit a `Toponymy` model.
 
 # %%
+import sys
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 warnings.filterwarnings("ignore")
+
+# Prefer local Toponymy source over any installed package so the docs
+# always run freshest code.
+repo_root = Path.cwd()
+if not (repo_root / "toponymy" / "__init__.py").is_file():
+    repo_root = repo_root.parent
+repo_root = repo_root.resolve()
+local_toponymy = repo_root / "toponymy" / "__init__.py"
+if not local_toponymy.is_file():
+    raise RuntimeError(f"Could not find local Toponymy source at {local_toponymy}")
+
+sys.path = [str(repo_root)] + [
+    path
+    for path in sys.path
+    if Path(path or ".").resolve() != repo_root
+]
+for module_name in list(sys.modules):
+    if module_name == "toponymy" or module_name.startswith("toponymy."):
+        del sys.modules[module_name]
 
 # %% [markdown]
 # For the dataset we'll use the same embedded 20-newsgroups parquet file from the
