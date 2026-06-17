@@ -23,6 +23,13 @@ Ngrammer = Callable[[str], List[str]]
 
 from typing import Union, overload, TypeVar, cast
 
+SUPPORTED_SELECTION_METHODS = [
+    "information_weighted",
+    "central",
+    "bm25",
+    "submodular_selection_information",
+]
+
 
 # Define a protocol for objects that behave like Tokenizers
 class TokenizerLike(Protocol):
@@ -257,13 +264,60 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
         )
 
     def select_features(
-        self, cluster_label_vector, object_x_feature_matrix, feature_names
+        self,
+        selection_method: str,
+        cluster_label_vector: np.ndarray,
+        object_x_feature_matrix: scipy.sparse.spmatrix,
+        feature_names: List[str],
+        keyphrase_vectors: np.ndarray,
+        **kwargs,
     ):
         """
         #TODO: this function
         """
-        pass
-
+        if selection_method not in SUPPORTED_SELECTION_METHODS:
+            raise ValueError(
+                f"Method {selection_method} is not a currently supported selection method. Currently supported selection methods: {SUPPORTED_SELECTION_METHODS}"
+            )
+        
+        if selection_method == "information_weighted":
+            keyphrases_per_cluster = information_weighted_keyphrases(
+                cluster_label_vector=cluster_label_vector,
+                object_x_keyphrase_matrix=object_x_feature_matrix,
+                keyphrase_list=feature_names,
+                keyphrase_vectors=keyphrase_vectors,
+                embedding_model=self.embedder,
+                **kwargs,
+            )
+        elif selection_method == "central":
+            keyphrases_per_cluster = central_keyphrases(
+                cluster_label_vector=cluster_label_vector,
+                object_x_keyphrase_matrix=object_x_feature_matrix,
+                keyphrase_list=feature_names,
+                keyphrase_vectors=keyphrase_vectors,
+                embedding_model=self.embedder,
+                **kwargs,
+            )
+        elif selection_method == "bm25":
+            keyphrases_per_cluster = bm25_keyphrases(
+                cluster_label_vector=cluster_label_vector,
+                object_x_keyphrase_matrix=object_x_feature_matrix,
+                keyphrase_list=feature_names,
+                keyphrase_vectors=keyphrase_vectors,
+                embedding_model=self.embedder,
+                **kwargs,
+            )
+        elif selection_method == "submodular_selection_information":
+            keyphrases_per_cluster = submodular_selection_information_keyphrases(
+                cluster_label_vector=cluster_label_vector,
+                object_x_keyphrase_matrix=object_x_feature_matrix,
+                keyphrase_list=feature_names,
+                keyphrase_vectors=keyphrase_vectors,
+                embedding_model=self.embedder,
+                **kwargs,
+            )
+        
+        return keyphrases_per_cluster
 
 def create_tokenizers_ngrammer(
     tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)
