@@ -12,6 +12,7 @@ from sklearn.metrics import pairwise_distances
 from apricot import SaturatedCoverageSelection, GraphCutSelection
 from toponymy.exemplar_texts import FacilityLocationSelection
 from toponymy._utils import handle_verbose_params
+from toponymy.feature_extraction import AbstractFeatureExtractor
 
 import scipy.sparse
 import numba
@@ -28,6 +29,240 @@ class TokenizerLike(Protocol):
     def encode(self, text: str, *args: Any, **kwargs: Any) -> Any: ...
 
     def decode(self, ids: Any, *args: Any, **kwargs: Any) -> str: ...
+
+
+class KeyphraseExtractor(AbstractFeatureExtractor):
+    """
+    A class for extracting keyphrases as representatives of clusters from a list of objects.
+    This can be usefulas keyphrases can be a more specific way of helping prompt an LLM for
+    a topic name. To make use of keyphrases you need to be able to convert objects to text.
+    For basic short-text topic modeling, you can use the default settings, which simply
+    assumes objects are already short texts. For other kinds of topic modeling you may
+    need to provide a function that converts objects to text.
+
+    Parameters
+    ----------
+    object_to_text : Optional[Callable[[Any], str]], optional
+        A function that converts objects to text, by default None. If None, it is assumed that the objects are strings.
+        An example of another case would be if objects were images and this function was a
+        zero-shot image captioning model.
+
+    ngram_range : Tuple[int, int], optional
+        The range of n-grams to consider, by default (1, 4).
+
+    tokenizer : Optional[TokenizerLike], optional
+        A tokenizer object that has encode and decode methods, by default None. If None, a CountVectorizer is used.
+
+    token_pattern : str, optional
+        The regular expression pattern to use for tokenization, by default "(?u)\\b\\w[-'\\w]+\\b".
+
+    max_features : int, optional
+        The maximum number of features to consider, by default 50_000.
+
+    min_occurrences : int, optional
+        The minimum number of occurrences for a keyphrase to be included, by default 2, so keyphrases have to re-occur.
+
+    stop_words : FrozenSet[str], optional
+        The set of stop words to use, by default sklearn.feature_extraction.text.ENGLISH_STOP_WORDS.
+
+    n_jobs : int, optional
+        The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
+
+    embedder : Optional[TextEmbedderProtocol], optional
+        An optional embedder to generate keyphrase vectors, by default None.
+
+    verbose : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+
+    Attributes
+    ----------
+
+    object_x_keyphrase_matrix_ : scipy.sparse.spmatrix
+        A sparse count matrix of keyphrases in the objects.
+
+    keyphrase_list_ : List[str]
+        A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+
+    """
+
+    def __init__(
+        self,
+        object_to_text: Optional[Callable[[Any], str]] = None,
+        ngram_range: Tuple[int, int] = (1, 4),
+        tokenizer: Optional[TokenizerLike] = None,
+        token_pattern: str = "(?u)\\b\\w[-'\\w]+\\b",
+        max_features: int = 50_000,
+        min_occurrences: int = 2,
+        stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
+        n_jobs: int = -1,
+        embedder: Optional[TextEmbedderProtocol] = None,
+        verbose: bool = None,
+    ):
+        self.object_to_text = object_to_text
+        self.ngram_range = ngram_range
+        self.tokenizer = tokenizer
+        self.token_pattern = token_pattern
+        self.max_features = max_features
+        self.min_occurrences = min_occurrences
+        self.stop_words = stop_words
+        self.n_jobs = n_jobs
+        self.embedder = embedder
+
+        # Handle verbose parameters
+        _, self.verbose = handle_verbose_params(verbose=verbose, default_verbose=False)
+
+    def _convert_objects_to_text(self, objects: List[Any]) -> List[str]:
+        """
+        Converts objects into string representations of those objects, using the supplied self.object_to_text function.
+
+        Parameters
+        ----------
+        objects: List[Any]
+            A list of objects.
+
+        Returns
+        -------
+        List[str]
+            A list of string representations of objects.
+        """
+        if self.object_to_text is None:
+            object_texts = objects
+        else:
+            object_texts = [self.object_to_text(obj) for obj in objects]
+        return object_texts
+
+    def _create_ngrammer(self) -> Ngrammer:
+        """
+        Creates an ngrammer function that uses a tokenizer to tokenize the text and then generates n-grams.
+
+        If no tokenizer is supplied, then a CountVectorizer is used by default.
+
+        Returns
+        -------
+        Ngrammer
+            A function that takes a string and returns a list of n-grams.
+        """
+        if self.tokenizer is None:
+            # use CountVectorizer to build an ngram analyzer to ensure compatibility
+            cv = CountVectorizer(
+                lowercase=True,
+                token_pattern=self.token_pattern,
+                ngram_range=self.ngram_range,
+            )
+            ngrammer = cv.build_analyzer()
+        else:
+            ngrammer = create_tokenizers_ngrammer(
+                self.tokenizer, ngram_range=ngram_range
+            )
+        return ngrammer
+
+    def generate_features(self, objects: List[str]) -> List[str]:
+        """
+        Generates features from objects by building a vocabulary of keyphrases.
+
+        Parameters
+        ----------
+        objects : List[str]
+            A list of objects; for use in building a vocabulary this should be string representations of the objects.
+
+        Returns
+        -------
+        List[str]
+            A keyphrase list of the most commonly occurring keyphrases.
+        """
+        ngrammer = self._create_ngrammer()
+        keyphrase_list = build_keyphrase_vocabulary(
+            objects,
+            ngrammer=ngrammer,
+            max_features=self.max_features,
+            min_occurrences=self.min_occurrrences,
+            stop_words=self.stop_words,
+            n_jobs=self.n_jobs,
+            min_chunk_size=self.min_chunk_size,
+            verbose=self.verbose,
+        )
+        if verbose:
+            print(f"Found {len(keyphrase_list)} keyphrases.")
+        return keyphrase_list
+
+    def build_object_x_feature_matrix(
+        self,
+        objects: List[str],
+        features: List[str],
+    ) -> scipy.sparse.spmatrix:
+        """
+        Builds a count matrix of keyphrases in a list of objects.
+
+        Parameters
+        ----------
+        objects : List[str]
+            A list of objects; for use in building the object-feature matrix this should be string representations of the objects.
+
+        features: List[str]
+            A list of feature names (keyphrases).
+
+        Returns
+        -------
+        scipy.sparse.spmatrix
+            A sparse count matrix of keyphrases in the objects.
+        """
+        keyphrase_dict = {keyphrase: i for i, keyphrase in enumerate(features)}
+        object_x_feature_matrix = build_keyphrase_count_matrix(
+            objects,
+            keyphrase_dict,
+            ngrammer=self.ngrammer,
+            n_jobs=self.n_jobs,
+            min_chunk_size=self.min_chunk_size,
+            verbose=self.verbose,
+        )
+        return object_x_feature_matrix
+
+    def fit(self, objects: List[Any]):
+        object_texts = self._convert_objects_to_text(objects)
+        if self.verbose:
+            print("Building keyphrase matrix ... ")
+
+        keyphrase_list = self.generate_features(object_texts)
+        self.keyphrase_list_ = keyphrase_list
+
+        object_x_feature_matrix = self.build_object_feature_matrix(
+            object_texts, keyphrase_list
+        )
+        self.object_x_feature_matrix_ = object_x_feature_matrix
+
+        if self.embedder is not None:
+            if self.verbose:
+                print("Building keyphrase vectors ... ")
+
+            self.keyphrase_vectors_ = self.embedder.encode(
+                self.keyphrase_list_,
+                show_progress_bar=self.verbose,
+            )
+        else:
+            self.keyphrase_vectors_ = None
+
+        return self
+
+    def fit_transform(
+        self, objects: List[Any]
+    ) -> Tuple[scipy.sparse.spmatrix, List[str], Optional[np.ndarray]]:
+        """
+        Fits the KeyphraseExtractor to the objects and returns the object x keyphrase matrix, keyphrase list, and keyphrase vectors.
+        """
+        self.fit(objects)
+        return (
+            self.object_x_keyphrase_matrix_,
+            self.keyphrase_list_,
+            self.keyphrase_vectors_,
+        )
+
+    def select_features(
+        self, cluster_label_vector, object_x_feature_matrix, feature_names
+    ):
+        """
+        #TODO: this function
+        """
+        pass
 
 
 def create_tokenizers_ngrammer(
