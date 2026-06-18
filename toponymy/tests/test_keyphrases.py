@@ -1,6 +1,6 @@
 from toponymy.keyphrases import (
+    KeyphraseExtractor,
     create_tokenizers_ngrammer,
-    build_object_x_keyphrase_matrix,
     build_keyphrase_vocabulary,
     build_keyphrase_count_matrix,
     information_weighted_keyphrases,
@@ -49,9 +49,8 @@ def cluster_layer():
 
 
 @pytest.fixture
-def matrix_and_keyphrases(all_topic_objects):
-    return build_object_x_keyphrase_matrix(
-        all_topic_objects,
+def keyphrase_extractor():
+    return KeyphraseExtractor(
         token_pattern=r"(?u)\b\w\w+\b",
         ngram_range=(1, 1),
         min_occurrences=1,
@@ -59,13 +58,15 @@ def matrix_and_keyphrases(all_topic_objects):
 
 
 @pytest.fixture
-def matrix(matrix_and_keyphrases):
-    return matrix_and_keyphrases[0]
+def keyphrases(keyphrase_extractor, all_topic_objects):
+    return keyphrase_extractor.generate_features(all_topic_objects)
 
 
 @pytest.fixture
-def keyphrases(matrix_and_keyphrases):
-    return matrix_and_keyphrases[1]
+def matrix(keyphrase_extractor, all_topic_objects, keyphrases):
+    return keyphrase_extractor.build_object_x_feature_matrix(
+        all_topic_objects, keyphrases
+    )
 
 
 @pytest.fixture

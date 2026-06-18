@@ -75,6 +75,9 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
     n_jobs : int, optional
         The number of jobs to use in parallel processing, by default -1. If -1, all available cores are used.
 
+    min_chunk_size : int, optional
+        The minimum chunk size for parallel processing, by default 20_000.
+
     embedder : Optional[TextEmbedderProtocol], optional
         An optional embedder to generate keyphrase vectors, by default None.
 
@@ -102,6 +105,7 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
         min_occurrences: int = 2,
         stop_words: FrozenSet[str] = ENGLISH_STOP_WORDS,
         n_jobs: int = -1,
+        min_chunk_size: int = 20_000,
         embedder: Optional[TextEmbedderProtocol] = None,
         verbose: bool = None,
     ):
@@ -113,6 +117,7 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
         self.min_occurrences = min_occurrences
         self.stop_words = stop_words
         self.n_jobs = n_jobs
+        self.min_chunk_size = min_chunk_size
         self.embedder = embedder
 
         # Handle verbose parameters
@@ -177,18 +182,18 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
         List[str]
             A keyphrase list of the most commonly occurring keyphrases.
         """
-        ngrammer = self._create_ngrammer()
+        self.ngrammer = self._create_ngrammer()
         keyphrase_list = build_keyphrase_vocabulary(
             objects,
-            ngrammer=ngrammer,
+            ngrammer=self.ngrammer,
             max_features=self.max_features,
-            min_occurrences=self.min_occurrrences,
+            min_occurrences=self.min_occurrences,
             stop_words=self.stop_words,
             n_jobs=self.n_jobs,
             min_chunk_size=self.min_chunk_size,
             verbose=self.verbose,
         )
-        if verbose:
+        if self.verbose:
             print(f"Found {len(keyphrase_list)} keyphrases.")
         return keyphrase_list
 
@@ -279,7 +284,7 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
             raise ValueError(
                 f"Method {selection_method} is not a currently supported selection method. Currently supported selection methods: {SUPPORTED_SELECTION_METHODS}"
             )
-        
+
         if selection_method == "information_weighted":
             keyphrases_per_cluster = information_weighted_keyphrases(
                 cluster_label_vector=cluster_label_vector,
@@ -316,8 +321,9 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
                 embedding_model=self.embedder,
                 **kwargs,
             )
-        
+
         return keyphrases_per_cluster
+
 
 def create_tokenizers_ngrammer(
     tokenizer: TokenizerLike, ngram_range: Tuple[int, int] = (1, 4)
