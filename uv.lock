@@ -1219,15 +1219,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dataclasses"
-version = "0.8"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1f/12/7919c5d8b9c497f9180db15ea8ead6499812ea8264a6ae18766d93c59fe5/dataclasses-0.8.tar.gz", hash = "sha256:8479067f342acf957dc82ec415d355ab5edb7e7646b90dc6e2fd1d96ad084c97", size = 36581, upload-time = "2020-11-13T14:40:30.139Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fe/ca/75fac5856ab5cfa51bbbcefa250182e50441074fdc3f803f6e76451fab43/dataclasses-0.8-py3-none-any.whl", hash = "sha256:0201d89fa866f68c8ebd9d08ee6ff50c0b255f8ec63a71c16fda7af82bb887bf", size = 19041, upload-time = "2020-11-13T14:40:29.194Z" },
-]
-
-[[package]]
 name = "datamapplot"
 version = "0.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -6235,14 +6226,14 @@ wheels = [
 
 [[package]]
 name = "toponymy"
-version = "0.5.1"
+version = "0.5.2"
 source = { editable = "." }
 dependencies = [
     { name = "apricot-select" },
-    { name = "dataclasses" },
     { name = "datasets" },
     { name = "fast-hdbscan" },
     { name = "httpx" },
+    { name = "jinja2" },
     { name = "numba" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -6253,7 +6244,9 @@ dependencies = [
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tenacity" },
+    { name = "tokenizers" },
     { name = "tqdm" },
+    { name = "transformers" },
     { name = "vectorizers" },
 ]
 
@@ -6290,7 +6283,6 @@ dev = [
     { name = "sentence-transformers" },
     { name = "together" },
     { name = "traitlets" },
-    { name = "transformers" },
     { name = "umap-learn" },
 ]
 example-notebooks = [
@@ -6313,7 +6305,6 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'" },
     { name = "bm25s", marker = "extra == 'dev'" },
     { name = "cohere", marker = "extra == 'dev'" },
-    { name = "dataclasses" },
     { name = "datamapplot", marker = "extra == 'example-notebooks'", specifier = ">=0.2.2" },
     { name = "datasets" },
     { name = "evoc", marker = "extra == 'dev'" },
@@ -6323,6 +6314,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'dev'", specifier = "<1.0" },
     { name = "ipykernel", marker = "extra == 'example-notebooks'", specifier = ">=7.2.0" },
     { name = "isort", marker = "extra == 'dev'" },
+    { name = "jinja2" },
     { name = "jupyter", marker = "extra == 'example-notebooks'", specifier = ">=1.1.1" },
     { name = "litellm", marker = "extra == 'dev'", specifier = ">=1.83.10" },
     { name = "llama-cpp-python", marker = "extra == 'llama'" },
@@ -6350,10 +6342,11 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'example-notebooks'", specifier = ">=5.1.2" },
     { name = "tenacity" },
     { name = "together", marker = "extra == 'dev'" },
+    { name = "tokenizers" },
     { name = "tqdm" },
     { name = "tqdm", marker = "extra == 'example-notebooks'", specifier = ">=4.67.3" },
     { name = "traitlets", marker = "extra == 'dev'" },
-    { name = "transformers", marker = "extra == 'dev'", specifier = ">=4.41.0,<5.0.0" },
+    { name = "transformers", specifier = ">=4.41.0,<5.0.0" },
     { name = "umap-learn", marker = "extra == 'dev'" },
     { name = "vectorizers" },
 ]
