@@ -94,11 +94,18 @@ dev = [
     "umap-learn",
     "pylance",
 ]
+doc = [
+    "nbsphinx>=0.9.8",
+    "numpydoc>=1.10.0",
+    "sphinx",
+    "sphinx-autobuild",
+    "sphinx-rtd-theme>=3.1.0",
+]
 llama = [
     "llama-cpp-python",
 ]
 example-notebooks = [
-    "datamapplot>=0.2.2",
+    "datamapplot>=0.7",
     "ipykernel>=7.2.0",
     "jupyter>=1.1.1",
     "sentence-transformers>=5.1.2",
