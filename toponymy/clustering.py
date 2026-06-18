@@ -609,7 +609,7 @@ class PLSCANClusterer(Clusterer):
     base_min_cluster_size : int, optional
         The base minimum cluster size passed to PLSCAN (default is 10).
     max_layers : Optional[int], optional
-        The maximum number of hierarchy layers to keep (default is None).
+        The maximum number of hierarchy layers to keep (default is 10).
     verbose : bool, optional
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bar : bool, optional, deprecated
@@ -635,7 +635,7 @@ class PLSCANClusterer(Clusterer):
         min_clusters: int = 6,
         min_samples: int = 5,
         base_min_cluster_size: int = 10,
-        max_layers: Optional[int] = None,
+        max_layers: Optional[int] = 10,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
     ):
@@ -673,7 +673,7 @@ class PLSCANClusterer(Clusterer):
         self.plscan_ = PLSCAN(
             min_samples=self.min_samples,
             base_min_cluster_size=self.base_min_cluster_size,
-            max_layers=self.max_layers if self.max_layers is not None else 10,
+            max_layers=self.max_layers,
             verbose=verbose_output,
         )
         self.plscan_.fit(clusterable_vectors)
