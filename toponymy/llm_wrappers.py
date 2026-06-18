@@ -1,7 +1,6 @@
 import string
 from unittest import result
 from warnings import warn, filterwarnings
-
 import tokenizers
 import transformers
 
@@ -421,7 +420,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 prompt,
                 temperature,
                 max_tokens=max_tokens,
-                routine="generate_topic_names",
+                routine="generate_topic_name",
             )
         elif isinstance(prompt, dict) and self.supports_system_prompts:
             topic_name_info_raw = self._safe_call_llm_with_system_prompt(
@@ -429,7 +428,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 user_prompt=prompt["user"],
                 temperature=temperature,
                 max_tokens=max_tokens,
-                routine="generate_topic_names",
+                routine="generate_topic_name",
             )
         else:
             warn(f"Prompt must be a string or a dictionary, got {type(prompt)}")
@@ -1140,6 +1139,1129 @@ class FailedImportAsyncLLMWrapper(AsyncLLMWrapper):
         return LLMWrapperImportError(self._import_error_message())
 
 
+####
+# LLM Wrappers
+####
+
+
+# Model String Helpers to convert to LiteLLM-style
+def _openai_model(model: str) -> str:
+    return f"openai/{model}" if "/" not in model else model
+
+
+def _anthropic_model(model: str) -> str:
+    return f"anthropic/{model}" if "/" not in model else model
+
+
+def _cohere_model(model: str) -> str:
+    return f"cohere/{model}" if "/" not in model else model
+
+
+def _together_model(model: str) -> str:
+    return f"together_ai/{model}" if "together_ai/" not in model else model
+
+
+def _azure_model(model: str) -> str:
+    return f"azure_ai/{model}" if "azure_ai/" not in model else model
+
+
+def _gemini_model(model: str) -> str:
+    return f"gemini/{model}" if "gemini/" not in model else model
+
+
+def _ollama_model(model: str) -> str:
+    return f"ollama_chat/{model}" if "ollama_chat/" not in model else model
+
+
+def _replicate_model(model: str) -> str:
+    return f"replicate/{model}" if "replicate/" not in model else model
+
+
+def _resolve_api_key(
+    api_key: str | None,
+    env_new: str | None,
+    env_legacy: str | None,
+) -> str | None:
+    """Helper function to migrate from the old environment variables to the new ones, while still allowing explicit API keys to take precedence."""
+    if api_key is not None:
+        return api_key
+
+    new_key = os.getenv(env_new)
+    legacy_key = os.getenv(env_legacy)
+
+    if new_key:
+        return new_key
+
+    if legacy_key:
+        warn(
+            f"{env_legacy} is deprecated. Use {env_new} instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_key
+
+    return None
+
+
+try:
+    import litellm
+    from litellm.exceptions import (
+        AuthenticationError,
+        PermissionDeniedError,
+        BadRequestError,
+        NotFoundError,
+        UnprocessableEntityError,
+    )
+
+    class LiteLLMNamer(LLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM using a unified interface.
+        LiteLLM supports 100+ providers including OpenAI, Anthropic, Cohere, HuggingFace,
+        Together, Replicate, and more. For more information, see https://docs.litellm.ai.
+
+        Parameters
+        ----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str, optional
+            The LiteLLM model string, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-haiku-4-5-20251001", etc.
+
+        api_base: str, optional
+            Optional LiteLLM/OpenAI-compatible API base. Alias-style convenience.
+
+        llm_specific_instructions: str, optional
+            Additional instructions appended to the user prompt.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
+
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts
+            if unsupported for a given model.
+
+        provider_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
+        Attributes
+        ----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions appended to the prompt.
+
+        use_json_object: bool
+            Whether response_format={"type": "json_object"} will be sent.
+        """
+
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+        _supports_debug_callback = True
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions=None,
+            use_json_object: bool = None,
+            disable_system_prompts: bool = False,
+            provider_kwargs: dict[str, Any] | None = None,
+            callback: DebugCallback | None = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.use_json_object = use_json_object  # set by user
+            self._resolved_use_json_object: bool | None = None  # set internally
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+            self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
+
+            filterwarnings(
+                "ignore",
+                message="Pydantic serializer warnings",
+                category=UserWarning,
+                module="pydantic",
+            )
+            filterwarnings(
+                "ignore",
+                message="Use 'content=<...>' to upload raw bytes/text content",
+                category=DeprecationWarning,
+                module="httpx",
+            )
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
+        def _detect_json_object_support(self) -> bool:
+            try:
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(
+                    f"Failed to detect json_object support for model {self.model}, assuming not supported"
+                )
+                return False
+
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
+
+        def _provider_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = dict(self.provider_kwargs)
+            kwargs.update(
+                {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+            )
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
+                kwargs["api_base"] = self.api_base
+
+            if self._should_use_json_object():
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+        def _completion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            response = litellm.completion(
+                **self._provider_kwargs(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            )
+            return response.choices[0].message.content
+
+        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
+            return self._completion_with_messages(
+                messages=[
+                    {"role": "user", "content": prompt + self.extra_prompting},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        def _call_llm_with_system_prompt(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+
+            try:
+                result = self._completion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return self._completion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+    class AsyncLiteLLMNamer(AsyncLLMWrapper):
+        """
+        Provides access to any LLM supported by LiteLLM with asynchronous support.
+        This allows for concurrent processing of multiple prompts across 100+ providers
+        including OpenAI, Anthropic, Cohere, HuggingFace, Together, Replicate, and more.
+        For more information, see https://docs.litellm.ai.
+
+        As an asynchronous wrapper this will potentially speed up topic naming, particularly
+        when you have a large number of topics. If, however, there are quirks in your data,
+        or bugs in Toponymy's prompt generation, you will potentially quickly spend money on
+        API calls.
+
+        Uses litellm.acompletion() and an asyncio semaphore for bounded
+        concurrency. Since this wrapper does not create a persistent SDK client,
+        close() is a no-op.
+
+
+        Parameters:
+        -----------
+        api_key: str, optional
+            The API key for the provider. If not provided, LiteLLM will look for the
+            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
+            ANTHROPIC_API_KEY).
+
+        model: str
+            The model to use in LiteLLM format, e.g. "openai/gpt-4o-mini",
+            "anthropic/claude-3-haiku-20240307", "together_ai/mistralai/Mixtral-8x7B-v0.1".
+            See https://docs.litellm.ai/docs/providers for the full list.
+
+        api_base: str, optional
+            The base URL for the provider API. Useful for self-hosted models or proxies.
+
+        llm_specific_instructions: str, optional
+            Additional instructions specific to the LLM, appended to the prompt.
+
+        max_concurrent_requests: int, optional
+            The maximum number of concurrent requests to the provider API. Default is 10.
+            This can be adjusted based on your application's needs and the rate limits of
+            the provider. Higher values may improve throughput but could lead to rate limiting.
+
+        disable_system_prompts: bool, False
+            Set to True to override to use plain calls instead of system prompts.
+            If False (default), system prompt support is detected automatically and will flatten system prompts
+            if unsupported for a given model.
+
+        use_json_object: bool, optional
+            Whether to request JSON object output via response_format={"type": "json_object"}.
+            If None (default), support is detected automatically by check if response_format is supported
+            for the specified model. Set to True to force JSON object mode, or False to
+            disable it.
+        provider_kwargs : dict[str, Any], optional
+            Additional keyword arguments passed directly to `litellm.completion()` /
+            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
+            features such as provider routing, request timeouts, custom headers,
+            user identifiers, or other provider parameters without modifying the
+            wrapper.
+
+            These values are merged into the completion call arguments but may be
+            overridden by core wrapper parameters such as `model`, `messages`,
+            `temperature`, and `max_tokens`.
+
+        Attributes:
+        -----------
+        model: str
+            The LiteLLM model string being used.
+
+        extra_prompting: str
+            Additional instructions specific to the LLM, appended to the prompt.
+        """
+
+        FAIL_FAST_EXCEPTIONS = (
+            AuthenticationError,
+            PermissionDeniedError,
+            BadRequestError,
+            NotFoundError,
+            UnprocessableEntityError,
+        )
+        _supports_debug_callback = True
+
+        def __init__(
+            self,
+            api_key: str = None,
+            model: str = "openai/gpt-4o-mini",
+            api_base: str = None,
+            llm_specific_instructions: str = None,
+            max_concurrent_requests: int = 10,
+            use_json_object: bool | None = None,
+            disable_system_prompts: bool = False,
+            provider_kwargs: dict[str, Any] | None = None,
+            callback: DebugCallback | None = None,
+        ):
+
+            self.api_key = api_key
+            self.model = model
+            self.api_base = api_base
+            self.callback = callback
+            self._warn_if_debug_callback_unsupported()
+            self.extra_prompting = (
+                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            )
+            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+
+            self.use_json_object = use_json_object
+            self._resolved_use_json_object: bool | None = None
+            self.disable_system_prompts = disable_system_prompts
+            self._system_prompt_capability: bool | None = None
+            self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
+
+        @property
+        def supports_system_prompts(self) -> bool:
+            if self.disable_system_prompts:
+                return False
+            return True
+
+        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return any(
+                s in message
+                for s in (
+                    "system role",
+                    "system message",
+                    "unsupported role",
+                    "invalid role",
+                    "does not support system",
+                )
+            )
+
+        def _flatten_system_into_user(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+        ) -> list[dict[str, str]]:
+            return [
+                {
+                    "role": "user",
+                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
+                }
+            ]
+
+        def _detect_json_object_support(self) -> bool:
+            try:
+                supported = litellm.get_supported_openai_params(model=self.model)
+                return "response_format" in (supported or [])
+            except Exception:
+                logger.warning(
+                    f"Failed to detect json_object support for model {self.model}, assuming not supported"
+                )
+                return False
+
+        def _should_use_json_object(self) -> bool:
+            if self.use_json_object is not None:
+                return self.use_json_object
+
+            if self._resolved_use_json_object is None:
+                self._resolved_use_json_object = self._detect_json_object_support()
+            return self._resolved_use_json_object
+
+        def _provider_kwargs(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> dict:
+            kwargs = dict(self.provider_kwargs)
+            kwargs.update(
+                {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+            )
+
+            if self.api_key is not None:
+                kwargs["api_key"] = self.api_key
+
+            if self.api_base is not None:
+                kwargs["api_base"] = self.api_base
+
+            if self._should_use_json_object():
+                kwargs["response_format"] = {"type": "json_object"}
+
+            return kwargs
+
+        async def _acompletion_with_messages(
+            self,
+            messages,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            async with self.semaphore:
+                response = await litellm.acompletion(
+                    **self._provider_kwargs(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+            return response.choices[0].message.content
+
+        async def _call_single_llm(
+            self,
+            prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            return await self._acompletion_with_messages(
+                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+        async def _call_single_llm_with_system(
+            self,
+            system_prompt: str,
+            user_prompt: str,
+            temperature: float,
+            max_tokens: int,
+        ) -> str:
+            if self._system_prompt_capability is False:
+                messages = self._flatten_system_into_user(system_prompt, user_prompt)
+            else:
+                messages = [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt + self.extra_prompting},
+                ]
+            try:
+                # If the model doesn't support system prompts, this will raise an error which we
+                # catch to disable system prompt usage for future calls. Everything else raises as normal.
+                result = await self._acompletion_with_messages(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                if self._system_prompt_capability is None:
+                    self._system_prompt_capability = True
+                return result
+
+            except self.FAIL_FAST_EXCEPTIONS:
+                raise
+
+            except Exception as e:
+                if (
+                    self._system_prompt_capability is not None
+                    or not self._looks_like_unsupported_system_prompt_error(e)
+                ):
+                    raise
+
+                self._system_prompt_capability = False
+                return await self._acompletion_with_messages(
+                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+
+        async def close(self):
+            """No-op for parity with other async wrappers."""
+            return None
+
+except Exception as e:
+
+    class LiteLLMNamer(FailedImportLLMWrapper):
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+    class AsyncLiteLLMNamer(FailedImportAsyncLLMWrapper):
+
+        def __init__(self, *args, **kwds):
+            super().__init__(*args, **kwds)
+
+
+def AnthropicNamer(
+    model: str = "claude-haiku-4-5-20251001",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for Anthropic with convenient defaults for
+    topic naming. For more flexibility, use LiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — AnthropicNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Anthropic model to use. Default is "claude-haiku-4-5-20251001".
+        May be in LiteLLM format ("anthropic/claude-haiku-4-5-20251001")
+    api_key : str, optional
+        Anthropic API key. Falls back to the ANTHROPIC_API_KEY environment variable.
+    api_base : str, optional
+        Override the Anthropic API endpoint. Useful for proxies or Anthropic-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the ANTHROPIC_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AnthropicNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AnthropicNamer(model="claude-3-5-20251001", api_key="my-api-key")
+
+    Using an Anthropic-compatible local server::
+
+        namer = AnthropicNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    return LiteLLMNamer(
+        model=_anthropic_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncAnthropicNamer(
+    model: str = "claude-haiku-4-5-20251001",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for Anthropic with convenient defaults.
+    For more flexibility, use AsyncLiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — AnthropicNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Anthropic model to use. Default is "claude-haiku-4-5-20251001". Must be in LiteLLM format ("anthropic/claude-haiku-4-5-20251001")
+        or bare Anthropic format ("claude-haiku-4-5-20251001") — both are accepted.
+    api_key : str, optional
+        Anthropic API key. Falls back to the ANTHROPIC_API_KEY environment variable.
+    api_base : str, optional
+        Override the Anthropic API endpoint. Useful for proxies or Anthropic-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the ANTHROPIC_API_BASE environment variable.
+        Default is the standard Anthropic endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncAnthropicNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncAnthropicNamer(model="claude-3-5-20251001", api_key="my-api-key")
+
+    Using an Anthropic-compatible local server::
+
+        namer = AsyncAnthropicNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    return AsyncLiteLLMNamer(
+        model=_anthropic_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def _resolve_cohere_api_base(
+    api_base: str | None,
+    base_url: str | None,
+    env_new: str = "COHERE_API_BASE",
+    env_legacy: str = "CO_API_URL",
+) -> str | None:
+    """Helper function for migrating previous base_url defaults"""
+
+    if api_base is not None:
+        return api_base
+
+    if base_url is not None:
+        warn(
+            "base_url is deprecated. Use api_base instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return base_url
+
+    new_val = os.getenv(env_new)
+    if new_val:
+        return new_val
+
+    legacy_val = os.getenv(env_legacy)
+    if legacy_val:
+        warn(
+            f"{env_legacy} is deprecated. Use {env_new} instead.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_val
+
+    return None
+
+
+def CohereNamer(
+    model: str = "command-r-08-2024",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str | None = None,  # deprecated, renamed to api_base
+    httpx_client: Optional[httpx.Client] = None,  # deprecated
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for Cohere with convenient defaults for
+    topic naming. For more flexibility, use LiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — CohereNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Cohere model to use. Default is "command-r-08-2024".
+        May be in LiteLLM format ("cohere/command-r-08-2024")
+    api_key : str, optional
+        Cohere API key. Falls back to the COHERE_API_KEY environment variable.
+    api_base : str, optional
+        Override the Cohere API endpoint. Useful for proxies or Cohere-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the COHERE_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    httpx_client : optional
+        Deprecated. Pass via ``provider_kwargs={'httpx_client': <client>}`` instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = CohereNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = CohereNamer(model="command-r-08-2024", api_key="my-api-key")
+
+    Using a Cohere-compatible local server::
+
+        namer = CohereNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if httpx_client is not None:
+        warn(
+            "httpx_client is deprecated. "
+            "Pass via provider_kwargs={'httpx_client': httpx_client} instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["httpx_client"] = httpx_client
+    return LiteLLMNamer(
+        model=_cohere_model(model),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="COHERE_API_KEY", env_legacy="CO_API_KEY"
+        ),
+        api_base=_resolve_cohere_api_base(api_base, base_url),
+        use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncCohereNamer(
+    model: str = "command-r-08-2024",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str = None,
+    httpx_client: Optional[httpx.Client] = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for Cohere with convenient defaults.
+    For more flexibility, use AsyncLiteLLMNamer directly with the model and parameters of your choice.
+
+    All namers share the same interface once constructed — CohereNamer is a
+    convenience entry point, not a special case.
+
+    Parameters
+    ----------
+    model : str, optional
+        Cohere model to use. Default is "command-r-08-2024". Must be in LiteLLM format ("cohere/command-r-08-2024")
+        or bare Cohere format ("command-r-08-2024") — both are accepted.
+    api_key : str, optional
+        Cohere API key. Falls back to the COHERE_API_KEY environment variable.
+    api_base : str, optional
+        Override the Cohere API endpoint. Useful for proxies or Cohere-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the COHERE_API_BASE environment variable.
+        Default is the standard Cohere endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Cohere API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Cohere API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    httpx_client : optional
+        Deprecated. Pass via ``provider_kwargs={'httpx_client': <client>}`` instead.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncCohereNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncCohereNamer(model="command-r-08-2024", api_key="my-api-key")
+
+    Using a Cohere-compatible local server::
+
+        namer = AsyncCohereNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if httpx_client is not None:
+        warn(
+            "httpx_client is deprecated. "
+            "Pass via provider_kwargs={'httpx_client': httpx_client} instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["httpx_client"] = httpx_client
+    return AsyncLiteLLMNamer(
+        model=_cohere_model(model),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="COHERE_API_KEY", env_legacy="CO_API_KEY"
+        ),
+        api_base=_resolve_cohere_api_base(api_base, base_url),
+        disable_system_prompts=False,
+        use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def TogetherNamer(
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+    Deprecated. Use LiteLLMNamer(model="together_ai/<model_name>") instead.
+
+    Parameters
+    ----------
+    model : str, optional
+        Together AI model to use. Default is "meta-llama/Meta-Llama-3-8B-Instruct-Lite".
+        May be in LiteLLM format ("together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+    api_key : str, optional
+        Together AI API key. Falls back to the TOGETHERAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Together AI API endpoint. Can use the TOGETHERAI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = TogetherNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = TogetherNamer(model="meta-llama/Meta-Llama-3-8B-Instruct-Lite", api_key="my-api-key")
+
+    Using a Together AI-compatible local server::
+
+        namer = TogetherNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "TogetherNamer is deprecated and will be removed in a future "
+            "release. Use LiteLLMNamer(model='together_ai/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return LiteLLMNamer(
+        model=_together_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncTogether(
+    model: str = "meta-llama/Meta-Llama-3-8B-Instruct-Lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Deprecated. Use AsyncLiteLLMNamer(model="together_ai/<model_name>") instead.
+
+    Parameters
+    ----------
+    model : str, optional
+        Together AI model to use. Default is "meta-llama/Meta-Llama-3-8B-Instruct-Lite". Must be in LiteLLM format ("together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite")
+        or bare Together AI format ("meta-llama/Meta-Llama-3-8B-Instruct-Lite") — both are accepted.
+    api_key : str, optional
+        Together AI API key. Falls back to the TOGETHERAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Together AI API endpoint. Useful for proxies or Together AI-compatible
+        local servers. Can use the TOGETHERAI_API_BASE environment variable.
+        Default is the standard Together AI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Together AI API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Together AI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncTogether(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncTogether(model="meta-llama/Meta-Llama-3-8B-Instruct-Lite", api_key="my-api-key")
+
+    Using a Together AI-compatible local server::
+
+        namer = AsyncTogether(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "AsyncTogether is deprecated and will be removed in a future "
+            "release. Use AsyncLiteLLMNamer(model='together_ai/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+
+    return AsyncLiteLLMNamer(
+        model=_together_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
 try:
     import llama_cpp
 
@@ -1584,282 +2706,6 @@ except ImportError:
 try:
     import cohere
 
-    class CohereNamer(LLMWrapper):
-        """
-        Provides access to Cohere's LLMs with the Toponymy framework. For more information on Cohere, see
-        https://docs.cohere.com/docs/llm-overview. You will need a Cohere API key to use this wrapper. The
-        default model is "command-r-08-2024", which is a sufficiently powerful to do a good job of generating
-        topic names and clusters, but inexpensive in terms of dollars per token. You can use more advanced
-        models, but they have diminishing returns for this task, and are more expensive.
-
-        Parameters:
-        -----------
-
-        api_key: str
-            Your Cohere API key. You can set this as an environment variable CO_API_KEY or pass it directly
-
-        model: str, optional
-            The name of the Cohere model to use. Default is "command-r-08-2024". You can use any model available
-            in the Cohere API, but this is a good balance of performance and cost.
-
-        base_url: str, optional
-            The base URL for the Cohere API. Default is "https://api.cohere.com". You can set this as an environment
-            variable CO_API_URL to use a different endpoint, such as for Cohere's private cloud.
-
-        httpx_client: httpx.Client, optional
-            An optional httpx client to use for making requests. If not provided, a default client will be created.
-            This can be useful when using Cohere's private cloud or when you need to customize the HTTP client settings.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-
-        llm: cohere.ClientV2
-            The Cohere LLM client instance.
-
-        model: str
-            The name of the Cohere model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Cohere, this is always True.
-
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncCohere wrapper instead.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "command-r-08-2024",
-            base_url: str = None,
-            httpx_client: Optional[httpx.Client] = None,
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            if base_url is None:
-                base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
-
-            api_key = api_key or os.getenv("CO_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Cohere API key is required. Set it as an environment variable CO_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = cohere.ClientV2(
-                api_key=api_key, base_url=base_url, httpx_client=httpx_client
-            )
-
-            try:
-                self.llm.models.get(model)
-            except cohere.errors.not_found_error.NotFoundError:
-                models = [x.name for x in self.llm.models.list().models]
-                msg = f"Model '{model}' not found, try one of {models}"
-                raise ValueError(msg)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.chat(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                # This results in failures more often than useful output
-                # response_format={"type": "json_object"},
-            )
-            result = response.message.content[0].text
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.chat(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                # This results in failures more often than useful output
-                # response_format={"type": "json_object"},
-            )
-            result = response.message.content[0].text
-            return result
-
-    class AsyncCohereNamer(AsyncLLMWrapper):
-        """
-        Provides access to Cohere's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Cohere, see https://docs.cohere.com/docs/llm-overview. You will need a Cohere API key to use this wrapper.
-        The default model is "command-r-08-2024", which is a sufficiently powerful model for generating topic names and clusters,
-        but inexpensive in terms of dollars per token. You can use more advanced models, but they have diminishing returns for this task,
-        and are more expensive.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particlarly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls."
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Cohere API key. You can set this as an environment variable CO_API_KEY or pass it directly
-
-        model: str, optional
-            The name of the Cohere model to use. Default is "command-r-08-2024". You can use any model available
-            in the Cohere API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Cohere API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the Cohere API. Higher values may improve throughput but could lead to rate limiting.
-
-        base_url: str, optional
-            The base URL for the Cohere API. Default is "https://api.cohere.com". You can set this as an environment
-            variable CO_API_URL to use a different endpoint, such as for Cohere's private cloud.
-
-        httpx_client: httpx.Client, optional
-            An optional httpx client to use for making requests. If not provided, a default client will be created.
-
-        Attributes:
-        -----------
-        llm: cohere.AsyncClientV2
-            The Cohere asynchronous LLM client instance.
-
-        model: str
-            The name of the Cohere model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Cohere, this is always True.
-
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "command-r-08-2024",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            base_url: str = None,
-            httpx_client: Optional[httpx.Client] = None,
-            callback: DebugCallback | None = None,
-        ):
-            if base_url is None:
-                base_url = os.getenv("CO_API_URL", "https://api.cohere.com")
-
-            api_key = api_key or os.getenv("CO_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Cohere API key is required. Set it as an environment variable CO_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = cohere.AsyncClientV2(
-                api_key=api_key, base_url=base_url, httpx_client=httpx_client
-            )
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.llm.chat(
-                        model=self.model,
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.message.content[0].text
-            except Exception as e:
-                warn(f"Cohere API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.llm.chat(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.message.content[0].text
-            except Exception as e:
-                warn(f"Cohere API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
     class CohereBatchNamer(FailedImportAsyncLLMWrapper):
         """
         Provides access to Cohere's Batch Processing API with asynchronous support.
@@ -2138,221 +2984,6 @@ except:
 try:
     import anthropic
     import time
-    from anthropic import (
-        AuthenticationError as AnthropicAuthenticationError,
-        PermissionDeniedError as AnthropicPermissionDeniedError,
-        BadRequestError as AnthropicBadRequestError,
-        NotFoundError as AnthropicNotFoundError,
-    )
-
-    class AnthropicNamer(LLMWrapper):
-        """
-        Provides access to Anthropic's LLMs with the Toponymy framework. For more information on Anthropic, see
-        https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
-        The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
-        more than sufficient for generating topic names and clusters. You can use more advanced
-        models, but they have diminishing returns for this task, and are more expensive.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
-            in the Anthropic API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        Attributes:
-        -----------
-
-        llm: anthropic.Anthropic
-            The Anthropic LLM client instance.
-
-        model: str
-            The name of the Anthropic model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
-
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncAnthropic wrapper instead.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AnthropicAuthenticationError,
-            AnthropicPermissionDeniedError,
-            AnthropicBadRequestError,
-            AnthropicNotFoundError,
-        )
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "claude-haiku-4-5-20251001",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Anthropic API key is required. Set it as an environment variable ANTHROPIC_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = anthropic.Anthropic(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-            )
-            result = response.content[0].text
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.messages.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-            )
-            result = response.content[0].text
-            return result
-
-    class AsyncAnthropicNamer(AsyncLLMWrapper):
-        """
-        Provides access to Anthropic's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Anthropic, see https://docs.anthropic.com/docs/overview. You will need an Anthropic API key to use this wrapper.
-        The default model is "claude-haiku-4-5-20251001", which is the smallest model available, but is generally
-        more than sufficient for generating topic names and clusters. You can use more advanced models, but they have diminishing returns for this task,
-        and are more expensive.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
-
-        Parameters:
-        -----------
-
-        api_key: str
-            Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
-            in the Anthropic API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
-
-        Attributes:
-        -----------
-        llm: anthropic.AsyncAnthropic
-            The Anthropic asynchronous LLM client instance.
-
-        model: str
-            The name of the Anthropic model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AnthropicAuthenticationError,
-            AnthropicPermissionDeniedError,
-            AnthropicBadRequestError,
-            AnthropicNotFoundError,
-        )
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "claude-haiku-4-5-20251001",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-
-            api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Anthropic API key is required. Set it as an environment variable ANTHROPIC_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = anthropic.AsyncAnthropic(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            async with self.semaphore:
-                response = await self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    messages=[
-                        {"role": "user", "content": prompt + self.extra_prompting}
-                    ],
-                    temperature=temperature,
-                )
-                return response.content[0].text
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            async with self.semaphore:
-                response = await self.client.messages.create(
-                    model=self.model,
-                    max_tokens=max_tokens,
-                    system=system_prompt,
-                    messages=[
-                        {"role": "user", "content": user_prompt + self.extra_prompting},
-                    ],
-                    temperature=temperature,
-                )
-                return response.content[0].text
 
     class BatchAnthropicNamer(AsyncLLMWrapper):
         """
@@ -2618,612 +3249,370 @@ try:
 
 except:
 
-    class AnthropicNamer(FailedImportLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncAnthropicNamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
     class BatchAnthropicNamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
 
-try:
-    import openai
-    from openai import (
-        AuthenticationError,
-        PermissionDeniedError,
-        BadRequestError,
-        NotFoundError,
-        UnprocessableEntityError,
+## OpenAI Convenience Wrappers
+
+
+def OpenAINamer(
+    model: str = "openai/gpt-4o-mini",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str | None = None,  # deprecated, renamed to api_base
+    http_client: "httpx.Client | None" = None,  # deprecated, pass via provider_kwargs instead
+) -> LiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for OpenAI.
+
+    All namers share the same interface once constructed — OpenAINamer is a
+    convenience entry point, not a special case. For more information on OpenAI, see https://platform.openai.com/docs/models/overview.
+
+    Parameters
+    ----------
+    model : str, optional
+        OpenAI model to use. Default is "gpt-4o-mini", a good balance of
+        quality and cost for topic naming. You can use more advanced models, but they have diminishing returns
+        for this task, and are more expensive. Must be in LiteLLM format ("openai/gpt-4o-mini")
+        or bare OpenAI format ("gpt-4o-mini") — both are accepted.
+    api_key : str, optional
+        OpenAI API key. Falls back to the OPENAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the OpenAI API endpoint. Useful for proxies or OpenAI-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the OPENAI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    use_json_object : bool, optional
+        Request JSON object output via response_format. If None (default),
+        support is detected automatically for the selected model. Set to False
+        to disable if your model doesn't support it.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    http_client : optional
+        Deprecated. Pass via ``provider_kwargs={'http_client': <client>}`` instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = OpenAINamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = OpenAINamer(model="gpt-4o", api_key="my-api-key")
+
+    Using an OpenAI-compatible local server::
+
+        namer = OpenAINamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if base_url is not None:
+        warn(
+            "base_url is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or base_url
+    if http_client is not None:
+        warn(
+            "http_client is deprecated. "
+            "Pass via provider_kwargs={'http_client': http_client} instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["http_client"] = http_client
+    return LiteLLMNamer(
+        model=_openai_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
     )
 
-    class OpenAINamer(LLMWrapper):
-        """
-        Provides access to OpenAI's LLMs with the Toponymy framework. For more information on OpenAI, see
-        https://platform.openai.com/docs/models/overview. You will need an OpenAI API key to use this wrapper.
-        The default model is "gpt-4o-mini", which is a sufficiently powerful model for generating topic names and clusters,
-        but inexpensive in terms of dollars per token. You can use more advanced models, but they have diminishing returns
-        for this task, and are more expensive.
 
-        Parameters:
-        -----------
+def AsyncOpenAINamer(
+    model: str = "openai/gpt-4o-mini",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    base_url: str | None = None,  # deprecated, renamed to api_base
+    organization: str | None = None,  # deprecated, pass via provider_kwargs instead
+) -> AsyncLiteLLMNamer:
+    """
+    Create an AsyncLiteLLMNamer configured for OpenAI.
 
-        api_key: str
-            Your OpenAI API key. You can set this as an environment variable OPENAI_API_KEY or pass it directly
+    All namers share the same interface once constructed — OpenAINamer is a
+    convenience entry point, not a special case. For more information on OpenAI, see https://platform.openai.com/docs/models/overview.
 
-        model: str, optional
-            The name of the OpenAI model to use. Default is "gpt-4o-mini". You can use any model available
-            in the OpenAI API, but this is a good balance of performance and cost.
+    Parameters
+    ----------
+    model : str, optional
+        OpenAI model to use. Default is "gpt-4o-mini", a good balance of
+        quality and cost for topic naming. You can use more advanced models, but they have diminishing returns
+        for this task, and are more expensive. Must be in LiteLLM format ("openai/gpt-4o-mini")
+        or bare OpenAI format ("gpt-4o-mini") — both are accepted.
+    api_key : str, optional
+        OpenAI API key. Falls back to the OPENAI_API_KEY environment variable.
+    api_base : str, optional
+        Override the OpenAI API endpoint. Useful for proxies or OpenAI-compatible
+        local servers (e.g. vLLM, LM Studio). Can use the OPENAI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    use_json_object : bool, optional
+        Request JSON object output via response_format. If None (default),
+        support is detected automatically for the selected model. Set to False
+        to disable if your model doesn't support it.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the OpenAI API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    base_url : str, optional
+        Deprecated. Use ``api_base`` instead.
+    organization : str, optional
+        Deprecated. Pass via ``provider_kwargs={'organization': organization}`` instead.
 
-        base_url: str, optional
-            The base URL for the OpenAI API. Default is None, which uses the default OpenAI endpoint.
-            You can set this as an environment variable OPENAI_API_BASE to use a different endpoint, such as
-            a hosted model supporting the openAI API.
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
+    Examples
+    --------
+    Basic usage::
 
-        Attributes:
-        -----------
-        llm: openai.OpenAI
-            The OpenAI LLM client instance.
+        namer = AsyncOpenAINamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        model: str
-            The name of the OpenAI model being used.
+    Using a different model::
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+        namer = AsyncOpenAINamer(model="gpt-4o", api_key="my-api-key")
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
+    Using an OpenAI-compatible local server::
 
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncOpenAI wrapper instead.
-        """
+        namer = AsyncOpenAINamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
 
-        FAIL_FAST_EXCEPTIONS = (
-            AuthenticationError,
-            PermissionDeniedError,
-            BadRequestError,
-            NotFoundError,
-            UnprocessableEntityError,
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if base_url is not None:
+        warn(
+            "base_url is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-        _supports_debug_callback = True
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gpt-4o-mini",
-            base_url: str = None,
-            http_client: "httpx.Client | None" = None,
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "OpenAI API key is required. Set it as an environment variable OPENAI_API_KEY or pass it directly to the constructor."
-                )
-
-            self.llm = openai.OpenAI(
-                api_key=api_key, base_url=base_url, http_client=http_client
-            )
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            result = response.choices[0].message.content
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.chat.completions.create(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                response_format={"type": "json_object"},
-            )
-            result = response.choices[0].message.content
-            return result
-
-    class AsyncOpenAINamer(AsyncLLMWrapper):
-        """
-        Provides access to OpenAI's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on OpenAI, see https://platform.openai.com/docs/models/overview. You will need an OpenAI API key to use this wrapper.
-        The default model is "gpt-4o-mini", which is a sufficiently powerful model for generating topic names and clusters,
-        but inexpensive in terms of dollars per token. You can use more advanced models, but they have diminishing returns for this task,
-        and are more expensive.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
-
-        Parameters:
-        -----------
-
-        api_key: str
-            Your OpenAI API key. You can set this as an environment variable OPENAI_API_KEY or pass it directly
-
-        model: str, optional
-            The name of the OpenAI model to use. Default is "gpt-4o-mini". You can use any model available
-            in the OpenAI API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the OpenAI API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
-
-        organization: str, optional
-            The OpenAI organization ID to use for the API requests. If not provided, the default organization will be used.
-
-        base_url: str, optional
-            The base URL for the OpenAI API. Default is None, which uses the default OpenAI endpoint.
-            You can set this as an environment variable OPENAI_API_BASE to use a different endpoint, such as
-            a hosted model supporting the openAI API.
-
-        Attributes:
-        -----------
-
-        client: openai.AsyncOpenAI
-            The OpenAI asynchronous LLM client instance.
-
-        model: str
-            The name of the OpenAI model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For OpenAI, this is always True.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AuthenticationError,
-            PermissionDeniedError,
-            BadRequestError,
-            NotFoundError,
-            UnprocessableEntityError,
+    api_base = api_base or base_url
+    if organization is not None:
+        warn(
+            "organization is deprecated. "
+            "Pass via provider_kwargs={'organization': organization} instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-        _supports_debug_callback = True
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gpt-4o-mini",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            organization: str = None,
-            base_url: str = None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "OpenAI API key is required. Set it as an environment variable OPENAI_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = openai.AsyncOpenAI(api_key=api_key, organization=organization)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            async with self.semaphore:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "user", "content": prompt + self.extra_prompting},
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                )
-            return response.choices[0].message.content
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            async with self.semaphore:
-                response = await self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {
-                            "role": "user",
-                            "content": user_prompt + self.extra_prompting,
-                        },
-                    ],
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    response_format={"type": "json_object"},
-                )
-                return response.choices[0].message.content
-
-        async def close(self):
-            """Close the client connection."""
-            await self.client.close()
-
-except:
-
-    class OpenAINamer(FailedImportLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncOpenAINamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+        provider_kwargs = provider_kwargs or {}
+        provider_kwargs["organization"] = organization
+    return AsyncLiteLLMNamer(
+        model=_openai_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
 
-try:
-    import together
+def AzureAINamer(
+    model: str,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    endpoint: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+        Create a LiteLLMNamer configured for Azure AI.
 
-    class TogetherNamer(LLMWrapper):
-        """
-        Provides access to Together AI's LLMs with the Toponymy framework. Together AI provides access to various open-source models.
-        For more information on Together AI, see https://together.ai/. You will need a Together API key to use this wrapper.
+        All namers share the same interface once constructed — AzureAINamer is a convenience entry point, not a special case.
 
-        Parameters:
-        -----------
-        api_key: str
-            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
+    Parameters
+    ----------
+    model : str,
+        The deployed model name in Azure AI Foundry. Will be prefixed
+        with "azure_ai/" automatically (e.g. "gpt-4o" → "azure_ai/gpt-4o").
+    api_key : str, optional
+        Azure API key. Falls back to the AZURE_AI_API_KEY environment variable.
+    api_base : str, optional
+        The Azure AI Foundry endpoint URL. Preferred over `endpoint` for
+        consistency with other factory functions. Falls back to the AZURE_AI_API_BASE environment variable if not provided.
+    endpoint : str, optional
+        The Azure AI Foundry endpoint URL, e.g.
+        "https://<your-resource-name>.openai.azure.com/".
+        Alias for `api_base`; if both are provided, `api_base` takes precedence.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
 
-        model: str, optional
-            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf".
-            Available models include various Llama, Mixtral, and other open-source models.
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
+    Examples
+    --------
+    Basic usage::
 
-        Attributes:
-        -----------
-        client: together.Together
-            The Together client instance.
-
-        model: str
-            The name of the Together model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Together, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "meta-llama/Llama-3-8b-chat-hf",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("TOGETHER_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = together.Together(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content
-
-    class AsyncTogether(AsyncLLMWrapper):
-        """
-        Provides access to Together AI's LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        Together AI provides access to various open-source models. For more information on Together AI, see https://together.ai/.
-        You will need a Together API key to use this wrapper.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Together API key. You can set this as an environment variable TOGETHER_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Together model to use. Default is "meta-llama/Llama-3-8b-chat-hf".
-            Available models include various Llama, Mixtral, and other open-source models.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Together API. Default is 10.
-
-        Attributes:
-        -----------
-        client: together.AsyncTogether
-            The Together asynchronous client instance.
-
-        model: str
-            The name of the Together model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Together, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "meta-llama/Llama-3-8b-chat-hf",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("TOGETHER_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Together API key is required. Set it as an environment variable TOGETHER_API_KEY or pass it directly to the constructor."
-                )
-
-            self.client = together.AsyncTogether(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "user", "content": prompt + self.extra_prompting}
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"Together API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat.completions.create(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                    return response.choices[0].message.content
-            except Exception as e:
-                warn(f"Together API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def close(self):
-            """Close the client connection."""
-            await self.client.close()
-
-except ImportError:
-
-    class TogetherNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncTogether(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+        namer = AzureAINamer(model="deployed-model-name", api_base="https://<your-resource-endpoint>")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
 
-try:
-    import replicate
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    resolved_endpoint = api_base or endpoint
+    return LiteLLMNamer(
+        model=_azure_model(model),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="AZURE_AI_API_KEY", env_legacy="AZURE_API_KEY"
+        ),
+        api_base=resolved_endpoint,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
-    class ReplicateNamer(LLMWrapper):
-        """
-        Provides access to Replicate's LLMs with the Toponymy framework. Replicate provides access to various models including Llama, GPT-J, and others.
-        For more information on Replicate, see https://replicate.com/. You will need a Replicate API token to use this wrapper.
 
-        Parameters:
-        -----------
-        api_token: str
-            Your Replicate API token. You can set this as an environment variable REPLICATE_API_TOKEN or pass it directly.
+def AsyncAzureAINamer(
+    model: str,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    endpoint: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    Create a LiteLLMNamer configured for Azure AI.
 
-        model: str, optional
-            The name of the Replicate model to use. Default is "meta/llama-2-70b-chat".
-            Models are specified in the format "owner/model:version" or "owner/model" for latest.
+    All namers share the same interface once constructed — AsyncAzureAINamer is a convenience entry point, not a special case.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
 
-        Attributes:
-        -----------
-        model: str
-            The name of the Replicate model being used.
+    Parameters
+    ----------
+    model : str
+        The deployed model name in Azure AI Foundry. Will be prefixed
+        with "azure_ai/" automatically (e.g. "gpt-4o" → "azure_ai/gpt-4o").
+    api_key : str, optional
+        Azure API key. Falls back to the AZURE_AI_API_KEY environment variable.
+    api_base : str, optional
+        The Azure AI Foundry endpoint URL. Preferred over `endpoint` for
+        consistency with other factory functions. One of `api_base` or
+        `endpoint` must be provided.
+    endpoint : str, optional
+        The Azure AI Foundry endpoint URL, e.g.
+        "https://<your-resource-name>.openai.azure.com/".
+        Alias for `api_base`; if both are provided, `api_base` takes precedence.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Replicate, this is always True.
-        """
+    Examples
+    --------
+    Basic usage::
 
-        def __init__(
-            self,
-            api_token: str = None,
-            model: str = "meta/llama-2-70b-chat",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_token = api_token or os.getenv("REPLICATE_API_TOKEN")
-            if not api_token:
-                raise ValueError(
-                    "Replicate API token is required. Set it as an environment variable REPLICATE_API_TOKEN or pass it directly to the constructor."
-                )
+        namer = AsyncAzureAINamer(model="deployed-model-name", api_base="https://<your-resource-endpoint>")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-            os.environ["REPLICATE_API_TOKEN"] = api_token
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            output = replicate.run(
-                self.model,
-                input={
-                    "prompt": prompt + self.extra_prompting,
-                    "temperature": temperature,
-                    "max_new_tokens": max_tokens,
-                },
-            )
-            return "".join(output)
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            # Replicate models typically handle system prompts differently
-            # We combine them in a chat format
-            combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}\n\nAssistant:"
-
-            output = replicate.run(
-                self.model,
-                input={
-                    "prompt": combined_prompt,
-                    "temperature": temperature,
-                    "max_new_tokens": max_tokens,
-                },
-            )
-            return "".join(output)
-
-except ImportError:
-
-    class ReplicateNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    resolved_endpoint = api_base or endpoint
+    return AsyncLiteLLMNamer(
+        model=_azure_model(model),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="AZURE_AI_API_KEY", env_legacy="AZURE_API_KEY"
+        ),
+        api_base=resolved_endpoint,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
 
 try:
@@ -3233,271 +3622,6 @@ try:
     )
     from azure.ai.inference.models import SystemMessage, UserMessage
     from azure.core.credentials import AzureKeyCredential
-
-    class AzureAINamer(LLMWrapper):
-        """
-        Provides access to the Azure AI Foundry LLMs with the Toponymy framework. For more information on Azure AI, see
-        https://learn.microsoft.com/en-us/azure/ai-services/overview. You will need an Azure API key for your Foundry model
-        to use this wrapper. You will need to provide both the endpoint, and the model name per the instiated model on
-        AI Foundry. For more information on creating models with Azure AI Foundry, see https://learn.microsoft.com/en-us/azure/ai-services/ai-foundry/create-models.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Azure API key. You can set this as an environment variable AZURE_API_KEY or pass it directly
-
-        endpoint: str
-            The endpoint URL for your Azure AI Foundry model. This is typically in the format "https://<your-resource-name>.openai.azure.com/".
-
-        model: str
-            The name of the Azure AI Foundry model to use. This should match the model name you created in Azure AI Foundry.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        Attributes:
-        -----------
-
-        llm: azure.ai.inference.ChatCompletionsClient
-            The Azure AI Foundry LLM client instance.
-
-        model: str
-            The name of the Azure AI Foundry model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Azure AI Foundry, this is always True.
-
-        Note:
-        -----
-        This wrapper does not support batch processing. If you need to process multiple prompts concurrently,
-        consider using the AsyncAzureAI wrapper instead.
-
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            endpoint: str,
-            model: str,
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            self.endpoint = endpoint
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            api_key = api_key or os.getenv("AZURE_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Azure API key is required. Set it as an environment variable AZURE_API_KEY or pass it directly to the constructor."
-                )
-
-            if not endpoint:
-                raise ValueError(
-                    "Azure endpoint is required. Provide the endpoint URL for your Azure AI Foundry model."
-                )
-
-            if not model:
-                raise ValueError(
-                    "Azure model name is required. Provide the name of the Azure AI Foundry model to use."
-                )
-
-            self.llm = ChatCompletionsClient(
-                endpoint=endpoint,
-                credential=AzureKeyCredential(api_key),
-            )
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm.complete(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[UserMessage(prompt + self.extra_prompting)],
-                temperature=temperature,
-            )
-            result = response.choices[0].message.content
-            return result
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.llm.complete(
-                model=self.model,
-                max_tokens=max_tokens,
-                messages=[
-                    SystemMessage(system_prompt),
-                    UserMessage(user_prompt + self.extra_prompting),
-                ],
-                temperature=temperature,
-            )
-            result = response.choices[0].message.content
-            return result
-
-    class AsyncAzureAINamer(AsyncLLMWrapper):
-        """
-        Provides access to the Azure AI Foundry LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Azure AI, see https://learn.microsoft.com/en-us/azure/ai-services/overview. You will need an Azure API key for your Foundry model
-        to use this wrapper. You will need to provide both the endpoint, and the model name per the instiated model on
-        AI Foundry. For more information on creating models with Azure AI Foundry, see https://learn.microsoft.com/en-us/azure/ai-services/ai-foundry/create-models.
-
-        This wrapper conforms to the AsyncLLMWrapper interface, and is designed for scenarios where you need to process multiple prompts concurrently.
-        This is particularly useful for applications that require high throughput or need to process large volumes of data quickly.
-        As an asynchronous wrapper this will potentially speed up topic naming, particularly when you have a large number of topics. If,
-        however, there are quirks in your data, or bugs in Toponymy's prompt generation, you will potentially quickly spend money on API calls.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Azure API key. You can set this as an environment variable AZURE_API_KEY or pass it directly
-
-        endpoint: str
-            The endpoint URL for your Azure AI Foundry model. This is typically in the format "https://<your-resource-name>.openai.azure.com/".
-
-        model: str
-            The name of the Azure AI Foundry model to use. This should match the model name you created in Azure AI Foundry.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Azure AI Foundry API. Default is 10. This can be adjusted based on your
-            application's needs and the rate limits of the Azure AI Foundry API. Higher values may improve throughput but could lead to rate limiting.
-
-        Attributes:
-        -----------
-        client: azure.ai.inference.aio.ChatCompletionsClient
-            The Azure AI Foundry asynchronous LLM client instance.
-
-        model: str
-            The name of the Azure AI Foundry model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Azure AI Foundry, this is always True.
-
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            endpoint: str,
-            model: str,
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("AZURE_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Azure API key is required. Set it as an environment variable AZURE_API_KEY or pass it directly to the constructor."
-                )
-
-            if not endpoint:
-                raise ValueError(
-                    "Azure endpoint is required. Provide the endpoint URL for your Azure AI Foundry model."
-                )
-
-            if not model:
-                raise ValueError(
-                    "Azure model name is required. Provide the name of the Azure AI Foundry model to use."
-                )
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.endpoint = endpoint
-            self.model = model
-            self.client = AsyncChatCompletionsClient(
-                endpoint=endpoint,
-                credential=AzureKeyCredential(api_key),
-            )
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            async with self.semaphore:
-                try:
-                    response = await self.client.complete(
-                        model=self.model,
-                        max_tokens=max_tokens,
-                        messages=[UserMessage(prompt + self.extra_prompting)],
-                        temperature=temperature,
-                    )
-                    return response.choices[0].message.content
-                except Exception as e:
-                    warn(f"Azure API call failed: {str(e)[:100]}...")
-                    return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            async with self.semaphore:
-                try:
-                    response = await self.client.complete(
-                        model=self.model,
-                        max_tokens=max_tokens,
-                        messages=[
-                            SystemMessage(system_prompt),
-                            UserMessage(user_prompt + self.extra_prompting),
-                        ],
-                        temperature=temperature,
-                    )
-                    return response.choices[0].message.content
-                except Exception as e:
-                    warn(f"Azure API call failed: {str(e)[:100]}...")
-                    return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
 
     class BatchAzureAINamer(AsyncLLMWrapper):
         """
@@ -3766,1007 +3890,428 @@ try:
 
 except ImportError:
 
-    class AzureAINamer(FailedImportLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncAzureAINamer(FailedImportAsyncLLMWrapper):
+    class BatchAzureAINamer(FailedImportAsyncLLMWrapper):
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
 
 
-try:
-    import ollama
-
-    class OllamaNamer(LLMWrapper):
-        """
-        Provides access to Olloma's local LLMs with the Toponymy framework. Ollama allows you to run large language models locally.
-        For more information on Olloma, see https://ollama.ai/. You'll need to have Olloma installed and running locally.
-
-        Parameters:
-        -----------
-        model: str
-            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
-            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
-
-        host: str, optional
-            The host URL for the Olloma API. Default is "http://localhost:11434".
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-        client: ollama.Client
-            The Olloma client instance.
-
-        model: str
-            The name of the Olloma model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
-        """
-
-        def __init__(
-            self,
-            model: str = "llama3.2",
-            host: str = "http://localhost:11434",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            self.client = ollama.Client(host=host)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.client.generate(
-                model=self.model,
-                prompt=prompt + self.extra_prompting,
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            )
-            return response["response"]
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = self.client.chat(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ],
-                options={
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
-            )
-            return response["message"]["content"]
-
-    class AsyncOllamaNamer(AsyncLLMWrapper):
-        """
-        Provides access to Olloma's local LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        Olloma allows you to run large language models locally. For more information on Olloma, see https://ollama.ai/.
-        You'll need to have Olloma installed and running locally.
-
-        Parameters:
-        -----------
-        model: str
-            The name of the Olloma model to use. Default is "llama3.2". You can use any model available
-            in Olloma. Popular options include "llama3.2", "mistral", "codellama", etc.
-
-        host: str, optional
-            The host URL for the Olloma API. Default is "http://localhost:11434".
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Olloma API. Default is 5. Since Olloma runs locally,
-            too many concurrent requests might overwhelm the local resources.
-
-        Attributes:
-        -----------
-        client: ollama.AsyncClient
-            The Olloma asynchronous client instance.
-
-        model: str
-            The name of the Olloma model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Olloma, this is always True.
-        """
-
-        def __init__(
-            self,
-            model: str = "llama3.2",
-            host: str = "http://localhost:11434",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 5,
-            callback: DebugCallback | None = None,
-        ):
-            self.client = ollama.AsyncClient(host=host)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.generate(
-                        model=self.model,
-                        prompt=prompt + self.extra_prompting,
-                        options={
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
-                    )
-                    return response["response"]
-            except Exception as e:
-                warn(f"Olloma API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    response = await self.client.chat(
-                        model=self.model,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {
-                                "role": "user",
-                                "content": user_prompt + self.extra_prompting,
-                            },
-                        ],
-                        options={
-                            "temperature": temperature,
-                            "num_predict": max_tokens,
-                        },
-                    )
-                    return response["message"]["content"]
-            except Exception as e:
-                warn(f"Olloma API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
-except ImportError:
-
-    class OllamaNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncOllamaNamer(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-
-try:
-    import google.generativeai as genai
-
-    class GoogleGeminiNamer(LLMWrapper):
-        """
-        Provides access to Google's Gemini LLMs with the Toponymy framework. For more information on Google Gemini, see
-        https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
-        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
-            "gemini-1.5-pro", "gemini-1.5-flash", etc.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        Attributes:
-        -----------
-        model: genai.GenerativeModel
-            The Gemini model instance.
-
-        model_name: str
-            The name of the Gemini model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gemini-1.5-flash",
-            llm_specific_instructions=None,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor."
-                )
-
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model)
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.model_name = model
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            generation_config = genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
-
-            response = self.model.generate_content(
-                prompt + self.extra_prompting, generation_config=generation_config
-            )
-            return response.text
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            generation_config = genai.types.GenerationConfig(
-                temperature=temperature,
-                max_output_tokens=max_tokens,
-            )
-
-            # Gemini doesn't have explicit system prompts, so we combine them
-            combined_prompt = (
-                f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
-            )
-
-            response = self.model.generate_content(
-                combined_prompt, generation_config=generation_config
-            )
-            return response.text
-
-    class AsyncGoogleGeminiNamer(AsyncLLMWrapper):
-        """
-        Provides access to Google's Gemini LLMs with asynchronous support. This allows for concurrent processing of multiple prompts.
-        For more information on Google Gemini, see https://developers.google.com/generative-ai. You will need a Google API key to use this wrapper.
-        The default model is "gemini-1.5-flash", which provides a good balance of performance and cost.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Google API key. You can set this as an environment variable GOOGLE_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Gemini model to use. Default is "gemini-1.5-flash". Available models include
-            "gemini-1.5-pro", "gemini-1.5-flash", etc.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the Gemini API. Default is 10.
-
-        Attributes:
-        -----------
-        model: genai.GenerativeModel
-            The Gemini model instance.
-
-        model_name: str
-            The name of the Gemini model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Gemini, this is always True.
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "gemini-1.5-flash",
-            llm_specific_instructions=None,
-            max_concurrent_requests: int = 10,
-            callback: DebugCallback | None = None,
-        ):
-            api_key = api_key or os.getenv("GOOGLE_API_KEY")
-            if not api_key:
-                raise ValueError(
-                    "Google API key is required. Set it as an environment variable GOOGLE_API_KEY or pass it directly to the constructor."
-                )
-
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel(model)
-            self.model_name = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
-
-        async def _call_single_llm(
-            self, prompt: str, temperature: float, max_tokens: int
-        ) -> str:
-            """Call the LLM for a single prompt."""
-            try:
-                async with self.semaphore:
-                    generation_config = genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens,
-                    )
-
-                    response = await self.model.generate_content_async(
-                        prompt + self.extra_prompting,
-                        generation_config=generation_config,
-                    )
-                    return response.text
-            except Exception as e:
-                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """Call the LLM for a single prompt with system prompt."""
-            try:
-                async with self.semaphore:
-                    generation_config = genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens,
-                    )
-
-                    # Gemini doesn't have explicit system prompts, so we combine them
-                    combined_prompt = f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}"
-
-                    response = await self.model.generate_content_async(
-                        combined_prompt, generation_config=generation_config
-                    )
-                    return response.text
-            except Exception as e:
-                warn(f"Google Gemini API call failed: {str(e)[:100]}...")
-                return ""
-
-        async def _call_llm_batch(
-            self, prompts: List[str], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """Process a batch of prompts concurrently."""
-            tasks = [
-                self._call_single_llm(prompt, temperature, max_tokens)
-                for prompt in prompts
-            ]
-            return await asyncio.gather(*tasks)
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            system_prompts: List[str],
-            user_prompts: List[str],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """Process a batch of prompts with system prompts concurrently."""
-            if len(system_prompts) != len(user_prompts):
-                raise ValueError(
-                    "Number of system prompts must match number of user prompts"
-                )
-
-            tasks = [
-                self._call_single_llm_with_system(
-                    sys_prompt, user_prompt, temperature, max_tokens
-                )
-                for sys_prompt, user_prompt in zip(system_prompts, user_prompts)
-            ]
-            return await asyncio.gather(*tasks)
-
-except ImportError:
-
-    class GoogleGeminiNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncGoogleGeminiNamer(FailedImportAsyncLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-
-try:
-    import litellm
-    from litellm.exceptions import (
-        AuthenticationError,
-        PermissionDeniedError,
-        BadRequestError,
-        NotFoundError,
-        UnprocessableEntityError,
+# Ollama
+def OllamaNamer(
+    model: str = "llama3.2",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    host: str | None = None,  # deprecated, renamed to api_base
+) -> LiteLLMNamer:
+    """
+    Convenience wrapper for a LiteLLMNamer configured for local Ollama use.
+
+    For Ollama remote API use, use LiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
+
+    Parameters
+    ----------
+    model : str, optional
+        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
+        or bare Ollama format ("llama3.2") — both are accepted.
+    api_key : str, optional
+        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
+    api_base : str, optional
+        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    host : str, optional
+        Deprecated. Use ``api_base`` instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = OllamaNamer()
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = OllamaNamer(model="llama3.2")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if host is not None:
+        warn(
+            "host is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or host or "http://localhost:11434"
+
+    return LiteLLMNamer(
+        model=_ollama_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
     )
 
-    class LiteLLMNamer(LLMWrapper):
-        """
-        Provides access to any LLM supported by LiteLLM using a unified interface.
-        LiteLLM supports 100+ providers including OpenAI, Anthropic, Cohere, HuggingFace,
-        Together, Replicate, and more. For more information, see https://docs.litellm.ai.
 
-        Parameters
-        ----------
-        api_key: str, optional
-            The API key for the provider. If not provided, LiteLLM will look for the
-            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
-            ANTHROPIC_API_KEY).
+def AsyncOllamaNamer(
+    model: str = "llama3.2",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 5,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    host: str | None = None,  # deprecated, renamed to api_base
+) -> LiteLLMNamer:
+    """
+    Convenience wrapper for a AsyncLiteLLMNamer configured for local Ollama use.
 
-        model: str, optional
-            The LiteLLM model string, e.g. "openai/gpt-4o-mini",
-            "anthropic/claude-haiku-4-5-20251001", etc.
+    For Ollama remote API use, use AsyncLiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
 
-        api_base: str, optional
-            Optional LiteLLM/OpenAI-compatible API base. Alias-style convenience.
+    Parameters
+    ----------
+    model : str, optional
+        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
+        or bare Ollama format ("llama3.2") — both are accepted.
+    api_key : str, optional
+        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
+    api_base : str, optional
+        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests. Default is 5. This can be adjusted based on your
+        application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    host : str, optional
+        Deprecated. Use ``api_base`` instead.
 
-        llm_specific_instructions: str, optional
-            Additional instructions appended to the user prompt.
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
 
-        use_json_object: bool, optional
-            Whether to request JSON object output via response_format={"type": "json_object"}.
-            If None (default), support is detected automatically by check if response_format is supported
-            for the specified model. Set to True to force JSON object mode, or False to
-            disable it.
+    Examples
+    --------
+    Basic usage::
 
-        disable_system_prompts: bool, False
-            Set to True to override to use plain calls instead of system prompts.
-            If False (default), system prompt support is detected automatically and will flatten system prompts
-            if unsupported for a given model.
+        namer = AsyncOllamaNamer()
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        completion_kwargs : dict[str, Any], optional
-            Additional keyword arguments passed directly to `litellm.completion()` /
-            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
-            features such as provider routing, request timeouts, custom headers,
-            user identifiers, or other provider parameters without modifying the
-            wrapper.
+    Using a different model::
 
-            These values are merged into the completion call arguments but may be
-            overridden by core wrapper parameters such as `model`, `messages`,
-            `temperature`, and `max_tokens`.
+        namer = AsyncOllamaNamer(model="llama3.2")
 
-        Attributes
-        ----------
-        model: str
-            The LiteLLM model string being used.
-
-        extra_prompting: str
-            Additional instructions appended to the prompt.
-
-        use_json_object: bool
-            Whether response_format={"type": "json_object"} will be sent.
-        """
-
-        FAIL_FAST_EXCEPTIONS = (
-            AuthenticationError,
-            PermissionDeniedError,
-            BadRequestError,
-            NotFoundError,
-            UnprocessableEntityError,
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if host is not None:
+        warn(
+            "host is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
         )
-        _supports_debug_callback = True
-
-        def __init__(
-            self,
-            api_key: str = None,
-            model: str = "openai/gpt-4o-mini",
-            api_base: str = None,
-            llm_specific_instructions=None,
-            use_json_object: bool = None,
-            disable_system_prompts: bool = False,
-            completion_kwargs: dict[str, Any] | None = None,
-            callback: DebugCallback | None = None,
-        ):
-
-            self.api_key = api_key
-            self.model = model
-            self.api_base = api_base
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.use_json_object = use_json_object  # set by user
-            self._resolved_use_json_object: bool | None = None  # set internally
-            self.disable_system_prompts = disable_system_prompts
-            self._system_prompt_capability: bool | None = None
-            self.completion_kwargs = (
-                dict(completion_kwargs) if completion_kwargs else {}
-            )
-
-            filterwarnings(
-                "ignore",
-                message="Pydantic serializer warnings",
-                category=UserWarning,
-                module="pydantic",
-            )
-            filterwarnings(
-                "ignore",
-                message="Use 'content=<...>' to upload raw bytes/text content",
-                category=DeprecationWarning,
-                module="httpx",
-            )
-
-        @property
-        def supports_system_prompts(self) -> bool:
-            if self.disable_system_prompts:
-                return False
-            return True
-
-        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
-            message = str(exc).lower()
-            return any(
-                s in message
-                for s in (
-                    "system role",
-                    "system message",
-                    "unsupported role",
-                    "invalid role",
-                    "does not support system",
-                )
-            )
-
-        def _flatten_system_into_user(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-        ) -> list[dict[str, str]]:
-            return [
-                {
-                    "role": "user",
-                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
-                }
-            ]
-
-        def _detect_json_object_support(self) -> bool:
-            try:
-                supported = litellm.get_supported_openai_params(model=self.model)
-                return "response_format" in (supported or [])
-            except Exception:
-                logger.warning(
-                    f"Failed to detect json_object support for model {self.model}, assuming not supported"
-                )
-                return False
-
-        def _should_use_json_object(self) -> bool:
-            if self.use_json_object is not None:
-                return self.use_json_object
-
-            if self._resolved_use_json_object is None:
-                self._resolved_use_json_object = self._detect_json_object_support()
-            return self._resolved_use_json_object
-
-        def _completion_kwargs(
-            self,
-            messages,
-            temperature: float,
-            max_tokens: int,
-        ) -> dict:
-            kwargs = dict(self.completion_kwargs)
-            kwargs.update(
-                {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-            if self.api_key is not None:
-                kwargs["api_key"] = self.api_key
-
-            if self.api_base is not None:
-                kwargs["api_base"] = self.api_base
-
-            if self._should_use_json_object():
-                kwargs["response_format"] = {"type": "json_object"}
-
-            return kwargs
-
-        def _completion_with_messages(
-            self,
-            messages,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            response = litellm.completion(
-                **self._completion_kwargs(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            )
-            return response.choices[0].message.content
-
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            return self._completion_with_messages(
-                messages=[
-                    {"role": "user", "content": prompt + self.extra_prompting},
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            if self._system_prompt_capability is False:
-                messages = self._flatten_system_into_user(system_prompt, user_prompt)
-            else:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ]
-
-            try:
-                result = self._completion_with_messages(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                if self._system_prompt_capability is None:
-                    self._system_prompt_capability = True
-                return result
-
-            except self.FAIL_FAST_EXCEPTIONS:
-                raise
-
-            except Exception as e:
-                if (
-                    self._system_prompt_capability is not None
-                    or not self._looks_like_unsupported_system_prompt_error(e)
-                ):
-                    raise
-
-                self._system_prompt_capability = False
-                return self._completion_with_messages(
-                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-
-    class AsyncLiteLLMNamer(AsyncLLMWrapper):
-        """
-        Provides access to any LLM supported by LiteLLM with asynchronous support.
-        This allows for concurrent processing of multiple prompts across 100+ providers
-        including OpenAI, Anthropic, Cohere, HuggingFace, Together, Replicate, and more.
-        For more information, see https://docs.litellm.ai.
-
-        As an asynchronous wrapper this will potentially speed up topic naming, particularly
-        when you have a large number of topics. If, however, there are quirks in your data,
-        or bugs in Toponymy's prompt generation, you will potentially quickly spend money on
-        API calls.
-
-        Uses litellm.acompletion() and an asyncio semaphore for bounded
-        concurrency. Since this wrapper does not create a persistent SDK client,
-        close() is a no-op.
+    api_base = api_base or host or "http://localhost:11434"
+    return AsyncLiteLLMNamer(
+        model=_ollama_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
 
-        Parameters:
-        -----------
-        api_key: str, optional
-            The API key for the provider. If not provided, LiteLLM will look for the
-            appropriate environment variable for the provider (e.g. OPENAI_API_KEY,
-            ANTHROPIC_API_KEY).
+def GoogleGeminiNamer(
+    model: str = "gemini-2.5-flash-lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> LiteLLMNamer:
+    """
+    GoogleGeminiNamer is deprecated and will be removed in a future release. Use LiteLLMNamer(model='gemini/<model_name>') directly instead.
 
-        model: str
-            The model to use in LiteLLM format, e.g. "openai/gpt-4o-mini",
-            "anthropic/claude-3-haiku-20240307", "together_ai/mistralai/Mixtral-8x7B-v0.1".
-            See https://docs.litellm.ai/docs/providers for the full list.
+    Parameters
+    ----------
+    model : str, optional
+        Google Gemini model to use. Default is "gemini-2.5-flash-lite".
+        May be in LiteLLM format ("google/gemini-2.5-flash-lite")
+    api_key : str, optional
+        Google Gemini API key. Falls back to the GEMINI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Google Gemini API endpoint. Can use the GEMINI_API_BASE environment variable.
+        Default is the standard OpenAI endpoint.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
 
-        api_base: str, optional
-            The base URL for the provider API. Useful for self-hosted models or proxies.
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt.
+    Examples
+    --------
+    Basic usage::
 
-        max_concurrent_requests: int, optional
-            The maximum number of concurrent requests to the provider API. Default is 10.
-            This can be adjusted based on your application's needs and the rate limits of
-            the provider. Higher values may improve throughput but could lead to rate limiting.
+        namer = GoogleGeminiNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-        disable_system_prompts: bool, False
-            Set to True to override to use plain calls instead of system prompts.
-            If False (default), system prompt support is detected automatically and will flatten system prompts
-            if unsupported for a given model.
+    Using a different model::
 
-        use_json_object: bool, optional
-            Whether to request JSON object output via response_format={"type": "json_object"}.
-            If None (default), support is detected automatically by check if response_format is supported
-            for the specified model. Set to True to force JSON object mode, or False to
-            disable it.
-        completion_kwargs : dict[str, Any], optional
-            Additional keyword arguments passed directly to `litellm.completion()` /
-            `litellm.acompletion()`. This allows callers to use LiteLLM-specific
-            features such as provider routing, request timeouts, custom headers,
-            user identifiers, or other provider parameters without modifying the
-            wrapper.
+        namer = GoogleGeminiNamer(model="gemini-2.5-flash-lite",api_key="my-api-key")
 
-            These values are merged into the completion call arguments but may be
-            overridden by core wrapper parameters such as `model`, `messages`,
-            `temperature`, and `max_tokens`.
+    Using an Anthropic-compatible local server::
 
-        Attributes:
-        -----------
-        model: str
-            The LiteLLM model string being used.
+        namer = GoogleGeminiNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-        """
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "GoogleGeminiNamer is deprecated and will be removed in a future "
+            "release. Use LiteLLMNamer(model='gemini/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return LiteLLMNamer(
+        model=_gemini_model(model),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="GEMINI_API_KEY", env_legacy="GOOGLE_API_KEY"
+        ),
+        api_base=api_base,
+        use_json_object=True,
+        disable_system_prompts=False,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
 
-        FAIL_FAST_EXCEPTIONS = (
-            AuthenticationError,
-            PermissionDeniedError,
-            BadRequestError,
-            NotFoundError,
-            UnprocessableEntityError,
+
+def AsyncGoogleGeminiNamer(
+    model: str = "gemini-2.5-flash-lite",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 10,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+) -> AsyncLiteLLMNamer:
+    """
+    AsyncGoogleGeminiNamer is deprecated and will be removed in a future release. Use AsyncLiteLLMNamer(model='gemini/<model_name>') directly instead.
+
+    Parameters
+    ----------
+    model : str, optional
+        Google Gemini model to use. Default is "gemini-2.5-flash-lite", Must be in LiteLLM format ("google/gemini-2.5-flash-lite")
+        or bare Google Gemini format ("gemini-2.5-flash-lite") — both are accepted.
+    api_key : str, optional
+        Google Gemini API key. Falls back to the GEMINI_API_KEY environment variable.
+    api_base : str, optional
+        Override the Google AI Studio API endpoint. Can use the GEMINI_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests to the Gemini API. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of the Gemini API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncGoogleGeminiNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncGoogleGeminiNamer(model="gemini-2.5-flash-lite",api_key="my-api-key")
+
+    Using an Anthropic-compatible local server::
+
+        namer = AsyncGoogleGeminiNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "AsyncGoogleGeminiNamer is deprecated and will be removed in a future "
+            "release. Use AsycLiteLLMNamer(model='gemini/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return AsyncLiteLLMNamer(
+        model=_gemini_model(model),
+        api_key=_resolve_api_key(
+            api_key=api_key, env_new="GEMINI_API_KEY", env_legacy="GOOGLE_API_KEY"
+        ),
+        api_base=api_base,
+        disable_system_prompts=False,
+        use_json_object=True,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def _resolve_replicate_api_key(
+    api_key: str | None, api_token: str | None
+) -> str | None:
+    """Helper function to migrate from the old REPLICATE_API_TOKEN environment variable and api_token to the new REPLICATE_API_KEY, while still allowing explicit API keys to take precedence."""
+    if api_key is not None:
+        return api_key
+
+    new_key = os.getenv("REPLICATE_API_KEY")
+    legacy_key = os.getenv("REPLICATE_API_TOKEN")
+
+    if new_key:
+        return new_key
+
+    if api_token is not None:
+        warn(
+            "api_token is deprecated and will be removed before 1.0. "
+            "Please rename it to api_key.",
+            FutureWarning,
+            stacklevel=3,
         )
-        _supports_debug_callback = True
+        return api_token
 
-        def __init__(
-            self,
-            api_key: str = None,
-            model: str = "openai/gpt-4o-mini",
-            api_base: str = None,
-            llm_specific_instructions: str = None,
-            max_concurrent_requests: int = 10,
-            use_json_object: bool | None = None,
-            disable_system_prompts: bool = False,
-            completion_kwargs: dict[str, Any] | None = None,
-            callback: DebugCallback | None = None,
-        ):
+    if legacy_key:
+        warn(
+            "REPLICATE_API_TOKEN is deprecated and will be removed before 1.0. "
+            "Please rename it to REPLICATE_API_KEY.",
+            FutureWarning,
+            stacklevel=3,
+        )
+        return legacy_key
 
-            self.api_key = api_key
-            self.model = model
-            self.api_base = api_base
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+    return None
 
-            self.use_json_object = use_json_object
-            self._resolved_use_json_object: bool | None = None
-            self.disable_system_prompts = disable_system_prompts
-            self._system_prompt_capability: bool | None = None
-            self.completion_kwargs = (
-                dict(completion_kwargs) if completion_kwargs else {}
-            )
 
-        @property
-        def supports_system_prompts(self) -> bool:
-            if self.disable_system_prompts:
-                return False
-            return True
+def ReplicateNamer(
+    model: str = "meta/llama-2-70b-chat",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    api_token: str = None,
+) -> LiteLLMNamer:
+    """
+    Deprecated. Use LiteLLMNamer(model="replicate/<model>") directly instead.
 
-        def _looks_like_unsupported_system_prompt_error(self, exc: Exception) -> bool:
-            message = str(exc).lower()
-            return any(
-                s in message
-                for s in (
-                    "system role",
-                    "system message",
-                    "unsupported role",
-                    "invalid role",
-                    "does not support system",
-                )
-            )
+    Parameters
+    ----------
+    model : str, optional
+        Replicate model to use. Default is "meta/llama-2-70b-chat".
+        May be in LiteLLM format ("replicate/"meta/llama-2-70b-chat") or bare Replicate format ("meta/llama-2-70b-chat") — both are accepted.
+    api_key : str, optional
+        Replicate API key. Falls back to the REPLICATE_API_KEY environment variable.
+    api_base : str, optional
+        Override the Replicate API endpoint. Falls back to REPLICATE_API_BASE.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    api_token : str, optional
+        Deprecated alias for api_key. Use api_key instead.
 
-        def _flatten_system_into_user(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-        ) -> list[dict[str, str]]:
-            return [
-                {
-                    "role": "user",
-                    "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
-                }
-            ]
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
 
-        def _detect_json_object_support(self) -> bool:
-            try:
-                supported = litellm.get_supported_openai_params(model=self.model)
-                return "response_format" in (supported or [])
-            except Exception:
-                logger.warning(
-                    f"Failed to detect json_object support for model {self.model}, assuming not supported"
-                )
-                return False
+    Examples
+    --------
+    Basic usage::
 
-        def _should_use_json_object(self) -> bool:
-            if self.use_json_object is not None:
-                return self.use_json_object
+        namer = ReplicateNamer(api_key="my-api-key")
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
 
-            if self._resolved_use_json_object is None:
-                self._resolved_use_json_object = self._detect_json_object_support()
-            return self._resolved_use_json_object
-
-        def _completion_kwargs(
-            self,
-            messages,
-            temperature: float,
-            max_tokens: int,
-        ) -> dict:
-            kwargs = dict(self.completion_kwargs)
-            kwargs.update(
-                {
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-            )
-
-            if self.api_key is not None:
-                kwargs["api_key"] = self.api_key
-
-            if self.api_base is not None:
-                kwargs["api_base"] = self.api_base
-
-            if self._should_use_json_object():
-                kwargs["response_format"] = {"type": "json_object"}
-
-            return kwargs
-
-        async def _acompletion_with_messages(
-            self,
-            messages,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            async with self.semaphore:
-                response = await litellm.acompletion(
-                    **self._completion_kwargs(
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                    )
-                )
-            return response.choices[0].message.content
-
-        async def _call_single_llm(
-            self,
-            prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            return await self._acompletion_with_messages(
-                messages=[{"role": "user", "content": prompt + self.extra_prompting}],
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
-        async def _call_single_llm_with_system(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            if self._system_prompt_capability is False:
-                messages = self._flatten_system_into_user(system_prompt, user_prompt)
-            else:
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt + self.extra_prompting},
-                ]
-            try:
-                # If the model doesn't support system prompts, this will raise an error which we
-                # catch to disable system prompt usage for future calls. Everything else raises as normal.
-                result = await self._acompletion_with_messages(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-                if self._system_prompt_capability is None:
-                    self._system_prompt_capability = True
-                return result
-
-            except self.FAIL_FAST_EXCEPTIONS:
-                raise
-
-            except Exception as e:
-                if (
-                    self._system_prompt_capability is not None
-                    or not self._looks_like_unsupported_system_prompt_error(e)
-                ):
-                    raise
-
-                self._system_prompt_capability = False
-                return await self._acompletion_with_messages(
-                    messages=self._flatten_system_into_user(system_prompt, user_prompt),
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-
-        async def close(self):
-            """No-op for parity with other async wrappers."""
-            return None
-
-except Exception as e:
-
-    class LiteLLMNamer(FailedImportLLMWrapper):
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncLiteLLMNamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    warn(
+        (
+            "ReplicateNamer is deprecated and will be removed in a future "
+            "release. Use LiteLLMNamer(model='replicate/<model_name>') directly instead."
+        ),
+        FutureWarning,
+        stacklevel=2,
+    )
+    return LiteLLMNamer(
+        model=_replicate_model(model),
+        api_key=_resolve_replicate_api_key(api_key=api_key, api_token=api_token),
+        api_base=api_base,
+        use_json_object=False,  # Replicate's API does not support this
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )

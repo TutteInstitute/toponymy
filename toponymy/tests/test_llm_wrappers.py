@@ -7,7 +7,6 @@ import os
 
 from toponymy.llm_wrappers import (
     LiteLLMNamer,
-    repair_json_string_backslashes,
     FailFastLLMError,
 )
 from toponymy.llm_wrappers import (
@@ -21,9 +20,9 @@ from toponymy.llm_wrappers import (
     GoogleGeminiNamer,
     TogetherNamer,
     ReplicateNamer,
-    OllamaNamer,
     GoogleGeminiNamer,
 )
+from conftest import is_ollama_model_available
 
 from toponymy.tests.helpers.llm_test_config import (
     validate_cluster_names,
@@ -33,12 +32,6 @@ from toponymy.tests.helpers.llm_test_config import (
     UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
 )
 from toponymy.tests.helpers.errors import (
-    make_openai_error,
-    OPENAI_FAIL_FAST,
-    OPENAI_RETRYABLE,
-    ANTHROPIC_FAIL_FAST,
-    ANTHROPIC_RETRYABLE,
-    make_anthropic_error,
     LITELLM_FAIL_FAST,
     LITELLM_RETRYABLE,
     make_litellm_error,
@@ -50,18 +43,6 @@ logger = logging.getLogger(__name__)
 
 class MockLLMResponse:
     """Mock response object that mimics different LLM service response structures"""
-
-    @staticmethod
-    def create_anthropic_response(content: str):
-        class Content:
-            def __init__(self, text):
-                self.text = text
-
-        class Response:
-            def __init__(self, content):
-                self.content = [Content(content)]
-
-        return Response(content)
 
     @staticmethod
     def create_chat_response(content: str):
@@ -76,26 +57,6 @@ class MockLLMResponse:
         return Response(content)
 
     @staticmethod
-    def create_cohere_response(content: str):
-        return Mock(text=content)
-
-    @staticmethod
-    def create_cohere_response_v2(content: str):
-        class Content:
-            def __init__(self, text):
-                self.text = text
-
-        class Message:
-            def __init__(self, content):
-                self.content = [Content(content)]
-
-        class Response:
-            def __init__(self, content):
-                self.message = Message(content)
-
-        return Response(content)
-
-    @staticmethod
     def create_huggingface_response(content: str):
         return [{"generated_text": content}]
 
@@ -103,49 +64,19 @@ class MockLLMResponse:
     def create_llama_response(content: str):
         return {"choices": [{"text": content}]}
 
-    @staticmethod
-    def create_azureai_response(content: str):
-        class Choice:
-            def __init__(self, content):
-                self.message = Mock(content=content)
 
-        class Response:
-            def __init__(self, content):
-                self.choices = [Choice(content)]
-
-        return Response(content)
-
-    @staticmethod
-    def create_ollama_response(content: str):
-        return {"response": content}
-
-    @staticmethod
-    def create_google_gemini_response(content: str):
-        class MockText:
-            def __init__(self, text):
-                self.text = text
-
-        class MockResponse:
-            def __init__(self, text):
-                self.model = Mock()
-                self.model.generate_content = Mock(return_value=MockText(text))
-
-        return MockResponse(content)
-
-
-# Test callback support in all wrappers
 @pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
 def test_supported_namers_do_not_warn_on_callback(namer_cls, kwargs):
     callback = lambda payload: None
 
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter("always")
-        namer_cls(callback=callback, **kwargs)
+        namer = namer_cls(callback=callback, **kwargs)
 
     debug_warnings = [w for w in record if "debug callback" in str(w.message)]
 
     assert len(debug_warnings) == 0
-    assert namer_cls._supports_debug_callback is True
+    assert namer._supports_debug_callback is True
 
 
 @pytest.mark.parametrize("namer_cls, kwargs", UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS)
@@ -153,8 +84,8 @@ def test_unsupported_namers_warn_on_callback(namer_cls, kwargs):
     callback = lambda payload: None
 
     with pytest.warns(UserWarning, match="debug callback") as record:
-        namer_cls(callback=callback, **kwargs)
-    assert namer_cls._supports_debug_callback is False
+        namer = namer_cls(callback=callback, **kwargs)
+    assert namer._supports_debug_callback is False
 
 
 @pytest.mark.parametrize(
@@ -335,33 +266,12 @@ def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_da
 
 
 # Anthropic Tests
-@pytest.fixture
-def anthropic_wrapper():
-    with patch("anthropic.Anthropic"):
-        wrapper = AnthropicNamer(api_key="dummy")
-        return wrapper
-
-
-@pytest.mark.external
-@pytest.mark.skipif(
-    not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
-)
-def test_anthropic_connectivity_plain_sync_canary():
-    namer = AnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    result = namer.connectivity_status()
-
-    assert result["success"], (
-        f"Sync plain canary test failed for Anthropic:\n"
-        f"{result['error_type']}: {result['error_message']}"
-    )
-
-
 @pytest.mark.external
 @pytest.mark.skipif(
     not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
 )
 def test_anthropic_connectivity_sync_system_canary():
-    namer = AnthropicNamer(api_key=os.getenv("ANTHROPIC_API_KEY"))
+    namer = AnthropicNamer()
 
     result = namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -369,163 +279,32 @@ def test_anthropic_connectivity_sync_system_canary():
     )
 
     assert result["success"], (
-        f"Async system canary failed:\n"
+        f"Sync system canary failed:\n"
         f"{result['error_type']}: {result['error_message']}"
     )
 
 
-@pytest.mark.parametrize("error", ANTHROPIC_FAIL_FAST)
-def test_anthropic_topic_name_fail_fast_error(anthropic_wrapper, error):
-    with patch.object(
-        anthropic_wrapper.llm.messages,
-        "create",
-        side_effect=make_anthropic_error(error),
-    ):
-        with pytest.raises(FailFastLLMError):
-            result = anthropic_wrapper.generate_topic_name("test prompt")
-            logger.error(f"No exception raised! Got result: {result!r}")
+def test_anthropic_namer_returns_litellm_namer():
+    namer = AnthropicNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-@pytest.mark.parametrize("error", ANTHROPIC_FAIL_FAST)
-def test_anthropic_topic_cluster_names_fail_fast_error(
-    anthropic_wrapper, error, mock_data
-):
-    with patch.object(
-        anthropic_wrapper.llm.messages,
-        "create",
-        side_effect=make_anthropic_error(error),
-    ):
-        with pytest.raises(FailFastLLMError):
-            result = anthropic_wrapper.generate_topic_cluster_names(
-                "test prompt",
-                mock_data["old_names"],
-            )
-            logger.error(f"No exception raised! Got result: {result!r}")
+def test_anthropic_namer_default():
+    namer = AnthropicNamer()
+
+    assert namer.model == "anthropic/claude-haiku-4-5-20251001"
+    assert namer.use_json_object is True
+    assert namer.disable_system_prompts is False
 
 
-def test_anthropic_generate_topic_name_success(anthropic_wrapper, mock_data):
-    response = MockLLMResponse.create_anthropic_response(mock_data["valid_topic_name"])
-    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
+def test_anthropic_namer_provider_kwargs_passthrough():
+    namer = AnthropicNamer(provider_kwargs={"timeout": 123})
 
-    result = anthropic_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_anthropic_generate_topic_name_success_system_prompt(
-    anthropic_wrapper, mock_data
-):
-    response = MockLLMResponse.create_anthropic_response(mock_data["valid_topic_name"])
-    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
-
-    result = anthropic_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
-
-
-def test_anthropic_generate_cluster_names_success(anthropic_wrapper, mock_data):
-    response = MockLLMResponse.create_anthropic_response(
-        mock_data["valid_cluster_names"]
-    )
-    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
-
-    result = anthropic_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_anthropic_generate_cluster_names_success_system_prompt(
-    anthropic_wrapper, mock_data
-):
-    response = MockLLMResponse.create_anthropic_response(
-        mock_data["valid_cluster_names"]
-    )
-    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
-
-    result = anthropic_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_anthropic_generate_cluster_names_success_on_malformed_mapping(
-    anthropic_wrapper, mock_data
-):
-    response = MockLLMResponse.create_anthropic_response(mock_data["malformed_mapping"])
-    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
-
-    result = anthropic_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.parametrize("error", ANTHROPIC_RETRYABLE)
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_anthropic_generate_topic_name_retry_exhausted_returns_empty(
-    anthropic_wrapper, error
-):
-    anthropic_wrapper.llm.messages.create = Mock(
-        side_effect=[make_anthropic_error(error) for _ in range(3)]
-    )
-
-    result = anthropic_wrapper.generate_topic_name("test prompt")
-
-    assert result == ""
-    assert anthropic_wrapper.llm.messages.create.call_count == 3
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_anthropic_generate_topic_name_failure_malformed_json(
-    anthropic_wrapper, mock_data
-):
-    response = MockLLMResponse.create_anthropic_response(mock_data["malformed_json"])
-    anthropic_wrapper.llm.messages.create = Mock(return_value=response)
-    result = anthropic_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.parametrize("error", ANTHROPIC_RETRYABLE)
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_anthropic_generate_cluster_names_retry_exhausted_returns_old_names(
-    anthropic_wrapper, mock_data, error
-):
-    anthropic_wrapper.llm.messages.create = Mock(
-        side_effect=[make_anthropic_error(error) for _ in range(3)]
-    )
-
-    result = anthropic_wrapper.generate_topic_cluster_names(
-        "test prompt",
-        mock_data["old_names"],
-    )
-
-    assert result == mock_data["old_names"]
-    assert anthropic_wrapper.llm.messages.create.call_count == 3
+    assert namer.provider_kwargs["timeout"] == 123
 
 
 # OpenAI Tests
-@pytest.fixture
-def openai_wrapper():
-    with patch("openai.OpenAI"):
-        wrapper = OpenAINamer(api_key="dummy")
-        return wrapper
-
-
-@pytest.mark.external
-@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
-def test_openai_connectivity_sync_plain_canary():
-    """
-    Canary test to verify live connectivity to OpenAI API. Tests the plain prompt path.
-    """
-    namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
-    result = namer.connectivity_status()
-    assert result["success"], (
-        f"Sync plain canary test failed for OpenAI:\n"
-        f"  Error: {result['error_type']}: {result['error_message']}"
-    )
-
-
 @pytest.mark.external
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
 def test_openai_connectivity_sync_system_canary():
@@ -533,7 +312,7 @@ def test_openai_connectivity_sync_system_canary():
     Canary test to verify live sync connectivity to the OpenAI API
     using the system prompt path.
     """
-    namer = OpenAINamer(api_key=os.getenv("OPENAI_API_KEY"))
+    namer = OpenAINamer()
 
     result = namer.connectivity_status(
         prompt="Return a short JSON object describing your role.",
@@ -546,714 +325,348 @@ def test_openai_connectivity_sync_system_canary():
     )
 
 
-@pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
-def test_openai_topic_name_fail_fast_error(openai_wrapper, error):
-    with patch.object(
-        openai_wrapper.llm.chat.completions,
-        "create",
-        side_effect=make_openai_error(error),
-    ):
-        with pytest.raises(FailFastLLMError):
-            result = openai_wrapper.generate_topic_name("test prompt")
-            logger.error(f"No exception raised! Got result: {result!r}")
+def test_openai_namer_returns_litellm_namer():
+    namer = OpenAINamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-@pytest.mark.parametrize("error", OPENAI_FAIL_FAST)
-def test_openai_topic_cluster_names_fail_fast_error(openai_wrapper, error, mock_data):
-    with patch.object(
-        openai_wrapper.llm.chat.completions,
-        "create",
-        side_effect=make_openai_error(error),
-    ):
-        with pytest.raises(FailFastLLMError):
-            result = openai_wrapper.generate_topic_cluster_names(
-                "test prompt", mock_data["old_names"]
-            )
-            logger.error(f"No exception raised! Got result: {result!r}")
+def test_openai_namer_default():
+    namer = OpenAINamer()
+
+    assert namer.model == "openai/gpt-4o-mini"
+    assert namer.use_json_object is True
+    assert namer.disable_system_prompts is False
 
 
-def test_openai_generate_topic_name_success(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
+def test_openai_namer_provider_kwargs_passthrough():
+    namer = OpenAINamer(provider_kwargs={"timeout": 123})
 
-    result = openai_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_openai_generate_topic_name_success_system_prompt(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
+def test_openai_namer_base_url_maps_to_api_base():
+    """Remove once deprecation of base_url complete"""
+    with pytest.warns(FutureWarning):
+        namer = OpenAINamer(base_url="http://localhost")
 
-    result = openai_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
+    assert namer.api_base == "http://localhost"
 
 
-def test_openai_generate_cluster_names_success(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
+def test_openai_namer_http_client_maps_to_provider_kwargs():
+    """Remove once deprecation of http_client complete"""
+    with pytest.warns(FutureWarning):
+        namer = OpenAINamer(http_client="httpx.Client(timeout=123)")
 
-    result = openai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_openai_generate_cluster_names_success_system_prompt(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["valid_cluster_names"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_openai_generate_cluster_names_success_on_malformed_mapping(
-    openai_wrapper, mock_data
-):
-    response = MockLLMResponse.create_chat_response(mock_data["malformed_mapping"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.parametrize("error", OPENAI_RETRYABLE)
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_openai_generate_topic_name_retry_exhausted_returns_empty(
-    openai_wrapper, error
-):
-    openai_wrapper.llm.chat.completions.create = Mock(
-        side_effect=[make_openai_error(error) for _ in range(3)]
-    )
-
-    result = openai_wrapper.generate_topic_name("test prompt")
-
-    assert result == ""
-    assert openai_wrapper.llm.chat.completions.create.call_count == 3
-
-
-def test_openai_generate_topic_name_failure_malformed_json(openai_wrapper, mock_data):
-    response = MockLLMResponse.create_chat_response(mock_data["malformed_json"])
-    openai_wrapper.llm.chat.completions.create = Mock(return_value=response)
-    result = openai_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.parametrize("error", OPENAI_RETRYABLE)
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_openai_generate_cluster_names_retry_exhausted_returns_old_names(
-    openai_wrapper, mock_data, error
-):
-    openai_wrapper.llm.chat.completions.create = Mock(
-        side_effect=[make_openai_error(error) for _ in range(3)]
-    )
-
-    result = openai_wrapper.generate_topic_cluster_names(
-        "test prompt",
-        mock_data["old_names"],
-    )
-
-    assert result == mock_data["old_names"]
-    assert openai_wrapper.llm.chat.completions.create.call_count == 3
+    assert namer.provider_kwargs["http_client"] == "httpx.Client(timeout=123)"
 
 
 # Cohere Tests
-@pytest.fixture
-def cohere_wrapper():
-    with patch("cohere.ClientV2") as mock_client:
-        # Mock the models.get method to prevent UnauthorizedError
-        mock_client.return_value.models = Mock()
-        mock_client.return_value.models.get = Mock()
-        wrapper = CohereNamer(api_key="dummy")
-        return wrapper
-
-
-def test_cohere_generate_topic_name_success(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_topic_name"])
-    cohere_wrapper.llm.chat = Mock(return_value=response)
-
-    result = cohere_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_cohere_generate_topic_name_success_system_prompt(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response_v2(mock_data["valid_topic_name"])
-    cohere_wrapper.llm.chat = Mock(return_value=response)
-
-    result = cohere_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
+@pytest.mark.external
+@pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
+def test_cohere_connectivity_sync_system_canary():
+    """
+    Canary test to verify live sync connectivity to the Cohere API
+    using the system prompt path.
+    """
+    namer = CohereNamer()
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
     )
-    validate_topic_name(result)
 
-
-def test_cohere_generate_cluster_names_success(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response_v2(
-        mock_data["valid_cluster_names"]
+    assert result["success"], (
+        f"Sync system canary failed for Cohere:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
     )
-    cohere_wrapper.llm.chat = Mock(return_value=response)
-
-    result = cohere_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
 
 
-def test_cohere_generate_cluster_names_success_system_prompt(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response_v2(
-        mock_data["valid_cluster_names"]
-    )
-    cohere_wrapper.llm.chat = Mock(return_value=response)
+def test_cohere_namer_returns_litellm_namer():
+    namer = CohereNamer()
 
-    result = cohere_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_cohere_generate_cluster_names_success_on_malformed_mapping(
-    cohere_wrapper, mock_data
-):
-    response = MockLLMResponse.create_cohere_response_v2(mock_data["malformed_mapping"])
-    cohere_wrapper.llm.chat = Mock(return_value=response)
+def test_cohere_namer_default():
+    namer = CohereNamer()
 
-    result = cohere_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.model == "cohere/command-r-08-2024"
+    assert namer.use_json_object is False  # until prompting is stricter
+    assert namer.disable_system_prompts is False
 
 
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_cohere_generate_topic_name_failure(cohere_wrapper):
-    cohere_wrapper.llm.chat = Mock(side_effect=Exception("API Error"))
-    result = cohere_wrapper.generate_topic_name("test prompt")
-    assert result == ""
+def test_cohere_namer_provider_kwargs_passthrough():
+    namer = CohereNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_cohere_generate_topic_name_failure_malformed_json(cohere_wrapper, mock_data):
-    response = MockLLMResponse.create_cohere_response_v2(mock_data["malformed_json"])
-    cohere_wrapper.llm.chat = Mock(return_value=response)
-    result = cohere_wrapper.generate_topic_name("test prompt")
-    assert result == ""
+def test_cohere_namer_base_url_maps_to_api_base():
+    """Remove once deprecation of base_url complete"""
+    with pytest.warns(FutureWarning):
+        namer = CohereNamer(base_url="http://localhost")
+
+    assert namer.api_base == "http://localhost"
 
 
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_cohere_generate_cluster_names_failure(cohere_wrapper, mock_data):
-    cohere_wrapper.llm.chat = Mock(side_effect=Exception("API Error"))
-    result = cohere_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+def test_cohere_namer_env_co_api_base_maps_to_api_base(monkeypatch):
+    monkeypatch.delenv("COHERE_API_BASE", raising=False)
+    monkeypatch.setenv("CO_API_URL", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = CohereNamer()
+
+    assert namer.api_base == "dummy"
+
+
+def test_cohere_namer_httpx_client_maps_to_provider_kwargs():
+    """Remove once deprecation of http_client complete"""
+    with pytest.warns(FutureWarning):
+        namer = CohereNamer(httpx_client="httpx.Client(timeout=123)")
+
+    assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
+
+
+def test_cohere_namer_env_co_api_url_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    monkeypatch.setenv("CO_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = CohereNamer()
+
+    assert namer.api_key == "dummy"
 
 
 # AzureAI Tests
-@pytest.fixture
-def azureai_wrapper():
-    with patch("azure.ai.inference.ChatCompletionsClient"):
-        wrapper = AzureAINamer(
-            api_key="dummy",
-            endpoint="https://dummy.services.ai.azure.com/models",
-            model="dummy",
-        )
-        return wrapper
-
-
-def test_azureai_generate_topic_name_success(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_topic_name"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
-
-    result = azureai_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_azureai_generate_topic_name_success_system_prompt(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_topic_name"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
-
-    result = azureai_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("AZURE_AI_API_KEY"), reason="AZURE_AI_API_KEY not set"
+)
+@pytest.mark.skipif(
+    not os.getenv("AZURE_AI_API_BASE"), reason="AZURE_AI_API_BASE not set"
+)
+def test_azureai_connectivity_sync_plain_canary():
+    """
+    Canary test to verify live connectivity to Azure AI API. Tests the plain prompt path.
+    """
+    namer = AzureAINamer(model="gpt-4o")
+    result = namer.connectivity_status()
+    assert result["success"], (
+        f"Sync plain canary test failed for Azure AI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
     )
-    validate_topic_name(result)
 
 
-def test_azureai_generate_cluster_names_success(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_cluster_names"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
+def test_azureai_namer_default():
+    namer = AzureAINamer(model="dummy")
 
-    result = azureai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.model == "azure_ai/dummy"
 
 
-def test_azureai_generate_cluster_names_success_system_prompt(
-    azureai_wrapper, mock_data
-):
-    response = MockLLMResponse.create_azureai_response(mock_data["valid_cluster_names"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
+def test_azureai_namer_provider_kwargs_passthrough():
+    namer = AzureAINamer(model="dummy", provider_kwargs={"timeout": 123})
 
-    result = azureai_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_azureai_generate_cluster_names_success_on_malformed_mapping(
-    azureai_wrapper, mock_data
-):
-    response = MockLLMResponse.create_azureai_response(mock_data["malformed_mapping"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
+def test_azureai_namer_endpoint_maps_to_api_base():
+    namer = AzureAINamer(model="dummy", endpoint="http://localhost")
 
-    result = azureai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.api_base == "http://localhost"
 
 
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_azureai_generate_topic_name_failure(azureai_wrapper):
-    azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
-    result = azureai_wrapper.generate_topic_name("test prompt")
-    assert result == ""
+def test_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("AZURE_AI_API_KEY", raising=False)
+    monkeypatch.setenv("AZURE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AzureAINamer(model="dummy")
 
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_azureai_generate_topic_name_failure_malformed_json(azureai_wrapper, mock_data):
-    response = MockLLMResponse.create_azureai_response(mock_data["malformed_json"])
-    azureai_wrapper.llm.complete = Mock(return_value=response)
-    result = azureai_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_azureai_generate_cluster_names_failure(azureai_wrapper, mock_data):
-    azureai_wrapper.llm.complete = Mock(side_effect=Exception("API Error"))
-    result = azureai_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
-
-
-def test_repair_json_string_backslashes_already_valid():
-    """Test that valid JSON strings are not modified."""
-
-    valid_json = '{"key": "value with \\"quotes\\" inside"}'
-    result = repair_json_string_backslashes(valid_json)
-    assert result == valid_json
-
-
-def test_repair_json_string_backslashes_unescaped():
-    """Test repairing strings with unescaped backslashes."""
-
-    invalid_json = '{"topic_name": "Machine Learning\\ML"}'
-    expected = '{"topic_name": "Machine Learning\\\\ML"}'
-    result = repair_json_string_backslashes(invalid_json)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_mixed():
-    """Test repairing strings with both properly escaped and unescaped backslashes."""
-
-    mixed_json = '{"path": "C:\\Users\\username", "quoted": "with \\"quotes\\""}'
-    expected = '{"path": "C:\\\\Users\\\\username", "quoted": "with \\"quotes\\""}'
-    result = repair_json_string_backslashes(mixed_json)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_all_escape_sequences():
-    """Test that all valid escape sequences are preserved."""
-
-    json_with_escapes = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\x"}'
-    expected = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\\\x"}'
-    result = repair_json_string_backslashes(json_with_escapes)
-    assert result == expected
-
-
-def test_repair_json_string_backslashes_empty():
-    """Test with empty string."""
-
-    empty = ""
-    result = repair_json_string_backslashes(empty)
-    assert result == empty
-
-
-# @pytest.skip("Not quite sure this is right yet")
-# def test_importerror_handling():
-#     """Test that import errors are properly handled"""
-#     with patch.dict('sys.modules', {'anthropic': None}):
-#         from importlib import reload
-#         import sys
-
-#         # Force reload of the module to trigger ImportError handling
-#         if 'toponymy.llm_wrappers' in sys.modules:
-#             reload(sys.modules['toponymy.llm_wrappers'])
-
-#         # Verify that the Anthropic class is not available
-#         assert 'Anthropic' not in globals()
+    assert namer.api_key == "dummy"
 
 
 # Ollama Tests
-@pytest.fixture
-def ollama_wrapper():
-    with patch("ollama.Client"):
-        wrapper = OllamaNamer(model="llama3.2", host="http://localhost:11434")
-        return wrapper
+def test_ollama_connectivity_plain_sync_canary():
+    model = "llama3.2"
+    if not is_ollama_model_available(model):
+        pytest.skip(f"{model} not available in local Ollama")
+    namer = OllamaNamer(model=model)
+    result = namer.connectivity_status()
 
-
-def test_ollama_generate_topic_name_success(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(
-        return_value={"response": mock_data["valid_topic_name"]}
+    assert result["success"], (
+        f"Sync plain canary test failed for Ollama:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = ollama_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
+
+def test_ollama_namer_returns_litellm_namer():
+    namer = OllamaNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_ollama_generate_topic_name_success_system_prompt(ollama_wrapper, mock_data):
-    ollama_wrapper.client.chat = Mock(
-        return_value={"message": {"content": mock_data["valid_topic_name"]}}
-    )
-
-    result = ollama_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
+def test_ollama_namer_default():
+    namer = OllamaNamer()
+    assert namer.model == "ollama_chat/llama3.2"
+    assert namer.api_base == "http://localhost:11434"
 
 
-def test_ollama_generate_cluster_names_success(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(
-        return_value={"response": mock_data["valid_cluster_names"]}
-    )
+def test_ollama_namer_provider_kwargs_passthrough():
+    namer = OllamaNamer(provider_kwargs={"timeout": 123})
 
-    result = ollama_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_ollama_generate_cluster_names_success_system_prompt(ollama_wrapper, mock_data):
-    ollama_wrapper.client.chat = Mock(
-        return_value={"message": {"content": mock_data["valid_cluster_names"]}}
-    )
+def test_ollama_namer_host_maps_to_api_base():
+    """Remove once deprecation of host is complete"""
+    with pytest.warns(FutureWarning):
+        namer = OllamaNamer(host="http://localhost")
 
-    result = ollama_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-def test_ollama_generate_cluster_names_success_on_malformed_mapping(
-    ollama_wrapper, mock_data
-):
-    ollama_wrapper.client.generate = Mock(
-        return_value={"response": mock_data["malformed_mapping"]}
-    )
-
-    result = ollama_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_ollama_generate_topic_name_failure(ollama_wrapper):
-    ollama_wrapper.client.generate = Mock(side_effect=Exception("API Error"))
-    result = ollama_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_ollama_generate_topic_name_failure_malformed_json(ollama_wrapper, mock_data):
-    response = MockLLMResponse.create_ollama_response(mock_data["malformed_json"])
-    ollama_wrapper.client.generate = Mock(return_value=response)
-    result = ollama_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_ollama_generate_cluster_names_failure(ollama_wrapper, mock_data):
-    ollama_wrapper.client.generate = Mock(side_effect=Exception("API Error"))
-    result = ollama_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+    assert namer.api_base == "http://localhost"
 
 
 # Google Gemini Tests
-@pytest.fixture
-def google_gemini_wrapper():
-    with (
-        patch("google.generativeai.configure"),
-        patch("google.generativeai.GenerativeModel"),
-    ):
-        wrapper = GoogleGeminiNamer(api_key="dummy", model="gemini-1.5-flash")
-        return wrapper
+@pytest.mark.external
+@pytest.mark.skipif(not os.getenv("GEMINI_API_KEY"), reason="GEMINI_API_KEY not set")
+@pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
+def test_gemini_connectivity_sync_system_canary():
+    namer = GoogleGeminiNamer()
 
-
-def test_google_gemini_generate_topic_name_success(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
+    result = namer.connectivity_status(
+        prompt="Return a short JSON object describing your role.",
+        system_prompt="You are a topic naming assistant.",
     )
 
-    result = google_gemini_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_google_gemini_generate_topic_name_success_system_prompt(
-    google_gemini_wrapper, mock_data
-):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_topic_name"])
+    assert result["success"], (
+        f"Sync system canary failed:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
 
-    result = google_gemini_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
-    validate_topic_name(result)
+
+def test_gemini_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = GoogleGeminiNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_google_gemini_generate_cluster_names_success(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+@pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
+def test_gemini_namer_default():
+    namer = GoogleGeminiNamer()
 
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.model == "gemini/gemini-2.5-flash-lite"
+    assert namer.use_json_object is True
+    assert namer.disable_system_prompts is False
 
 
-def test_google_gemini_generate_cluster_names_success_system_prompt(
-    google_gemini_wrapper, mock_data
-):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["valid_cluster_names"])
-    )
+@pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
+def test_gemini_namer_provider_kwargs_passthrough():
+    namer = GoogleGeminiNamer(provider_kwargs={"timeout": 123})
 
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_google_gemini_generate_cluster_names_success_on_malformed_mapping(
-    google_gemini_wrapper, mock_data
-):
-    google_gemini_wrapper.model.generate_content = Mock(
-        return_value=Mock(text=mock_data["malformed_mapping"])
-    )
+def test_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = GoogleGeminiNamer()
 
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_google_gemini_generate_topic_name_failure(google_gemini_wrapper):
-    google_gemini_wrapper.model.generate_content = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = google_gemini_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_google_gemini_generate_topic_name_failure_malformed_json(
-    google_gemini_wrapper, mock_data
-):
-    response = MockLLMResponse.create_google_gemini_response(
-        mock_data["malformed_json"]
-    )
-    google_gemini_wrapper.model.generate_content = Mock(return_value=response)
-    result = google_gemini_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_google_gemini_generate_cluster_names_failure(google_gemini_wrapper, mock_data):
-    google_gemini_wrapper.model.generate_content = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = google_gemini_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+    assert namer.api_key == "dummy"
 
 
 # Together Tests
-@pytest.fixture
-def together_wrapper():
-    with patch("together.Together"):
-        wrapper = TogetherNamer(api_key="dummy", model="meta-llama/Llama-3-8b-chat-hf")
-        return wrapper
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
+)
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
+def test_together_connectivity_plain_sync_canary():
+    namer = TogetherNamer()
+    result = namer.connectivity_status()
 
-
-def test_together_generate_topic_name_success(together_wrapper, mock_data):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
-
-    result = together_wrapper.generate_topic_name("test prompt")
-    validate_topic_name(result)
-
-
-def test_together_generate_topic_name_success_system_prompt(
-    together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_topic_name"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
-
-    result = together_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
+    assert result["success"], (
+        f"Sync plain canary test failed for Together:\n"
+        f"{result['error_type']}: {result['error_message']}"
     )
-    validate_topic_name(result)
 
 
-def test_together_generate_cluster_names_success(together_wrapper, mock_data):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
+def test_together_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = TogetherNamer()
 
-    result = together_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_together_generate_cluster_names_success_system_prompt(
-    together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["valid_cluster_names"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
+def test_together_namer_default():
+    namer = TogetherNamer()
 
-    result = together_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-    )
-    validate_cluster_names(result)
+    assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
 
 
-def test_together_generate_cluster_names_success_on_malformed_mapping(
-    together_wrapper, mock_data
-):
-    mock_response = Mock()
-    mock_response.choices = [Mock()]
-    mock_response.choices[0].message = Mock()
-    mock_response.choices[0].message.content = mock_data["malformed_mapping"]
-    together_wrapper.client.chat.completions.create = Mock(return_value=mock_response)
+@pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
+def test_together_namer_provider_kwargs_passthrough():
+    namer = TogetherNamer(provider_kwargs={"timeout": 123})
 
-    result = together_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    validate_cluster_names(result)
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_together_generate_topic_name_failure(together_wrapper):
-    together_wrapper.client.chat.completions.create = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = together_wrapper.generate_topic_name("test prompt")
-    assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_together_generate_cluster_names_failure(together_wrapper, mock_data):
-    together_wrapper.client.chat.completions.create = Mock(
-        side_effect=Exception("API Error")
-    )
-    result = together_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
-    )
-    assert result == mock_data["old_names"]
+    assert namer.provider_kwargs["timeout"] == 123
 
 
 # Replicate Tests
-@pytest.fixture
-def replicate_wrapper():
-    with patch("replicate.run"):
-        wrapper = ReplicateNamer(api_token="dummy", model="meta/llama-2-70b-chat")
-        return wrapper
+@pytest.mark.external
+@pytest.mark.skipif(
+    not os.getenv("REPLICATE_API_KEY"), reason="REPLICATE_API_KEY not set"
+)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_connectivity_plain_sync_canary():
+    namer = ReplicateNamer()
+    result = namer.connectivity_status()
+
+    assert result["success"], (
+        f"Sync plain canary test failed for Replicate:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
 
 
-def test_replicate_generate_topic_name_success(replicate_wrapper, mock_data):
-    with patch("replicate.run", return_value=[mock_data["valid_topic_name"]]):
-        result = replicate_wrapper.generate_topic_name("test prompt")
-        validate_topic_name(result)
+def test_replicate_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = ReplicateNamer()
+
+    assert isinstance(namer, LiteLLMNamer)
 
 
-def test_replicate_generate_topic_name_success_system_prompt(
-    replicate_wrapper, mock_data
-):
-    with patch("replicate.run", return_value=[mock_data["valid_topic_name"]]):
-        result = replicate_wrapper.generate_topic_name(
-            {"system": "system prompt", "user": "test prompt"}
-        )
-        validate_topic_name(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_default():
+    namer = ReplicateNamer()
+
+    assert namer.model == "replicate/meta/llama-2-70b-chat"
+    assert namer.use_json_object is False
 
 
-def test_replicate_generate_cluster_names_success(replicate_wrapper, mock_data):
-    with patch("replicate.run", return_value=[mock_data["valid_cluster_names"]]):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"]
-        )
-        validate_cluster_names(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_provider_kwargs_passthrough():
+    namer = ReplicateNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
 
 
-def test_replicate_generate_cluster_names_success_system_prompt(
-    replicate_wrapper, mock_data
-):
-    with patch("replicate.run", return_value=[mock_data["valid_cluster_names"]]):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
-        )
-        validate_cluster_names(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_api_token_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("REPLICATE_API_KEY", raising=False)
+    with pytest.warns(FutureWarning):
+        namer = ReplicateNamer(api_token="dummy")
+
+    assert namer.api_key == "dummy"
 
 
-def test_replicate_generate_cluster_names_success_on_malformed_mapping(
-    replicate_wrapper, mock_data
-):
-    with patch("replicate.run", return_value=[mock_data["malformed_mapping"]]):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"]
-        )
-        validate_cluster_names(result)
+@pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
+def test_replicate_namer_env_api_token_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("REPLICATE_API_KEY", raising=False)
+    monkeypatch.setenv("REPLICATE_API_TOKEN", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = ReplicateNamer()
 
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_replicate_generate_topic_name_failure(replicate_wrapper):
-    with patch("replicate.run", side_effect=Exception("API Error")):
-        result = replicate_wrapper.generate_topic_name("test prompt")
-        assert result == ""
-
-
-@pytest.mark.filterwarnings("ignore:All retries exhausted")
-def test_replicate_generate_cluster_names_failure(replicate_wrapper, mock_data):
-    with patch("replicate.run", side_effect=Exception("API Error")):
-        result = replicate_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"]
-        )
-        assert result == mock_data["old_names"]
+    assert namer.api_key == "dummy"
 
 
 # LiteLLM Tests
-
-
 @pytest.fixture
 def litellm_wrapper():
     return LiteLLMNamer(

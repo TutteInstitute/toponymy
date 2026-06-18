@@ -4,6 +4,7 @@ from toponymy.llm_wrappers import (
     _should_retry,
     FailFastLLMError,
     InvalidLLMInputError,
+    repair_json_string_backslashes,
 )
 import pytest
 
@@ -298,3 +299,47 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_error():
     }
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
+
+
+# Test JSON repair
+def test_repair_json_string_backslashes_already_valid():
+    """Test that valid JSON strings are not modified."""
+
+    valid_json = '{"key": "value with \\"quotes\\" inside"}'
+    result = repair_json_string_backslashes(valid_json)
+    assert result == valid_json
+
+
+def test_repair_json_string_backslashes_unescaped():
+    """Test repairing strings with unescaped backslashes."""
+
+    invalid_json = '{"topic_name": "Machine Learning\\ML"}'
+    expected = '{"topic_name": "Machine Learning\\\\ML"}'
+    result = repair_json_string_backslashes(invalid_json)
+    assert result == expected
+
+
+def test_repair_json_string_backslashes_mixed():
+    """Test repairing strings with both properly escaped and unescaped backslashes."""
+
+    mixed_json = '{"path": "C:\\Users\\username", "quoted": "with \\"quotes\\""}'
+    expected = '{"path": "C:\\\\Users\\\\username", "quoted": "with \\"quotes\\""}'
+    result = repair_json_string_backslashes(mixed_json)
+    assert result == expected
+
+
+def test_repair_json_string_backslashes_all_escape_sequences():
+    """Test that all valid escape sequences are preserved."""
+
+    json_with_escapes = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\x"}'
+    expected = '{"special": "\\n\\r\\t\\b\\f\\/\\\\", "invalid": "\\\\x"}'
+    result = repair_json_string_backslashes(json_with_escapes)
+    assert result == expected
+
+
+def test_repair_json_string_backslashes_empty():
+    """Test with empty string."""
+
+    empty = ""
+    result = repair_json_string_backslashes(empty)
+    assert result == empty
