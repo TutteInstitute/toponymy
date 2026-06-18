@@ -278,7 +278,49 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
         **kwargs,
     ):
         """
-        #TODO: this function
+        Generates a list of keyphrases for each cluster in a cluster layer using one of several methods.
+
+        Currently supported selection methods are:
+            * information_weighted: Information-theoretic weighting with diversification.
+            * central: Centroid-based distance in embedding space.
+            * bm25: BM25 scoring from information retrieval.
+            * submodular_selection_information: Information weighting with a submodular selection function.
+
+        Parameters
+        ----------
+        selection_method: str
+            The method used to select and generate keyphrases.
+        cluster_label_vector : np.ndarray
+            A vector of cluster labels for each object.
+        object_x_keyphrase_matrix : scipy.sparse.spmatrix
+            A sparse matrix of keyphrase counts for each object.
+        keyphrase_list : List[str]
+            A list of keyphrases in the same order as columns in object_x_keyphrase_matrix.
+        keyphrase_vectors : np.ndarray
+            An ndarray of keyphrase vectors in the same order as columns in object_x_keyphrase_matrix.
+        **kwargs
+            Additional keyword arguments specific to the chosen selection method.
+
+        Returns
+        -------
+        keyphrases : List[List[str]]
+            A list of lists of keyphrases for each cluster.
+
+        Raises
+        ------
+        ValueError
+            If an invalid selection method string is passed.
+
+        See Also
+        --------
+        information_weighted_keyphrases
+        central_keyphrases
+        bm25_keyphrases
+        submodular_selection_information_keyphrases
+
+        Notes
+        -----
+        If additional selection methods need to be supported, a suitable string name for the method should be added to the SUPPORTED_SELECTION_METHODS.
         """
         if selection_method not in SUPPORTED_SELECTION_METHODS:
             raise ValueError(
