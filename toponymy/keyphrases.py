@@ -27,7 +27,9 @@ SUPPORTED_SELECTION_METHODS = [
     "information_weighted",
     "central",
     "bm25",
-    "submodular_selection_information",
+    "saturated_coverage",
+    "facility_location",
+    "graph_cut",
 ]
 
 
@@ -284,7 +286,9 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
             * information_weighted: Information-theoretic weighting with diversification.
             * central: Centroid-based distance in embedding space.
             * bm25: BM25 scoring from information retrieval.
-            * submodular_selection_information: Information weighting with a submodular selection function.
+            * saturated_coverage: Information weighting with saturated coverage optimization.
+            * facility_location: Information weighting with facility location optimization.
+            * graph_cut: Information weighting with graph cut optimization.
 
         Parameters
         ----------
@@ -354,13 +358,18 @@ class KeyphraseExtractor(AbstractFeatureExtractor):
                 embedding_model=self.embedder,
                 **kwargs,
             )
-        elif selection_method == "submodular_selection_information":
+        elif selection_method in [
+            "saturated_coverage",
+            "facility_location",
+            "graph_cut",
+        ]:
             keyphrases_per_cluster = submodular_selection_information_keyphrases(
                 cluster_label_vector=cluster_label_vector,
                 object_x_keyphrase_matrix=object_x_feature_matrix,
                 keyphrase_list=feature_names,
                 keyphrase_vectors=keyphrase_vectors,
                 embedding_model=self.embedder,
+                submodular_function=selection_method,
                 **kwargs,
             )
 
