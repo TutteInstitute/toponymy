@@ -413,8 +413,11 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         topic_extraction_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
-        max_tokens: int = 128,
+        max_tokens: int | None = None,
     ) -> str | tuple:
+        if max_tokens is None:
+            max_tokens = getattr(self, "max_tokens_topic_name", 128)
+
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
                 prompt,
@@ -473,8 +476,11 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         extract_topic_names_function=default_extract_topic_names,
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
-        max_tokens: int = 1024,
+        max_tokens: int | None = None,
     ) -> List[str]:
+        if max_tokens is None:
+            max_tokens = getattr(self, "max_tokens_cluster_names", 1024)
+
         if isinstance(prompt, str):
             topic_name_info_raw = self._safe_call_llm(
                 prompt,
@@ -808,12 +814,15 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         null_result_value="",
-        max_tokens: int = 128,
+        max_tokens: int | None = None,
     ) -> List[str]:
         """
         Generate topic names for a batch of prompts.
         Returns a list of topic names matching the input prompts.
         """
+        if max_tokens is None:
+            max_tokens = getattr(self, "max_tokens_topic_name", 128)
+
         if not prompts:
             return []
 
@@ -877,12 +886,15 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         extract_topic_names_function=default_extract_topic_names,
         get_topic_names_regex=GET_TOPIC_CLUSTER_NAMES_REGEX,
-        max_tokens: int = 1024,
+        max_tokens: int | None = None,
     ) -> List[List[str]]:
         """
         Generate topic cluster names for a batch of prompts.
         Returns a list of lists of topic names matching the input prompts.
         """
+        if max_tokens is None:
+            max_tokens = getattr(self, "max_tokens_cluster_names", 1024)
+
         if len(prompts) != len(old_names_list):
             raise ValueError("Number of prompts must match number of old_names lists")
 
@@ -1247,6 +1259,14 @@ try:
             If False (default), system prompt support is detected automatically and will flatten system prompts
             if unsupported for a given model.
 
+        max_tokens_topic_name: int, optional
+            Default maximum number of tokens for topic name generation. Default is 128.
+            Can be overridden per-call in generate_topic_name().
+
+        max_tokens_cluster_names: int, optional
+            Default maximum number of tokens for cluster name generation. Default is 1024.
+            Can be overridden per-call in generate_topic_cluster_names().
+
         provider_kwargs : dict[str, Any], optional
             Additional keyword arguments passed directly to `litellm.completion()` /
             `litellm.acompletion()`. This allows callers to use LiteLLM-specific
@@ -1265,6 +1285,12 @@ try:
 
         extra_prompting: str
             Additional instructions appended to the prompt.
+
+        max_tokens_topic_name: int
+            Default maximum tokens for topic name generation.
+
+        max_tokens_cluster_names: int
+            Default maximum tokens for cluster name generation.
 
         use_json_object: bool
             Whether response_format={"type": "json_object"} will be sent.
@@ -1287,6 +1313,8 @@ try:
             llm_specific_instructions=None,
             use_json_object: bool = None,
             disable_system_prompts: bool = False,
+            max_tokens_topic_name: int = 128,
+            max_tokens_cluster_names: int = 1024,
             provider_kwargs: dict[str, Any] | None = None,
             callback: DebugCallback | None = None,
         ):
@@ -1303,6 +1331,8 @@ try:
             self._resolved_use_json_object: bool | None = None  # set internally
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
+            self.max_tokens_topic_name = max_tokens_topic_name
+            self.max_tokens_cluster_names = max_tokens_cluster_names
             self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
 
             filterwarnings(
@@ -1509,6 +1539,15 @@ try:
             If None (default), support is detected automatically by check if response_format is supported
             for the specified model. Set to True to force JSON object mode, or False to
             disable it.
+
+        max_tokens_topic_name: int, optional
+            Default maximum number of tokens for topic name generation. Default is 128.
+            Can be overridden per-call in generate_topic_names().
+
+        max_tokens_cluster_names: int, optional
+            Default maximum number of tokens for cluster name generation. Default is 1024.
+            Can be overridden per-call in generate_topic_cluster_names().
+
         provider_kwargs : dict[str, Any], optional
             Additional keyword arguments passed directly to `litellm.completion()` /
             `litellm.acompletion()`. This allows callers to use LiteLLM-specific
@@ -1527,6 +1566,12 @@ try:
 
         extra_prompting: str
             Additional instructions specific to the LLM, appended to the prompt.
+
+        max_tokens_topic_name: int
+            Default maximum tokens for topic name generation.
+
+        max_tokens_cluster_names: int
+            Default maximum tokens for cluster name generation.
         """
 
         FAIL_FAST_EXCEPTIONS = (
@@ -1547,6 +1592,8 @@ try:
             max_concurrent_requests: int = 10,
             use_json_object: bool | None = None,
             disable_system_prompts: bool = False,
+            max_tokens_topic_name: int = 128,
+            max_tokens_cluster_names: int = 1024,
             provider_kwargs: dict[str, Any] | None = None,
             callback: DebugCallback | None = None,
         ):
@@ -1565,6 +1612,8 @@ try:
             self._resolved_use_json_object: bool | None = None
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
+            self.max_tokens_topic_name = max_tokens_topic_name
+            self.max_tokens_cluster_names = max_tokens_cluster_names
             self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
 
         @property
@@ -1735,6 +1784,8 @@ def AnthropicNamer(
     api_key: str | None = None,
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
 ) -> LiteLLMNamer:
@@ -1799,6 +1850,8 @@ def AnthropicNamer(
         use_json_object=True,
         disable_system_prompts=False,
         llm_specific_instructions=llm_specific_instructions,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -1810,6 +1863,8 @@ def AsyncAnthropicNamer(
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
     max_concurrent_requests: int = 10,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
 ) -> AsyncLiteLLMNamer:
@@ -1878,6 +1933,8 @@ def AsyncAnthropicNamer(
         use_json_object=True,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -1923,6 +1980,8 @@ def CohereNamer(
     api_key: str | None = None,
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
     base_url: str | None = None,  # deprecated, renamed to api_base
@@ -2004,6 +2063,8 @@ def CohereNamer(
         use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
         disable_system_prompts=False,
         llm_specific_instructions=llm_specific_instructions,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -2015,6 +2076,8 @@ def AsyncCohereNamer(
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
     max_concurrent_requests: int = 10,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
     base_url: str = None,
@@ -2100,6 +2163,8 @@ def AsyncCohereNamer(
         use_json_object=False,  # Cohere accepts this but the default prompts aren't strict enough to reliably produce non-empty JSON objects. Change when this is fixed.
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -3263,6 +3328,8 @@ def OpenAINamer(
     api_key: str | None = None,
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
     base_url: str | None = None,  # deprecated, renamed to api_base
@@ -3354,6 +3421,8 @@ def OpenAINamer(
         use_json_object=True,
         disable_system_prompts=False,
         llm_specific_instructions=llm_specific_instructions,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -3365,6 +3434,8 @@ def AsyncOpenAINamer(
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
     max_concurrent_requests: int = 10,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
     base_url: str | None = None,  # deprecated, renamed to api_base
@@ -3460,6 +3531,8 @@ def AsyncOpenAINamer(
         use_json_object=True,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -3471,6 +3544,8 @@ def AzureAINamer(
     api_base: str | None = None,
     endpoint: str | None = None,
     llm_specific_instructions: str | None = None,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
 ) -> LiteLLMNamer:
@@ -3532,6 +3607,8 @@ def AzureAINamer(
         use_json_object=True,
         disable_system_prompts=False,
         llm_specific_instructions=llm_specific_instructions,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -3544,6 +3621,8 @@ def AsyncAzureAINamer(
     endpoint: str | None = None,
     llm_specific_instructions: str | None = None,
     max_concurrent_requests: int = 10,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
 ) -> AsyncLiteLLMNamer:
@@ -3610,6 +3689,8 @@ def AsyncAzureAINamer(
         use_json_object=True,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -3902,6 +3983,8 @@ def OllamaNamer(
     api_key: str | None = None,
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
     host: str | None = None,  # deprecated, renamed to api_base
@@ -3967,6 +4050,8 @@ def OllamaNamer(
         api_key=api_key,
         api_base=api_base,
         llm_specific_instructions=llm_specific_instructions,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
@@ -3978,10 +4063,12 @@ def AsyncOllamaNamer(
     api_base: str | None = None,
     llm_specific_instructions: str | None = None,
     max_concurrent_requests: int = 5,
+    max_tokens_topic_name: int = 128,
+    max_tokens_cluster_names: int = 1024,
     provider_kwargs: dict[str, Any] | None = None,
     callback: DebugCallback | None = None,
     host: str | None = None,  # deprecated, renamed to api_base
-) -> LiteLLMNamer:
+) -> AsyncLiteLLMNamer:
     """
     Convenience wrapper for a AsyncLiteLLMNamer configured for local Ollama use.
 
@@ -4046,6 +4133,8 @@ def AsyncOllamaNamer(
         api_base=api_base,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,
+        max_tokens_topic_name=max_tokens_topic_name,
+        max_tokens_cluster_names=max_tokens_cluster_names,
         provider_kwargs=provider_kwargs,
         callback=callback,
     )
