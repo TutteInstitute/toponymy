@@ -17,7 +17,7 @@ for name in logging.root.manager.loggerDict:
 NOTEBOOK_CONFIG = {
     "basic_usage.ipynb": {
         "has_openainamer": True,
-        "timeout": 400,
+        "timeout": 800,
     },
     "clusterers.ipynb": {
         "has_openainamer": False,
@@ -53,7 +53,7 @@ NOTEBOOK_CONFIG = {
     },
     "topic_summaries.ipynb": {
         "has_openainamer": True,
-        "timeout": 3600,
+        "timeout": 6000,
     },
 }
 

@@ -2,7 +2,6 @@ from nbclient import NotebookClient
 import nbformat
 import time
 import logging
-import tempfile
 import warnings
 import os
 import functools
@@ -10,7 +9,6 @@ import functools
 logger = logging.getLogger(__name__)
 
 from pathlib import Path
-from sphinx.application import Sphinx
 
 import os
 import warnings
@@ -34,12 +32,15 @@ def notebook_test_replacement(replacement):
     return decorator
 
 
-def package_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
 
 def doc_dir() -> Path:
-    return package_root() / "doc"
+    return PACKAGE_ROOT / "doc"
+
+
+def examples_dir() -> Path:
+    return PACKAGE_ROOT / "examples"
 
 
 def get_notebooks(doc_dir: Path) -> list[Path]:
