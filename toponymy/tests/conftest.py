@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import os
 import json
 import umap
 import pytest
@@ -216,3 +217,24 @@ def centroid_vectors(cluster_label_vector, topic_vectors):
 def premade_topic_model_path():
     file_path = Path(__file__).parent / "mock-20ng.tm.zip"
     return file_path
+
+
+@pytest.fixture(scope="function")
+def notebook_testing_env():
+    old = os.environ.get("NOTEBOOK_TESTING")
+    old_openai = os.environ.get("OPENAI_API_KEY")
+
+    os.environ["NOTEBOOK_TESTING"] = "true"
+    os.environ["OPENAI_API_KEY"] = "notarealkey"
+
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("NOTEBOOK_TESTING", None)
+        else:
+            os.environ["NOTEBOOK_TESTING"] = old
+        if old_openai is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = old_openai

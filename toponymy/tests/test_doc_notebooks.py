@@ -2,7 +2,7 @@ import pytest
 from toponymy.tools.notebook_runner import (
     run_notebook,
     doc_dir,
-    get_doc_notebooks_via_sphinx,
+    get_notebooks,
 )
 
 from pathlib import Path
@@ -14,35 +14,65 @@ for name in logging.root.manager.loggerDict:
     print(name)
 
 
-DOC_NOTEBOOKS = [
-    # doc_dir() / "basic_usage.ipynb",
-    doc_dir() / "clustering_options.ipynb",
-    doc_dir() / "exemplar_texts.ipynb",
-]
+NOTEBOOK_CONFIG = {
+    "basic_usage.ipynb": {
+        "has_openainamer": True,
+        "timeout": 400,
+    },
+    "clusterers.ipynb": {
+        "has_openainamer": False,
+        "timeout": 3600,
+    },
+    "clustering_options.ipynb": {
+        "has_openainamer": False,
+        "timeout": 300,
+    },
+    "exemplar_texts.ipynb": {
+        "has_openainamer": False,
+        "timeout": 300,
+    },
+    "how_toponymy_works.ipynb": {
+        "has_openainamer": True,
+        "timeout": 3600,
+    },
+    "keyphrases.ipynb": {
+        "has_openainamer": False,
+        "timeout": 1800,
+    },
+    "saving_loading.ipynb": {
+        "has_openainamer": True,
+        "timeout": 600,
+    },
+    "test_audit_functionality.ipynb": {
+        "has_openainamer": True,
+        "timeout": 600,
+    },
+    "test_max_layers_newsgroups.ipynb": {
+        "has_openainamer": True,
+        "timeout": 600,
+    },
+    "topic_summaries.ipynb": {
+        "has_openainamer": True,
+        "timeout": 3600,
+    },
+}
 
 
-def safe_load_notebooks(doc_dir: Path) -> list[Path]:
-    try:
-        return get_doc_notebooks_via_sphinx(doc_dir)
-    except Exception as e:
-        logging.error(f"Error loading notebooks via Sphinx: {e}")
-        return []
+def get_notebook_cfg(path: str):
+    name = Path(path).name
+    return NOTEBOOK_CONFIG.get(name, {"has_openainamer": True, "timeout": 6000})
 
 
 # XXX for making this run pick a single notebook
-SPHINX_NOTEBOOKS = [safe_load_notebooks(doc_dir())[4]]
+TEST_NOTEBOOKS = [get_notebooks(doc_dir)[10]]
+# TEST_NOTEBOOKS = get_notebooks(doc_dir)
 
 
-def test_sphinx_notebook_loading():
-    """
-    This tests fails if safe_load_notebooks failed to return any notebooks and
-    acts as a flag that test_doc_notebook tests will be skipped because it has no notebooks to test.
-    """
-    assert (
-        len(SPHINX_NOTEBOOKS) > 0
-    ), "No doc notebooks found via SPHINX, test_doc_notebook will be skipped"
+@pytest.mark.parametrize("notebook", TEST_NOTEBOOKS)
+def test_doc_notebook(notebook, notebook_testing_env):
+    cfg = get_notebook_cfg(notebook)
 
-
-@pytest.mark.parametrize("notebook", SPHINX_NOTEBOOKS)
-def test_doc_notebook(notebook):
-    run_notebook(notebook)
+    run_notebook(
+        notebook,
+        timeout=cfg["timeout"],
+    )

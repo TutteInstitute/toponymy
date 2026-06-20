@@ -9,6 +9,7 @@ from toponymy.templates import (
     GET_TOPIC_NAME_REGEX,
     default_extract_topic_names,
 )
+from toponymy.tools.notebook_runner import notebook_test_replacement
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
 from tenacity import (
@@ -3255,9 +3256,171 @@ except:
             super().__init__(*args, **kwds)
 
 
+# Ollama
+def OllamaNamer(
+    model: str = "llama3.2",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    host: str | None = None,  # deprecated, renamed to api_base
+) -> LiteLLMNamer:
+    """
+    Convenience wrapper for a LiteLLMNamer configured for local Ollama use.
+
+    For Ollama remote API use, use LiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
+
+    Parameters
+    ----------
+    model : str, optional
+        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
+        or bare Ollama format ("llama3.2") — both are accepted.
+    api_key : str, optional
+        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
+    api_base : str, optional
+        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    host : str, optional
+        Deprecated. Use ``api_base`` instead.
+
+    Returns
+    -------
+    LiteLLMNamer
+        A fully configured namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = OllamaNamer()
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = OllamaNamer(model="llama3.2")
+
+    See Also
+    --------
+    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
+    """
+    if host is not None:
+        warn(
+            "host is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or host or "http://localhost:11434"
+
+    return LiteLLMNamer(
+        model=_ollama_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
+def AsyncOllamaNamer(
+    model: str = "llama3.2",
+    api_key: str | None = None,
+    api_base: str | None = None,
+    llm_specific_instructions: str | None = None,
+    max_concurrent_requests: int = 5,
+    provider_kwargs: dict[str, Any] | None = None,
+    callback: DebugCallback | None = None,
+    host: str | None = None,  # deprecated, renamed to api_base
+) -> LiteLLMNamer:
+    """
+    Convenience wrapper for a AsyncLiteLLMNamer configured for local Ollama use.
+
+    For Ollama remote API use, use AsyncLiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
+
+    Parameters
+    ----------
+    model : str, optional
+        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
+        or bare Ollama format ("llama3.2") — both are accepted.
+    api_key : str, optional
+        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
+    api_base : str, optional
+        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
+    llm_specific_instructions : str, optional
+        Additional instructions appended to every prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+    max_concurrent_requests: int, optional
+        The maximum number of concurrent requests. Default is 5. This can be adjusted based on your
+        application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
+    provider_kwargs : dict, optional
+        Additional keyword arguments passed directly to the LiteLLM completion
+        call. Use for provider-specific features not covered by the parameters
+        above, e.g. ``{"timeout": 30}``.
+    callback : DebugCallback, optional
+        Optional callback function for observability. Called on each LLM
+        request and response with a structured payload. Useful for logging,
+        debugging, or recording prompts and responses to a file.
+    host : str, optional
+        Deprecated. Use ``api_base`` instead.
+
+    Returns
+    -------
+    AsyncLiteLLMNamer
+        A fully configured async namer ready for use with Toponymy.
+
+    Examples
+    --------
+    Basic usage::
+
+        namer = AsyncOllamaNamer()
+        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
+
+    Using a different model::
+
+        namer = AsyncOllamaNamer(model="llama3.2")
+
+    See Also
+    --------
+    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
+    """
+    if host is not None:
+        warn(
+            "host is deprecated, use api_base instead.",
+            FutureWarning,
+            stacklevel=2,
+        )
+    api_base = api_base or host or "http://localhost:11434"
+    return AsyncLiteLLMNamer(
+        model=_ollama_model(model),
+        api_key=api_key,
+        api_base=api_base,
+        llm_specific_instructions=llm_specific_instructions,
+        max_concurrent_requests=max_concurrent_requests,
+        provider_kwargs=provider_kwargs,
+        callback=callback,
+    )
+
+
 ## OpenAI Convenience Wrappers
+def NotebookOpenAINamerMock(*args, **kwargs):
+    """
+    For mocking example notebook OpenAINamer calls with a local Olamma model.
+    """
+    logging.info("Using NotebookOpenAINamerMock instead of OpenAINamer")
+    return OllamaNamer()
 
 
+@notebook_test_replacement(NotebookOpenAINamerMock)
 def OpenAINamer(
     model: str = "openai/gpt-4o-mini",
     api_key: str | None = None,
@@ -3894,161 +4057,6 @@ except ImportError:
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
-
-
-# Ollama
-def OllamaNamer(
-    model: str = "llama3.2",
-    api_key: str | None = None,
-    api_base: str | None = None,
-    llm_specific_instructions: str | None = None,
-    provider_kwargs: dict[str, Any] | None = None,
-    callback: DebugCallback | None = None,
-    host: str | None = None,  # deprecated, renamed to api_base
-) -> LiteLLMNamer:
-    """
-    Convenience wrapper for a LiteLLMNamer configured for local Ollama use.
-
-    For Ollama remote API use, use LiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
-
-    Parameters
-    ----------
-    model : str, optional
-        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
-        or bare Ollama format ("llama3.2") — both are accepted.
-    api_key : str, optional
-        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
-    api_base : str, optional
-        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
-    llm_specific_instructions : str, optional
-        Additional instructions appended to every prompt. This can be used to provide
-        model-specific instructions or context that may help improve the quality of the generated text.
-    provider_kwargs : dict, optional
-        Additional keyword arguments passed directly to the LiteLLM completion
-        call. Use for provider-specific features not covered by the parameters
-        above, e.g. ``{"timeout": 30}``.
-    callback : DebugCallback, optional
-        Optional callback function for observability. Called on each LLM
-        request and response with a structured payload. Useful for logging,
-        debugging, or recording prompts and responses to a file.
-    host : str, optional
-        Deprecated. Use ``api_base`` instead.
-
-    Returns
-    -------
-    LiteLLMNamer
-        A fully configured namer ready for use with Toponymy.
-
-    Examples
-    --------
-    Basic usage::
-
-        namer = OllamaNamer()
-        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
-
-    Using a different model::
-
-        namer = OllamaNamer(model="llama3.2")
-
-    See Also
-    --------
-    LiteLLMNamer : The underlying namer, supports 100+ providers directly.
-    """
-    if host is not None:
-        warn(
-            "host is deprecated, use api_base instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
-    api_base = api_base or host or "http://localhost:11434"
-
-    return LiteLLMNamer(
-        model=_ollama_model(model),
-        api_key=api_key,
-        api_base=api_base,
-        llm_specific_instructions=llm_specific_instructions,
-        provider_kwargs=provider_kwargs,
-        callback=callback,
-    )
-
-
-def AsyncOllamaNamer(
-    model: str = "llama3.2",
-    api_key: str | None = None,
-    api_base: str | None = None,
-    llm_specific_instructions: str | None = None,
-    max_concurrent_requests: int = 5,
-    provider_kwargs: dict[str, Any] | None = None,
-    callback: DebugCallback | None = None,
-    host: str | None = None,  # deprecated, renamed to api_base
-) -> LiteLLMNamer:
-    """
-    Convenience wrapper for a AsyncLiteLLMNamer configured for local Ollama use.
-
-    For Ollama remote API use, use AsyncLiteLLMNamer(model="ollama_chat/<model_name>", api_key=<api_key>).
-
-    Parameters
-    ----------
-    model : str, optional
-        Ollama model to use. Default is "llama3.2",  Must be in LiteLLM format ("ollama_chat/llama3.2")
-        or bare Ollama format ("llama3.2") — both are accepted.
-    api_key : str, optional
-        Used for authentication if your Ollama server requires it. Not needed for default local setup. Falls back to the OLLAMA_API_KEY environment variable if not provided.
-    api_base : str, optional
-        Override the Ollama host URL. Default is "http://localhost:11434".  Can use the OLLAMA_API_BASE environment variable.
-    llm_specific_instructions : str, optional
-        Additional instructions appended to every prompt. This can be used to provide
-        model-specific instructions or context that may help improve the quality of the generated text.
-    max_concurrent_requests: int, optional
-        The maximum number of concurrent requests. Default is 5. This can be adjusted based on your
-        application's needs and the rate limits of the OpenAI API. Higher values may improve throughput but could lead to rate limiting.
-    provider_kwargs : dict, optional
-        Additional keyword arguments passed directly to the LiteLLM completion
-        call. Use for provider-specific features not covered by the parameters
-        above, e.g. ``{"timeout": 30}``.
-    callback : DebugCallback, optional
-        Optional callback function for observability. Called on each LLM
-        request and response with a structured payload. Useful for logging,
-        debugging, or recording prompts and responses to a file.
-    host : str, optional
-        Deprecated. Use ``api_base`` instead.
-
-    Returns
-    -------
-    AsyncLiteLLMNamer
-        A fully configured async namer ready for use with Toponymy.
-
-    Examples
-    --------
-    Basic usage::
-
-        namer = AsyncOllamaNamer()
-        toponymy = Toponymy(embedding_model=..., llm_namer=namer)
-
-    Using a different model::
-
-        namer = AsyncOllamaNamer(model="llama3.2")
-
-    See Also
-    --------
-    AsyncLiteLLMNamer : The underlying async namer, supports 100+ providers directly.
-    """
-    if host is not None:
-        warn(
-            "host is deprecated, use api_base instead.",
-            FutureWarning,
-            stacklevel=2,
-        )
-    api_base = api_base or host or "http://localhost:11434"
-    return AsyncLiteLLMNamer(
-        model=_ollama_model(model),
-        api_key=api_key,
-        api_base=api_base,
-        llm_specific_instructions=llm_specific_instructions,
-        max_concurrent_requests=max_concurrent_requests,
-        provider_kwargs=provider_kwargs,
-        callback=callback,
-    )
 
 
 def GoogleGeminiNamer(

@@ -4,11 +4,34 @@ import time
 import logging
 import tempfile
 import warnings
+import os
+import functools
 
 logger = logging.getLogger(__name__)
 
 from pathlib import Path
 from sphinx.application import Sphinx
+
+import os
+import warnings
+
+
+def notebook_test_replacement(replacement):
+    """
+    Decorator for mocking function replacements for example notebook testing.
+    """
+
+    def decorator(func):
+        if os.getenv("NOTEBOOK_TESTING", "").lower() == "true":
+
+            @functools.wraps(func)
+            def wrapper(*args, **kwargs):
+                return replacement(*args, **kwargs)
+
+            return wrapper
+        return func
+
+    return decorator
 
 
 def package_root() -> Path:
@@ -19,37 +42,11 @@ def doc_dir() -> Path:
     return package_root() / "doc"
 
 
-def get_doc_notebooks_via_sphinx(doc_dir: Path) -> list[Path]:
+def get_notebooks(doc_dir: Path) -> list[Path]:
     """
-    Get a list of all documentation notebooks in the specified directory.
+    Get a list of all ipynb notebooks in the specified directory.
     """
-
-    with tempfile.TemporaryDirectory() as tmp:
-        cache_dir = Path(tmp)
-
-        app = Sphinx(
-            srcdir=str(doc_dir),
-            confdir=str(doc_dir),
-            outdir=str(cache_dir),
-            doctreedir=str(cache_dir / ".doctrees"),
-            buildername="dummy",
-            warningiserror=False,
-        )
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            app.build()
-
-        docnames = app.env.found_docs
-
-        notebooks = [
-            doc_dir / f"{name}.ipynb"
-            for name in docnames
-            if (doc_dir / f"{name}.ipynb").exists()
-        ]
-
-        return sorted(notebooks)
-    return sorted(notebooks)
+    return sorted(Path(doc_dir()).glob("*.ipynb"))
 
 
 class InstrumentedNotebookClient(NotebookClient):
