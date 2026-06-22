@@ -1,18 +1,10 @@
 import pytest
-from toponymy.tools.notebook_runner import (
-    run_notebook,
-    doc_dir,
-    get_notebooks,
-)
-
 from pathlib import Path
-
 import logging
+import os
 
-print("LOGGERS:")
-for name in logging.root.manager.loggerDict:
-    print(name)
-
+from toponymy.tools.notebook_runner import run_notebook
+from toponymy.tools.notebook_test_replacement import doc_dir, get_notebooks
 
 NOTEBOOK_CONFIG = {
     "basic_usage.ipynb": {
