@@ -6,6 +6,7 @@ from sklearn.exceptions import NotFittedError
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
 from sklearn.utils.validation import check_is_fitted
+from toponymy.clustering import centroids_from_labels
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
 from toponymy.feature_extractor import FeatureExtractorBase
@@ -327,11 +328,12 @@ class FacilityLocationSelection(BaseGraphSelection):
 ###################################################################################################
 
 SUPPORTED_SELECTION_METHODS = [
-    'facility_location',
-    'saturated_coverage',
-    'random',
-    'central',
+    "facility_location",
+    "saturated_coverage",
+    "random",
+    "central",
 ]
+
 
 class ExemplarTextExtractor(FeatureExtractorBase):
     """
@@ -339,6 +341,7 @@ class ExemplarTextExtractor(FeatureExtractorBase):
 
     #TODO: class documentation
     """
+
     def __init__(
         self,
         verbose: bool = None,
@@ -360,7 +363,7 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         if object_vectors is not None:
             self.null_topic_vector = np.mean(object_vectors, axis=0)
         self.is_fitted_ = True
-    
+
     def get_cluster_features(
         self,
         clusterer: Clusterer,
@@ -368,56 +371,52 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         selection_method: str,
         objects: List[Any],
         object_vectors: np.ndarray | None,
-        n_exemplars: int = 4,
-        object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
+        **kwargs,
     ) -> List[List[str]]:
-        """
-
-        """
+        """ """
         try:
             check_is_fitted(self)
         except NotFittedError as exc:
-            raise NotFittedError(f"Model not fitted. Please fit the model before trying to get cluster features.")
+            raise NotFittedError(
+                f"Model not fitted. Please fit the model before trying to get cluster features."
+            )
+
+        cluster_layer = clusterer.layers[layer_id]
+        cluster_label_vector = cluster_layer.labels
 
         if selection_method == "facility_location":
-            selector = FacilityLocationSelection(
-                n_exemplars, metric="cosine", optimizer="lazy"
+            exemplars, indices = submodular_selection_exemplars(
+                cluster_label_vector,
+                objects,
+                object_vectors,
+                submodular_function=selection_method,
+                **kwargs,
             )
         elif selection_method == "saturated_coverage":
-            selector = SaturatedCoverageSelection(
-                n_exemplars, metric="cosine", optimizer="lazy"
+            exemplars, indices = submodular_selection_exemplars(
+                cluster_label_vector,
+                objects,
+                object_vectors,
+                submodular_function=selection_method,
+                **kwargs,
+            )
+        elif selection_method == "random":
+            exemplars, indices = random_exemplars(
+                cluster_label_vector, objects, object_vectors, **kwargs
+            )
+        elif selection_method == "central":
+            exemplars, indices = diverse_exemplars(
+                cluster_label_vector, objects, object_vectors, **kwargs
+            )
+        else:
+            raise ValueError(
+                f"Unsupported selection method: {selection_method}. Please use one of the currently supported selection methods: {SUPPORTED_SELECTION_METHODS}"
             )
 
-        for cluster in tqdm(
-            clusterer.layers[layer_id],
-            desc=f"Selecting {selection_method} exemplars",
-            disable=not self.show_progress_bar_val,
-            unit="cluster",
-            leave=False,
-            position=1, 
-        ):
-            if len(cluster.members) == 0: # empty cluster
-                cluster.features = []
-
-            if selection_method == 'random':
-                chosen_object_indices = np.random.choice(cluster.members, size=n_exemplars, replace=False)
-            
-            elif selection_method in ['facility_location', 'saturated_coverage']:
-                # subsample if cluster is too large
-                if len(cluster.members) > 16384:
-                    subsample = np.random.choice(cluster.members, size=16384, replace=False)
-                cluster_object_vectors = object_vectors[cluster.members] - self.null_topic_vector
-                cluster_indices = np.arange(cluster_object_vectors.shape[0])
-                if cluster_object_vectors.shape[0] >= n_exemplars:
-                    _, chosen_object_indices = selector.fit_transform(
-                        cluster_object_vectors, y=cluster_indices
-                    )
-                else:
-                    chosen_object_indices = cluster_indices
-            
-            chosen_objects = [objects[i] for i in chosen_object_indices]
-            exemplars = object_to_text_function(chosen_objects)
+        for cluster in cluster_layer:
             cluster.features = exemplars
+
+        return exemplars
 
 
 def submodular_selection_exemplars(
@@ -624,7 +623,6 @@ def diverse_exemplars(
     cluster_label_vector: np.ndarray,
     objects: List[str],
     object_vectors: np.ndarray,
-    centroid_vectors: np.ndarray,
     n_exemplars: int = 4,
     diversify_alpha: float = 1.0,
     object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
@@ -644,8 +642,6 @@ def diverse_exemplars(
         A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
     object_vectors = np.ndarray
         An ndarray of topic vectors for each object.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
     n_exemplars : int, optional
         The number of exemplars to sample for each cluster, by default 4.
     diversify_alpha : float, optional
@@ -668,6 +664,11 @@ def diverse_exemplars(
     show_progress_bar_val, _ = handle_verbose_params(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
+
+    # Compute centroid vectors
+    if verbose:
+        print("Computing centroid vectors")
+    centroid_vectors = centroids_from_labels(cluster_label_vector, object_vectors)
 
     results = []
     indices = []

@@ -4,6 +4,7 @@ from sklearn.base import BaseEstimator
 
 from toponymy.new_types import Clusterer
 
+
 class FeatureExtractorBase(ABC, BaseEstimator):
     """
     Abstract base class for a feature extractor.
@@ -26,13 +27,10 @@ class FeatureExtractorBase(ABC, BaseEstimator):
         return False
 
     @abstractmethod
-    def fit(self,
-            objects: List[Any],
-            *args,
-            **kwargs):
+    def fit(self, objects: List[Any], *args, **kwargs):
         """
         An abstract method to fit a collection of features to a set of objects.
-        
+
         Must be defined in any subclass.
         """
         raise NotImplemented
