@@ -1,18 +1,20 @@
 from abc import ABC, abstractmethod
 
-class FeatureExtractorBase(ABC):
+from sklearn.base import BaseEstimator
+
+from toponymy.new_types import Clusterer
+
+class FeatureExtractorBase(ABC, BaseEstimator):
     """
     Abstract base class for a feature extractor.
+
+    #TODO: class documentation
     """
 
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self.is_fitted_ = False
 
-    @property
-    def is_fitted_(self):
-        """
-        Boolean property: True if the FeatureExtractor has been fitted.
-        """
+    def __sklearn_is_fitted__(self):
         return hasattr(self, "is_fitted_") and self.is_fitted_
 
     def can_fit_from_objects(self) -> bool:
@@ -38,7 +40,7 @@ class FeatureExtractorBase(ABC):
     @abstractmethod
     def get_cluster_features(
         self,
-        cluster_indices: List[int],
+        clusterer: Clusterer,
         layer_id: int,
         *args,
         **kwargs,
@@ -52,7 +54,7 @@ class FeatureExtractorBase(ABC):
 
     def predict(
         self,
-        cluster_indices: List[int],
+        clusterer: Clusterer,
         layer_id: int,
         *args,
         **kwargs,
@@ -60,6 +62,6 @@ class FeatureExtractorBase(ABC):
         """
         A method to get features as a representation for each cluster.
 
-        Syntactic sugar for `get_cluster_features`.
+        Checks that the feature extractor is fitted, and then runs `get_cluster_features`.
         """
         return self.get_cluster_features(cluster_indices, layer_id, *args, **kwargs)
