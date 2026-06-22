@@ -6,10 +6,9 @@ from sklearn.exceptions import NotFittedError
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
 from sklearn.utils.validation import check_is_fitted
-from toponymy.clustering import centroids_from_labels
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
-from toponymy.feature_extractor import FeatureExtractorBase
+from toponymy.feature_extractor import centroids_from_labels, FeatureExtractorBase
 from toponymy.new_types import Clusterer
 
 from tqdm.auto import tqdm
@@ -342,7 +341,7 @@ class ExemplarTextExtractor(FeatureExtractorBase):
     Notes
     -----
     The feature extractor should be first called with `.fit()`.
-    
+
     At each layer, exemplars can be extracted using `.predict()`.
     """
 
@@ -380,7 +379,7 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         layer_id: int
             The ID of the current layer to get cluster features from.
         selection_method: str
-            The method used to extract exemplars. 
+            The method used to extract exemplars.
             Choose from 'facility_location', 'saturated_coverage', 'random' or 'central'.
         objects: List[Any]
             A list of the objects within the clusters.
@@ -388,7 +387,7 @@ class ExemplarTextExtractor(FeatureExtractorBase):
             High-dimensional vectors representing each of the objects.
         **kwargs
             Additional parameters relevant to the particular selection method.
-        
+
         Returns
         -------
         List[List[str]]

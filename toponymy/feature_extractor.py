@@ -5,6 +5,25 @@ from sklearn.base import BaseEstimator
 from toponymy.new_types import Clusterer
 
 
+@numba.njit()
+def centroids_from_labels(
+    cluster_labels: np.ndarray, vector_data: np.ndarray
+) -> np.ndarray:  # pragma: no cover
+    result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
+    counts = np.zeros(cluster_labels.max() + 1)
+    for i in range(cluster_labels.shape[0]):
+        cluster_num = cluster_labels[i]
+        if cluster_num >= 0:
+            result[cluster_num] += vector_data[i]
+            counts[cluster_num] += 1
+
+    for i in range(result.shape[0]):
+        if counts[i] > 0:
+            result[i] /= counts[i]
+
+    return result
+
+
 class FeatureExtractorBase(ABC, BaseEstimator):
     """
     Abstract base class for a feature extractor.
