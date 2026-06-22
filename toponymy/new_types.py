@@ -1,3 +1,5 @@
+from toponymy.clustering import ClusterTree
+
 class Cluster:
     members: list[int]
     features: list
@@ -7,3 +9,7 @@ class Cluster:
 class ClusterLayer:
     clusters: list[Cluster]
     layer_index: int
+
+class Clusterer:
+    layers: list[ClusterLayer]
+    tree: ClusterTree
