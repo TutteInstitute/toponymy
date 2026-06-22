@@ -36,7 +36,8 @@ def _load_bundled_arxiv(use_small=False):
     clusterable_vectors = np.load(base_dir / "ai_arxiv_coordinates.npz.npy")
 
     if use_small:
-        N = 600
+        # limited by min_cluster_size=4
+        N = 350
 
         docs_df = docs_df[:N]
         document_vectors = document_vectors[:N]
@@ -95,6 +96,7 @@ def _load_arxiv_ml(use_small=False):
     )
 
     if use_small:
+        # needs at least 129 keyphrases -> keyphrases[128] in keyphrases.ipynb
         return df.sample(n=5500, random_state=42).reset_index(drop=True)
     else:
         return df
