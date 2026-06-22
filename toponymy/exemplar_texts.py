@@ -2,10 +2,14 @@ import random
 import numpy as np
 import numba
 from typing import List, Tuple, FrozenSet, Dict, Callable, Any
+from sklearn.exceptions import NotFittedError
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
+from sklearn.utils.validation import check_is_fitted
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
+from toponymy.feature_extractor import FeatureExtractorBase
+from toponymy.new_types import Clusterer
 
 from tqdm.auto import tqdm
 import math
@@ -321,6 +325,99 @@ class FacilityLocationSelection(BaseGraphSelection):
 
 
 ###################################################################################################
+
+SUPPORTED_SELECTION_METHODS = [
+    'facility_location',
+    'saturated_coverage',
+    'random',
+    'central',
+]
+
+class ExemplarTextExtractor(FeatureExtractorBase):
+    """
+    Selects exemplar texts from a collection of objects to represent clusters.
+
+    #TODO: class documentation
+    """
+    def __init__(
+        self,
+        verbose: bool = None,
+        show_progress_bar: bool = None,
+    ):
+        super(ExemplarTextExtractor, self).__init__()
+        show_progress_bar_val, _ = handle_verbose_params(
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
+        )
+
+    def can_fit_from_objects(self):
+        return True
+
+    def fit(
+        self,
+        objects: List[Any],
+        object_vectors: np.ndarray | None,
+    ):
+        if object_vectors is not None:
+            self.null_topic_vector = np.mean(object_vectors, axis=0)
+        self.is_fitted_ = True
+    
+    def get_cluster_features(
+        self,
+        clusterer: Clusterer,
+        layer_id: int,
+        selection_method: str,
+        objects: List[Any],
+        object_vectors: np.ndarray | None,
+        n_exemplars: int = 4,
+        object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
+    ) -> List[List[str]]:
+        """
+
+        """
+        try:
+            check_is_fitted(self)
+        except NotFittedError as exc:
+            raise NotFittedError(f"Model not fitted. Please fit the model before trying to get cluster features.")
+
+        if selection_method == "facility_location":
+            selector = FacilityLocationSelection(
+                n_exemplars, metric="cosine", optimizer="lazy"
+            )
+        elif selection_method == "saturated_coverage":
+            selector = SaturatedCoverageSelection(
+                n_exemplars, metric="cosine", optimizer="lazy"
+            )
+
+        for cluster in tqdm(
+            clusterer.layers[layer_id],
+            desc=f"Selecting {selection_method} exemplars",
+            disable=not self.show_progress_bar_val,
+            unit="cluster",
+            leave=False,
+            position=1, 
+        ):
+            if len(cluster.members) == 0: # empty cluster
+                cluster.features = []
+
+            if selection_method == 'random':
+                chosen_object_indices = np.random.choice(cluster.members, size=n_exemplars, replace=False)
+            
+            elif selection_method in ['facility_location', 'saturated_coverage']:
+                # subsample if cluster is too large
+                if len(cluster.members) > 16384:
+                    subsample = np.random.choice(cluster.members, size=16384, replace=False)
+                cluster_object_vectors = object_vectors[cluster.members] - self.null_topic_vector
+                cluster_indices = np.arange(cluster_object_vectors.shape[0])
+                if cluster_object_vectors.shape[0] >= n_exemplars:
+                    _, chosen_object_indices = selector.fit_transform(
+                        cluster_object_vectors, y=cluster_indices
+                    )
+                else:
+                    chosen_object_indices = cluster_indices
+            
+            chosen_objects = [objects[i] for i in chosen_object_indices]
+            exemplars = object_to_text_function(chosen_objects)
+            cluster.features = exemplars
 
 
 def submodular_selection_exemplars(
