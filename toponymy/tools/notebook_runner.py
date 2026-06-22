@@ -47,7 +47,7 @@ def get_notebooks(doc_dir: Path) -> list[Path]:
     """
     Get a list of all ipynb notebooks in the specified directory.
     """
-    return sorted(Path(doc_dir()).glob("*.ipynb"))
+    return sorted(Path(doc_dir).glob("*.ipynb"))
 
 
 class InstrumentedNotebookClient(NotebookClient):
@@ -89,6 +89,7 @@ def run_notebook(
         nb,
         timeout=timeout,
         kernel_name=kernel_name,
+        resources={"metadata": {"path": str(doc_dir())}},
     )
 
     logger.info("Running %s", path)

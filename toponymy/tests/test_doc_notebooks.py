@@ -53,7 +53,7 @@ NOTEBOOK_CONFIG = {
     },
     "topic_summaries.ipynb": {
         "has_openainamer": True,
-        "timeout": 6000,
+        "timeout": 300,
     },
 }
 
@@ -64,14 +64,14 @@ def get_notebook_cfg(path: str):
 
 
 # XXX for making this run pick a single notebook
-TEST_NOTEBOOKS = [get_notebooks(doc_dir)[10]]
-# TEST_NOTEBOOKS = get_notebooks(doc_dir)
+# TEST_NOTEBOOKS = [get_notebooks(doc_dir())[4]]
+TEST_NOTEBOOKS = get_notebooks(doc_dir())
 
 
 @pytest.mark.parametrize("notebook", TEST_NOTEBOOKS)
 def test_doc_notebook(notebook, notebook_testing_env):
     cfg = get_notebook_cfg(notebook)
-
+    logging.info(notebook)
     run_notebook(
         notebook,
         timeout=cfg["timeout"],
