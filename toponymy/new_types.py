@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NewType, Dict, List, Tuple
 
 
 @dataclass
@@ -9,6 +9,9 @@ class Cluster:
 
     Attributes
     ----------
+    label : int
+        The index of the cluster in the layer (i.e. label)
+
     members : list[int]
         A list of data ids that are in this cluster.
     
@@ -22,10 +25,11 @@ class Cluster:
         name: str
         The name that has been assigned to this cluster.
     """
+    label: int
     members: list[int]
-    features: dict[str, Any] | None
-    prompt: str | None
-    name: str | None
+    features: dict[str, Any] | None = None
+    prompt: str | None = None
+    name: str | None = None
 
 
 @dataclass
@@ -35,3 +39,6 @@ class ClusterLayer:
     """
     clusters: list[Cluster]
     layer_index: int
+
+
+ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
