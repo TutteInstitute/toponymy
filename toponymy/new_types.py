@@ -42,5 +42,14 @@ class ClusterLayer:
     clusters: list[Cluster]
     layer_index: int
 
+    def __len__(self):
+        return len(self.clusters)
+
+    def __getitem__(self, key):
+        return self.clusters[key]
+    
+    def __iter__(self):
+        return iter(self.clusters)
+
 
 ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
