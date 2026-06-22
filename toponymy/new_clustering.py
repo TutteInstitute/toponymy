@@ -4,8 +4,11 @@ from typing import Any, Dict, List, NewType, Optional, Tuple, Type
 import numba
 import numpy as np
 from sklearn.base import BaseEstimator
+from sklearn.cluster import KMeans
+from fast_hdbscan import PLSCAN
 
 from toponymy.new_types import Cluster, ClusterLayer, ClusterTree
+from toponymy._utils import handle_verbose_params
 
 
 class Clusterer(ABC, BaseEstimator):
@@ -44,9 +47,9 @@ class Clusterer(ABC, BaseEstimator):
         if (
             hasattr(self, "cluster_layers_")
             and isinstance(self.cluster_layers_, list)
-            and all(isinstance(cluster, ClusterLayer) for cluster in self.cluster_layers)
+            and all(isinstance(cluster, ClusterLayer) for cluster in self.cluster_layers_)
             and hasattr(self, "cluster_tree_")
-            and isinstance(self.cluster_tree_, ClusterTree)
+            and isinstance(self.cluster_tree_, dict)
         ):
             return True
         return False
@@ -98,7 +101,7 @@ def build_cluster_tree(labels: List[np.ndarray]) -> ClusterTree:
         A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
         and the values are lists of tuples representing the child clusters (layer, cluster index).
     """
-    result: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
+    result: ClusterTree = {}
     raw_mapping = _build_cluster_tree(np.vstack(labels))
     for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
         parent_name = (parent_layer, parent_cluster)
@@ -146,9 +149,19 @@ def build_cluster_layers(labels: List[np.ndarray]) -> List[ClusterLayer]:
 
 
 class PreComputedClusterer(Clusterer):
+    """
+    A class for formatting a precomputed set of cluster layers as a clusterer.
+    Pass a list of layer labels (i.e. each layer is a list of cluster ids).
+
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary representing the cluster tree.
+    """
     def __init__(self):
         super().__init__()
-        pass
 
     def fit(self, cluster_label_layers):
         self.cluster_layers = build_cluster_layers(cluster_label_layers)
@@ -158,3 +171,185 @@ class PreComputedClusterer(Clusterer):
         self.fit(label_layers)
         return self.cluster_layers, self.cluster_tree
 
+
+class KMeansClusterer(Clusterer):
+    """
+    A class for clustering data in layers using KMeans. This class is mostly to demonstrate how one might write
+    an alternative Clusterer.
+
+    Parameters
+    ----------
+    min_clusters : int, optional
+        The minimum number of clusters to form in a layer (default is 6).
+    base_n_clusters : int, optional
+        The initial number of clusters for the most fine-grained cluster layer (default is 1024).
+
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+    cluster_tree_ : ClusterTree]
+        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of
+        tuples representing child clusters.
+    """
+
+    def __init__(
+        self,
+        min_clusters: int = 6,
+        base_n_clusters: int = 1024,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+    ):
+        super().__init__()
+        self.min_clusters = min_clusters
+        self.base_n_clusters = base_n_clusters
+
+        # Handle verbose parameters
+        self.show_progress_bar, self.verbose = handle_verbose_params(
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
+        )
+
+    def fit(
+        self,
+        vectors: np.ndarray,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+    ) -> Clusterer:
+        # Handle verbose parameters
+        _, verbose_output = handle_verbose_params(
+            verbose=verbose if verbose is not None else self.verbose,
+            show_progress_bar=show_progress_bar,
+            default_verbose=False,
+        )
+
+        n_clusters = self.base_n_clusters
+        cluster_label_layers: List[np.ndarray] = []
+        while n_clusters >= self.min_clusters:
+            if verbose_output:
+                print(f"Layer {len(cluster_label_layers)} found {n_clusters} clusters")
+            kmeans = KMeans(n_clusters=n_clusters)
+            cluster_labels = kmeans.fit_predict(vectors)
+            cluster_label_layers.append(cluster_labels)
+            n_clusters //= 4
+        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
+        self.cluster_layers_ = build_cluster_layers(cluster_label_layers)
+        return self
+
+
+class PLSCANClusterer(Clusterer):
+    """
+    A class for clustering dense vector data in layers using fast_hdbscan.PLSCAN.
+
+    Parameters
+    ----------
+    min_clusters : int, optional
+        The minimum number of non-noise clusters to keep in a layer (default is 6).
+    min_samples : int, optional
+        The minimum number of samples used by PLSCAN (default is 5).
+    base_min_cluster_size : int, optional
+        The base minimum cluster size passed to PLSCAN (default is 10).
+    max_layers : Optional[int], optional
+        The maximum number of hierarchy layers to keep, including the base layer (default is 10).
+    verbose : bool, optional
+        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
+    show_progress_bar : bool, optional, deprecated
+        Deprecated. Use verbose instead.
+
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary representing the cluster tree.
+    cluster_probabilities_ : List[np.ndarray]
+        Membership probabilities for each returned layer.
+    cluster_persistence_scores_ : List[float]
+        Persistence scores for each returned layer.
+    plscan_min_cluster_sizes_ : Optional[np.ndarray]
+        The minimum cluster sizes explored by PLSCAN, when exposed by the
+        upstream implementation.
+    """
+    def __init__(
+        self,
+        min_clusters: int = 6,
+        min_samples: int = 5,
+        base_min_cluster_size: int = 10,
+        max_layers: Optional[int] = 10,
+        reproducible: bool = False,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+    ):
+        super().__init__()
+        self.min_clusters = min_clusters
+        self.min_samples = min_samples
+        self.base_min_cluster_size = base_min_cluster_size
+        self.max_layers = max_layers
+        self.reproducible = reproducible
+
+        self.show_progress_bar, self.verbose = handle_verbose_params(
+            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
+        )
+
+    def fit(
+        self,
+        vectors: np.ndarray,
+        verbose: Optional[bool] = None,
+        show_progress_bar: Optional[bool] = None,
+    ) -> Clusterer:
+        show_progress_bar_val, verbose_output = handle_verbose_params(
+            verbose=verbose if verbose is not None else self.verbose,
+            show_progress_bar=show_progress_bar,
+            default_verbose=False,
+        )
+
+        vectors = np.ascontiguousarray(
+            vectors, dtype=np.float32
+        )
+
+        self.plscan_ = PLSCAN(
+            min_samples=self.min_samples,
+            base_min_cluster_size=self.base_min_cluster_size,
+            max_layers=self.max_layers,
+            reproducible=self.reproducible,
+            verbose=verbose_output,
+        )
+        self.plscan_.fit(vectors)
+
+        raw_cluster_layers = zip(
+            self.plscan_.cluster_layers_,
+            self.plscan_.membership_strength_layers_,
+            self.plscan_.layer_persistence_scores_,
+        )
+        filtered_cluster_layers = []
+        for labels, probabilities, persistence_score in raw_cluster_layers:
+            # Normalize labels to be contiguous, preserving noise as -1
+            unique_labels, inverse = np.unique(labels, return_inverse=True)
+            if unique_labels.size > 0 and unique_labels[0] == -1:
+                labels = inverse - 1
+            else:
+                labels = inverse
+
+            n_clusters_in_layer = labels.max() + 1
+            if n_clusters_in_layer < self.min_clusters:
+                continue
+            if self.verbose:
+                print(
+                    f"Layer {len(filtered_cluster_layers)} found {n_clusters_in_layer} clusters"
+                )
+            filtered_cluster_layers.append((labels, probabilities, persistence_score))
+
+        if len(filtered_cluster_layers) == 0:
+            raise ValueError(
+                "Not enough clusters found in any PLSCAN layer: "
+                f"min_clusters={self.min_clusters}."
+            )
+
+        cluster_label_layers, self.cluster_probabilities, self.cluster_persistence_scores = list(
+            map(list, zip(*filtered_cluster_layers))
+        )
+        self.plscan_min_cluster_sizes_ = getattr(
+            self.plscan_, "min_cluster_sizes_", None
+        )
+        self.cluster_layers_ = build_cluster_layers(cluster_label_layers)
+        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
+        return self
