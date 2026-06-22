@@ -4,7 +4,7 @@ import logging
 import os
 
 from toponymy.tools.notebook_runner import run_notebook
-from toponymy.tools.notebook_test_replacement import doc_dir, get_notebooks
+from toponymy.tools.notebook_test_helpers import doc_dir, get_notebooks
 
 NOTEBOOK_CONFIG = {
     "basic_usage.ipynb": {

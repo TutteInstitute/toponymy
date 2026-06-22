@@ -9,7 +9,7 @@ from toponymy.templates import (
     GET_TOPIC_NAME_REGEX,
     default_extract_topic_names,
 )
-from toponymy.tools.notebook_test_replacement import notebook_test_replacement
+from toponymy.tools.notebook_test_helpers import notebook_test_replacement
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
 from tenacity import (

@@ -10,9 +10,8 @@ except ImportError as e:
 
 import time
 import logging
-import warnings
 import os
-import functools
+from .notebook_test_helpers import doc_dir
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,7 @@ def run_notebook(
     instrumented: bool = False,
 ):
     """
-    Helper function to run a Jupyter notebook. Optionally uses an instrumented client to log execution times.
+    Helper function to run a Jupyter doc notebook. Optionally uses an instrumented client to log execution times.
     """
     with open(path) as f:
         nb = nbformat.read(f, as_version=4)
