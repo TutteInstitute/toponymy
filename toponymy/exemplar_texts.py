@@ -339,13 +339,15 @@ class ExemplarTextExtractor(FeatureExtractorBase):
     """
     Selects exemplar texts from a collection of objects to represent clusters.
 
-    #TODO: class documentation
+    Notes
+    -----
+    The feature extractor should be first called with `.fit()`.
+    
+    At each layer, exemplars can be extracted using `.predict()`.
     """
 
     def __init__(
         self,
-        verbose: bool = None,
-        show_progress_bar: bool = None,
     ):
         super(ExemplarTextExtractor, self).__init__()
 
@@ -369,7 +371,39 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         **kwargs,
     ) -> List[List[str]]:
         """
+        Extracts exemplars for each cluster within a given cluster layer.
+
+        Parameters
+        ----------
+        clusterer: Clusterer
+            A fitted Clusterer with cluster layers.
+        layer_id: int
+            The ID of the current layer to get cluster features from.
+        selection_method: str
+            The method used to extract exemplars. 
+            Choose from 'facility_location', 'saturated_coverage', 'random' or 'central'.
+        objects: List[Any]
+            A list of the objects within the clusters.
+        object_vectors: np.ndarray or None
+            High-dimensional vectors representing each of the objects.
+        **kwargs
+            Additional parameters relevant to the particular selection method.
         
+        Returns
+        -------
+        List[List[str]]
+            A list of exemplars for each cluster in the dataset.
+
+        Raises
+        ------
+        NotFittedError
+            If this function is called before fitting the model.
+
+        See Also
+        --------
+        diverse_exemplars
+        random_exemplars
+        submodular_selection_exemplars
         """
         try:
             check_is_fitted(self)
