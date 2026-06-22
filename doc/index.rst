@@ -54,6 +54,7 @@ and a tour of some of the richer functionality and uses cases.
 
    how_toponymy_works
    clusterers
+   plscan_clusterer
    clustering_options
    keyphrases
    exemplar_texts

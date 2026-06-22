@@ -1,5 +1,5 @@
 from .toponymy import Toponymy
-from .clustering import ToponymyClusterer
+from .clustering import ToponymyClusterer, PLSCANClusterer
 from .keyphrases import KeyphraseBuilder
 from .cluster_layer import ClusterLayerText
 from .serialization import TopicModel
@@ -14,6 +14,7 @@ except PackageNotFoundError:
 __all__ = [
     "Toponymy",
     "ToponymyClusterer",
+    "PLSCANClusterer",
     "KeyphraseBuilder",
     "ClusterLayerText",
     "TopicModel",

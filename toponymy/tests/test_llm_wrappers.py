@@ -942,3 +942,157 @@ def test_litellm_system_prompt_probe_success_caches_true(
 
     assert result == mock_data["valid_topic_name"]
     assert litellm_wrapper._system_prompt_capability is True
+
+
+# Test max_tokens configuration
+
+
+def test_litellm_namer_default_max_tokens():
+    """Test that LiteLLMNamer has correct default max_tokens values"""
+    namer = LiteLLMNamer(model="openai/gpt-4o-mini")
+    assert namer.max_tokens_topic_name == 128
+    assert namer.max_tokens_cluster_names == 1024
+
+
+def test_litellm_namer_custom_max_tokens():
+    """Test that LiteLLMNamer accepts custom max_tokens values"""
+    namer = LiteLLMNamer(
+        model="openai/gpt-4o-mini",
+        max_tokens_topic_name=256,
+        max_tokens_cluster_names=2048,
+    )
+    assert namer.max_tokens_topic_name == 256
+    assert namer.max_tokens_cluster_names == 2048
+
+
+def test_openai_namer_default_max_tokens():
+    """Test that OpenAINamer has correct default max_tokens values"""
+    namer = OpenAINamer()
+    assert namer.max_tokens_topic_name == 128
+    assert namer.max_tokens_cluster_names == 1024
+
+
+def test_openai_namer_custom_max_tokens():
+    """Test that OpenAINamer accepts and passes through custom max_tokens values"""
+    namer = OpenAINamer(max_tokens_topic_name=512, max_tokens_cluster_names=2048)
+    assert namer.max_tokens_topic_name == 512
+    assert namer.max_tokens_cluster_names == 2048
+
+
+def test_anthropic_namer_custom_max_tokens():
+    """Test that AnthropicNamer accepts and passes through custom max_tokens values"""
+    namer = AnthropicNamer(max_tokens_topic_name=200, max_tokens_cluster_names=1500)
+    assert namer.max_tokens_topic_name == 200
+    assert namer.max_tokens_cluster_names == 1500
+
+
+def test_cohere_namer_custom_max_tokens():
+    """Test that CohereNamer accepts and passes through custom max_tokens values"""
+    namer = CohereNamer(max_tokens_topic_name=300, max_tokens_cluster_names=1200)
+    assert namer.max_tokens_topic_name == 300
+    assert namer.max_tokens_cluster_names == 1200
+
+
+def test_azure_namer_custom_max_tokens():
+    """Test that AzureAINamer accepts and passes through custom max_tokens values"""
+    namer = AzureAINamer(
+        model="gpt-4o",
+        max_tokens_topic_name=150,
+        max_tokens_cluster_names=1100,
+    )
+    assert namer.max_tokens_topic_name == 150
+    assert namer.max_tokens_cluster_names == 1100
+
+
+def test_ollama_namer_custom_max_tokens():
+    """Test that OllamaNamer accepts and passes through custom max_tokens values"""
+    namer = OllamaNamer(max_tokens_topic_name=175, max_tokens_cluster_names=1300)
+    assert namer.max_tokens_topic_name == 175
+    assert namer.max_tokens_cluster_names == 1300
+
+
+def test_litellm_namer_generate_topic_name_uses_instance_default(
+    litellm_wrapper, mock_data
+):
+    """Test that generate_topic_name uses instance max_tokens_topic_name when max_tokens=None"""
+    # Set custom instance defaults
+    litellm_wrapper.max_tokens_topic_name = 256
+    litellm_wrapper.max_tokens_cluster_names = 2048
+
+    good_response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        litellm_wrapper.generate_topic_name(
+            "test prompt",
+            # max_tokens not specified, should use instance default
+        )
+
+    # Check that the instance default was used
+    kwargs = mock_completion.call_args.kwargs
+    assert kwargs["max_tokens"] == 256
+
+
+def test_litellm_namer_generate_topic_name_override_with_explicit_max_tokens(
+    litellm_wrapper, mock_data
+):
+    """Test that generate_topic_name respects explicit max_tokens over instance default"""
+    # Set custom instance defaults
+    litellm_wrapper.max_tokens_topic_name = 256
+    litellm_wrapper.max_tokens_cluster_names = 2048
+
+    good_response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        litellm_wrapper.generate_topic_name(
+            "test prompt", max_tokens=100  # explicit override
+        )
+
+    # Check that the explicit value was used, not the instance default
+    kwargs = mock_completion.call_args.kwargs
+    assert kwargs["max_tokens"] == 100
+
+
+def test_litellm_namer_generate_cluster_names_uses_instance_default(
+    litellm_wrapper, mock_data
+):
+    """Test that generate_topic_cluster_names uses instance max_tokens_cluster_names when max_tokens=None"""
+    # Set custom instance defaults
+    litellm_wrapper.max_tokens_topic_name = 256
+    litellm_wrapper.max_tokens_cluster_names = 2048
+
+    good_response = MockLLMResponse.create_chat_response(
+        mock_data["valid_cluster_names"]
+    )
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        litellm_wrapper.generate_topic_cluster_names(
+            "test prompt",
+            mock_data["old_names"],
+            # max_tokens not specified, should use instance default
+        )
+
+    # Check that the instance default was used
+    kwargs = mock_completion.call_args.kwargs
+    assert kwargs["max_tokens"] == 2048
+
+
+def test_litellm_namer_generate_cluster_names_override_with_explicit_max_tokens(
+    litellm_wrapper, mock_data
+):
+    """Test that generate_topic_cluster_names respects explicit max_tokens over instance default"""
+    # Set custom instance defaults
+    litellm_wrapper.max_tokens_topic_name = 256
+    litellm_wrapper.max_tokens_cluster_names = 2048
+
+    good_response = MockLLMResponse.create_chat_response(
+        mock_data["valid_cluster_names"]
+    )
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        litellm_wrapper.generate_topic_cluster_names(
+            "test prompt", mock_data["old_names"], max_tokens=512  # explicit override
+        )
+
+    # Check that the explicit value was used, not the instance default
+    kwargs = mock_completion.call_args.kwargs
+    assert kwargs["max_tokens"] == 512
