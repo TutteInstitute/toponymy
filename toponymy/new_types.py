@@ -1,3 +1,8 @@
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
 class Cluster:
     """
     Class to store data about a single cluster.
@@ -14,6 +19,7 @@ class Cluster:
         The prompt that will be passed to generate the name.
 
     name: str
+        name: str
         The name that has been assigned to this cluster.
     """
     members: list[int]
@@ -22,6 +28,7 @@ class Cluster:
     name: str | None
 
 
+@dataclass
 class ClusterLayer:
     """
     Explicit type for a list of all the clusters from a single layer, and the index of that layer.
