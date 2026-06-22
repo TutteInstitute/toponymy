@@ -1,11 +1,9 @@
 import numpy as np
 import html
-from typing import Dict, List, Tuple, NewType
-from typing_extensions import Literal
+from typing import List, Tuple
 import copy
 from toponymy.treemap import treemap_dataframe
-
-ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
+from toponymy.clustering import ClusterTree
 
 
 def topic_name_string(
