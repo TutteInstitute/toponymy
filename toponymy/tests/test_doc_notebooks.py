@@ -62,12 +62,12 @@ TEST_NOTEBOOKS = get_notebooks(doc_dir())
 CI = os.getenv("CI", "").lower() == "true"
 
 
-@pytest.mark.skipif(CI, reason="Skipping in CI environment")
+# @pytest.mark.skipif(CI, reason="Skipping in CI environment")
 @pytest.mark.parametrize("notebook", TEST_NOTEBOOKS)
 def test_doc_notebook(notebook, notebook_testing_env):
     cfg = get_notebook_cfg(notebook)
     logging.info(notebook)
     run_notebook(
         notebook,
-        timeout=cfg["timeout"],
+        timeout=3600,  # cfg["timeout"],
     )
