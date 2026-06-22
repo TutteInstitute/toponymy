@@ -348,9 +348,6 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         show_progress_bar: bool = None,
     ):
         super(ExemplarTextExtractor, self).__init__()
-        show_progress_bar_val, _ = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
 
     def can_fit_from_objects(self):
         return True
@@ -360,8 +357,6 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         objects: List[Any],
         object_vectors: np.ndarray | None,
     ):
-        if object_vectors is not None:
-            self.null_topic_vector = np.mean(object_vectors, axis=0)
         self.is_fitted_ = True
 
     def get_cluster_features(
@@ -373,7 +368,9 @@ class ExemplarTextExtractor(FeatureExtractorBase):
         object_vectors: np.ndarray | None,
         **kwargs,
     ) -> List[List[str]]:
-        """ """
+        """
+        
+        """
         try:
             check_is_fitted(self)
         except NotFittedError as exc:
