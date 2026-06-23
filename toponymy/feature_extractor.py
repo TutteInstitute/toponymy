@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 from sklearn.base import BaseEstimator
 
-from toponymy.new_types import Clusterer
+from toponymy.new_clustering import Clusterer
 
 
 @numba.njit()
@@ -28,7 +28,8 @@ class FeatureExtractorBase(ABC, BaseEstimator):
     """
     Abstract base class for a feature extractor.
 
-    #TODO: class documentation
+    A feature extractor is a class that can build features for objects
+    and then extract features to represent clusters.
     """
 
     def __init__(self, *args, **kwargs):
