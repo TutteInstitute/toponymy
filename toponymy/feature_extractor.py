@@ -1,5 +1,8 @@
 from abc import ABC, abstractmethod
+from typing import Any, List
 
+import numba
+import numpy as np
 from sklearn.base import BaseEstimator
 
 from toponymy.new_clustering import Clusterer
