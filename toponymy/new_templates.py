@@ -27,12 +27,16 @@ class Prompt(NamedTuple):
 
 
 class Template(ABC):
+    """Interface for prompt templates and response parsers."""
+
     @abstractmethod
     def cluster_prompt(self, features: dict[str, Any], name_kind: str) -> Prompt:
+        """Build the prompt used to name one topic cluster."""
         pass
 
     @abstractmethod
     def extract_name(self, response: str) -> Any:
+        """Extract the generated name from a model response."""
         pass
 
     @abstractmethod
@@ -42,10 +46,12 @@ class Template(ABC):
         features: list[dict[str, Any]],
         name_kind: str,
     ) -> Prompt:
+        """Build the prompt used to rename similar topic clusters."""
         pass
 
     @abstractmethod
     def extract_disambiguated_names(self, response: str) -> list[str]:
+        """Extract renamed topics from a disambiguation response."""
         pass
 
 
