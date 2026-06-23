@@ -143,7 +143,7 @@ def build_cluster_layers(labels: List[np.ndarray]) -> List[ClusterLayer]:
                 continue
             cluster = Cluster(cluster_id, members)
             clusters.append(cluster)
-        cluster_layer = ClusterLayer(clusters, i)
+        cluster_layer = ClusterLayer(clusters=clusters, layer_index=i)
         cluster_layers.append(cluster_layer)
     return cluster_layers
 
@@ -344,7 +344,7 @@ class PLSCANClusterer(Clusterer):
                 f"min_clusters={self.min_clusters}."
             )
 
-        cluster_label_layers, self.cluster_probabilities, self.cluster_persistence_scores = list(
+        cluster_label_layers, self.cluster_probabilities_, self.cluster_persistence_scores_ = list(
             map(list, zip(*filtered_cluster_layers))
         )
         self.plscan_min_cluster_sizes_ = getattr(
