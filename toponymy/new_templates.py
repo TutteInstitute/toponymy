@@ -293,7 +293,7 @@ Recall that the response must be {{cluster_response_description}}
 class MultilingualENFRTemplate(TextTemplate):
     cluster_response_description: ClassVar[str] = (
         'in JSON formatted as {"english_topic_name":<NAME>, '
-        '"nom_du_sujet_en_fran\u00e7ais":<NOM>, "topic_specificity":<SCORE>}\n'
+        '"nom_du_sujet_en_français":<NOM>, "topic_specificity":<SCORE>}\n'
         "where NAME is the English topic name, NOM is the French topic name, and "
         "SCORE is a float value between 0.0 and 1.0,\nrepresenting how specific and "
         "well-defined the topic name is given the input information."
@@ -305,7 +305,7 @@ class MultilingualENFRTemplate(TextTemplate):
                 response,
                 GET_MULTILINGUAL_EN_FR_TOPIC_NAME_REGEX,
             )
-            french_name = response_json["nom_du_sujet_en_fran\u00e7ais"]
+            french_name = response_json["nom_du_sujet_en_français"]
             return f'{response_json["english_topic_name"]} / {french_name}'
         except (json.JSONDecodeError, KeyError, TypeError, ValueError):
             english_match = re.search(
