@@ -76,6 +76,8 @@ class FeatureExtractorBase(ABC, BaseEstimator):
             The objects to fit the FeatureExtractor to.
         clusterer: Clusterer
             A fitted Clusterer with a cluster layer structure.
+        *args, **kwargs
+            Additional parameters needed for the fit function.
 
         Notes
         -----
@@ -88,6 +90,11 @@ class FeatureExtractorBase(ABC, BaseEstimator):
     ) -> List[List[List[str]]]:
         """
         Returns the list of features for each cluster per cluster layer.
+
+        Returns
+        -------
+        List[List[List[str]]]
+            A list of features for each cluster in a cluster layer, across all cluster layers.
         """
         return self.features
 
@@ -99,7 +106,22 @@ class FeatureExtractorBase(ABC, BaseEstimator):
         **kwargs,
     ) -> List[List[List[str]]]:
         """
-        Checks to see if the
+        Checks to see if the FeatureExtractor has already been fit.
+        If not, and it is possible to do so, it will fit the FeatureExtractor and returns the features.
+
+        Parameters
+        ----------
+        objects: List[Any]
+            The objects to fit the FeatureExtractor to.
+        clusterer: Clusterer
+            A fitted Clusterer with a cluster layer structure.
+        *args, **kwargs
+            Additional parameters needed for the fit function.
+
+        Returns
+        -------
+        List[List[List[str]]]
+            A list of features for each cluster in a cluster layer, across all cluster layers.
         """
         try:
             check_is_fitted(self)
@@ -109,7 +131,7 @@ class FeatureExtractorBase(ABC, BaseEstimator):
             else:
                 raise NotFittedError(
                     f"Cannot fit {self.__class__.__name__} from objects, please fit manually."
-                )
+                ) from err
         return self.predict()
 
 
