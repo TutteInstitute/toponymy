@@ -47,7 +47,7 @@ class FeatureExtractorBase(ABC, BaseEstimator):
 
         Must be implemented in any subclass.
         """
-        raise NotImplemented
+        raise NotImplementedError
 
     @property
     def features(self) -> List[List[List[FeatureReturnType]]]:
@@ -83,7 +83,7 @@ class FeatureExtractorBase(ABC, BaseEstimator):
         -----
         Any implementation of this method should update self.features.
         """
-        raise NotImplemented
+        raise NotImplementedError
 
     def predict(
         self,
