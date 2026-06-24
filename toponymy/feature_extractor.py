@@ -156,6 +156,7 @@ class TextExemplarExtractor(FeatureExtractorBase):
         clusterer: Clusterer,
         selection_method: str,
         object_vectors: np.ndarray | None,
+        **kwargs,
     ):
         """
         Extracts exemplars for each cluster, layer by layer.
