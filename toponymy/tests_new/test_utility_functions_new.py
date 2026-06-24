@@ -6,7 +6,7 @@ from sklearn.preprocessing import normalize
 
 import os
 
-from toponymy.utility_functions import (
+from toponymy.new_utility_functions import (
     centroids_from_labels,
     distance_to_vector,
     diversify_fixed_alpha,
