@@ -2,7 +2,7 @@
 Refactored Toponymy class for hierarchical topic modeling with LLMs.
 """
 
-from toponymy.clustering import ToponymyClusterer, Clusterer
+from toponymy.new_clustering import PLSCANClusterer, Clusterer
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.exemplar_texts import ExemplarTextExtractor
 from toponymy.cluster_layer import ClusterLayer, ClusterLayerSummaryText
@@ -12,7 +12,7 @@ from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.templates import PROMPT_TEMPLATES
 from toponymy._utils import handle_verbose_params
 
-from sklearn.utils.validation import check_is_fitted
+from sklearn.utils.validation import NotFittedError, check_is_fitted
 import numpy as np
 from tqdm.auto import tqdm
 from typing import List, Any, Optional, Dict
@@ -50,7 +50,7 @@ class Toponymy:
         self,
         llm_namer: LLMWrapper,
         text_embedding_model: TextEmbedderProtocol,
-        clusterer: Optional[Clusterer] = ToponymyClusterer(),
+        clusterer: Optional[Clusterer] = PLSCANClusterer(),
         prompt_template: Dict[str, Any] = PROMPT_TEMPLATES,
         feature_extractors: Optional[List] = [
             ExemplarTextExtractor(),
@@ -75,15 +75,71 @@ class Toponymy:
         self.prompt_template = prompt_template
         self.verbose = verbose
 
-    def _effective_prompt_format(self) -> str:
-        """Determine prompt format based on LLM wrapper capabilities."""
-        return "system_user" if self.llm_namer.supports_system_prompts else "combined"
+    def _perform_clustering(
+        self, clusterable_vectors: np.ndarray, embedding_vectors: np.ndarray
+    ):
+        """
+        Perform clustering stage.
 
-    def _sync_layer_runtime_config(self) -> None:
-        """Update runtime config on all cluster layers."""
-        for layer in self.cluster_layers_:
-            layer.prompt_format = self._effective_prompt_format()
-            layer.verbose = self.verbose
+        Checks if clusterer is already fitted, fits if needed.
+        """
+        try:
+            check_is_fitted(self.clusterer, ["cluster_layers_", "cluster_tree_"])
+        except NotFittedError:
+            self.clusterer.fit(clusterable_vectors, verbose=self.verbose)
+
+    def _perform_feature_extraction(
+        self,
+        objects: List[Any],
+        embedding_vectors: np.ndarray,
+        clusterable_vectors: np.ndarray,
+    ):
+        """
+        Perform feature extraction stage.
+
+        Fits feature extractors if needed based on can_fit_from_objects flag.
+        Raises NotFittedError for custom extractors that aren't pre-fitted.
+        """
+        for extractor in self.feature_extractors:
+            try:
+                check_is_fitted(extractor, ["features_"])
+            except NotFittedError:
+                if (
+                    hasattr(extractor, "can_fit_from_objects")
+                    and extractor.can_fit_from_objects
+                ):
+                    # Extractor can be fitted from standard objects
+                    features = extractor.fit_predict(
+                        objects=objects,
+                        cluster_layer=self.clusterer,
+                        embedding_vectors=embedding_vectors,
+                        clusterable_vectors=clusterable_vectors,
+                    )
+
+                else:
+                    # Extractor requires custom data and must be pre-fitted
+                    raise NotFittedError(
+                        f"{extractor.__class__.__name__} is not fitted and cannot be "
+                        f"auto-fitted. Please fit it with custom data before passing to Toponymy."
+                    )
+
+    def _perform_prompt_generation(self):
+        """
+        Perform prompt generation stage.
+
+        Builds prompts from cluster features for each layer.
+        TODO: Implement when prompt construction is refactored.
+        """
+        pass
+
+    def _perform_topic_naming(self):
+        """
+        Perform topic naming stage.
+
+        Calls LLM to generate topic names from prompts.
+        TODO: Implement when LLM calling is refactored.
+        """
+        pass
 
     def fit(
         self,
@@ -111,41 +167,30 @@ class Toponymy:
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
 
-        # Perform clustering
-        if hasattr(self.clusterer, "cluster_layers_") and hasattr(
-            self.clusterer, "cluster_tree_"
-        ):
-            self.cluster_layers_ = self.clusterer.cluster_layers_
-            self.cluster_tree_ = self.clusterer.cluster_tree_
-        else:
-            self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
-                clusterable_vectors,
-                embedding_vectors,
-                verbose=self.verbose,
-                show_progress_bar=self.show_progress_bars,
-                prompt_format=self._effective_prompt_format(),
-                prompt_template=self.prompt_template,
-            )
+        # Stage 1: Clustering
+        self._perform_clustering(clusterable_vectors, embedding_vectors)
 
-        self._sync_layer_runtime_config()
-
-        # Initialize topic name storage
-        self.topic_names_: List[List[str]] = [[]] * len(self.cluster_layers_)
-        self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
-            self.cluster_layers_
+        # Stage 2: Feature Extraction
+        self._perform_feature_extraction(
+            objects, embedding_vectors, clusterable_vectors
         )
 
+        # Initialize topic name storage
         # Check if using summary-based topics
-        _summarize_topics = isinstance(self.cluster_layers_[0], ClusterLayerSummaryText)
-        if _summarize_topics:
-            self.topic_summaries_: List[List[str]] = [[]] * len(self.cluster_layers_)
-            self.topic_explanations_: List[List[str]] = [[]] * len(self.cluster_layers_)
+        # These are all now being stored in a clusterer object.
 
         detail_levels = np.linspace(
             self.lowest_detail_level,
             self.highest_detail_level,
             len(self.cluster_layers_),
         )
+
+        # Stages 3-4: Iterate through layers
+        for layer_id in range(len(self.clusterer.cluster_layers_)):
+            self._perform_prompt_generation(layer_id)
+            self._perform_topic_naming(layer_id)
+
+        # TODO: Rest of the implementation will be migrated to the helper methods
 
         # Extract keyphrases using feature extractors
         keyphrase_extractor = next(
