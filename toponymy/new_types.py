@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, NewType, Dict, List, Tuple
+from numpy.typing import NDArray
 
 
 @dataclass
@@ -12,8 +13,8 @@ class Cluster:
     label : int
         The index of the cluster in the layer (i.e. label)
 
-    members : list[int]
-        A list of data ids that are in this cluster.
+    members : np.ndarray
+        A 1d numpy array of data ids that are in this cluster.
 
     features: dict[str, Any]
         Dictionary of features extracted from this cluster.
@@ -27,7 +28,7 @@ class Cluster:
     """
 
     label: int
-    members: list[int]
+    members: NDArray[int]
     features: dict[str, Any] | None = None
     prompt: str | None = None
     name: str | None = None
@@ -47,7 +48,7 @@ class ClusterLayer:
 
     def __getitem__(self, key):
         return self.clusters[key]
-    
+
     def __iter__(self):
         return iter(self.clusters)
 

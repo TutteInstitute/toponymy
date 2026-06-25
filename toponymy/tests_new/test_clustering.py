@@ -5,32 +5,17 @@ from sklearn.datasets import make_blobs
 from sklearn.metrics import adjusted_mutual_info_score, pairwise_distances
 from sklearn.utils.validation import check_is_fitted
 
-from toponymy.new_types import (
-    Cluster,
-    ClusterLayer
-)
+from toponymy.new_types import Cluster, ClusterLayer
 
 from toponymy.new_clustering import (
-    KMeansClusterer, 
+    KMeansClusterer,
     PLSCANClusterer,
-    PreComputedClusterer,
+    PrecomputedClusterer,
     build_cluster_tree,
     _build_cluster_tree,
-    build_cluster_layers
+    build_cluster_layers,
 )
 
-# Try to import EVoCClusterer - check if evoc is compatible with current fast_hdbscan
-# try:
-#     import fast_hdbscan
-
-#     from toponymy.new_clustering import EVoCClusterer
-
-#     # evoc 0.3.1 is incompatible with fast_hdbscan >= 0.3.2 due to NumbaKDTree signature changes
-#     # Skip EVoC tests if we detect an incompatible version
-#     fast_hdbscan_version = tuple(map(int, fast_hdbscan.__version__.split(".")[:2]))
-#     HAS_COMPATIBLE_EVOC = fast_hdbscan_version < (0, 3)
-# except (ImportError, AttributeError):
-    # HAS_COMPATIBLE_EVOC = False
 
 def layer_to_labels_helper(layer: ClusterLayer, n_points: int):
     labels = np.full(n_points, -1, dtype="int")
@@ -39,12 +24,16 @@ def layer_to_labels_helper(layer: ClusterLayer, n_points: int):
     return labels
 
 
-def test_build_cluster_tree():
-    label_layers = [
+@pytest.fixture
+def label_layers():
+    return [
         np.array([0, 0, -1, -1, 1, 1, -1]),
         np.array([0, 0, 0, 1, 1, 1, -1]),
-        np.array([0, 0, 0, 0, 0, 0, -1])
+        np.array([0, 0, 0, 0, 0, 0, -1]),
     ]
+
+
+def test_build_cluster_tree(label_layers):
     cluster_tree = build_cluster_tree(label_layers)
     # Assert that every child cluster is contained in the parent cluster
     for parent, children in cluster_tree.items():
@@ -69,12 +58,7 @@ def test_build_cluster_tree():
                 assert (i, j) in clusters_in_tree and (i, j) in cluster_tree
 
 
-def test_build_cluster_tree_no_jit():
-    label_layers = [
-        np.array([0, 0, -1, -1, 1, 1, -1]),
-        np.array([0, 0, 0, 1, 1, 1, -1]),
-        np.array([0, 0, 0, 0, 0, 0, -1])
-    ]
+def test_build_cluster_tree_no_jit(label_layers):
     cluster_tree = {}
     raw_mapping = _build_cluster_tree.py_func(np.vstack(label_layers))
     for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
@@ -108,7 +92,36 @@ def test_build_cluster_tree_no_jit():
                 assert (i, j) in clusters_in_tree and (i, j) in cluster_tree
 
 
-def test_kmeans_clusterer_class():
+def test_build_cluster_layers(label_layers):
+    cluster_layers = build_cluster_layers(label_layers)
+    assert all(isinstance(layer, ClusterLayer) for layer in cluster_layers)
+    assert len(cluster_layers) == 3
+    assert all(
+        isinstance(cluster, Cluster) for layer in cluster_layers for cluster in layer
+    )
+
+    assert len(cluster_layers[0]) == 2
+    print(type(cluster_layers[0][0].members))
+    assert np.array_equal(cluster_layers[0][0].members, [0, 1])
+    assert np.array_equal(cluster_layers[0][1].members, [4, 5])
+
+    assert len(cluster_layers[1]) == 2
+    assert np.array_equal(cluster_layers[1][0].members, [0, 1, 2])
+    assert np.array_equal(cluster_layers[1][1].members, [3, 4, 5])
+
+    assert len(cluster_layers[2]) == 1
+    assert np.array_equal(cluster_layers[2][0].members, [0, 1, 2, 3, 4, 5])
+
+
+def test_precomputed_clusterer(label_layers):
+    clusterer = PrecomputedClusterer()
+    clusterer.fit(label_layers)
+    check_is_fitted(clusterer)
+    assert len(clusterer.cluster_layers_) == 3
+    assert len(clusterer.cluster_tree_) == 4
+
+
+def test_kmeans_clusterer():
     clusterer = KMeansClusterer(
         min_clusters=4,
         base_n_clusters=64,

@@ -22,9 +22,10 @@ class Clusterer(ABC, BaseEstimator):
     cluster_layers_ : List[ClusterLayer]
         A list of the created cluster layers.
     cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
-        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of
-        tuples representing child clusters.
+        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index)
+        and values are lists of tuples representing child clusters.
     """
+
     def __init__(self):
         pass
 
@@ -47,7 +48,9 @@ class Clusterer(ABC, BaseEstimator):
         if (
             hasattr(self, "cluster_layers_")
             and isinstance(self.cluster_layers_, list)
-            and all(isinstance(cluster, ClusterLayer) for cluster in self.cluster_layers_)
+            and all(
+                isinstance(cluster, ClusterLayer) for cluster in self.cluster_layers_
+            )
             and hasattr(self, "cluster_tree_")
             and isinstance(self.cluster_tree_, dict)
         ):
@@ -131,24 +134,24 @@ def build_cluster_layers(labels: List[np.ndarray]) -> List[ClusterLayer]:
         and the values are lists of tuples representing the child clusters (layer, cluster index).
     """
     cluster_layers: List[ClusterLayer] = []
-    for i, layer in enumerate(labels):
-        clusters: List[Cluster] = []
-        # Create a dict mapping cluster_id to list of indices in that cluster
-        indices_to_sort_layer = np.argsort(layer, kind='stable')
-        sorted_layer = layer[indices_to_sort_layer]
-        cluster_ids, change_indices = np.unique(sorted_layer, return_index=True) # Cluster ids are garunteed to be sorted ascending
-        grouped_indices = np.split(indices_to_sort_layer, change_indices[1:])
-        for cluster_id, members in zip(cluster_ids, grouped_indices):
-            if cluster_id < 0:
-                continue
-            cluster = Cluster(cluster_id, members)
-            clusters.append(cluster)
+    for i, layer_labels in enumerate(labels):
+        # Group indices by label
+        indices_to_sort_layer = np.argsort(layer_labels, kind="stable")
+        sorted_layer = layer_labels[indices_to_sort_layer]
+        cluster_ids, change_indices = np.unique(sorted_layer, return_index=True)
+        cluster_members = np.split(indices_to_sort_layer, change_indices[1:])
+
+        clusters = [
+            Cluster(cluster_id, members)
+            for cluster_id, members in zip(cluster_ids, cluster_members)
+            if cluster_id >= 0
+        ]
         cluster_layer = ClusterLayer(clusters=clusters, layer_index=i)
         cluster_layers.append(cluster_layer)
     return cluster_layers
 
 
-class PreComputedClusterer(Clusterer):
+class PrecomputedClusterer(Clusterer):
     """
     A class for formatting a precomputed set of cluster layers as a clusterer.
     Pass a list of layer labels (i.e. each layer is a list of cluster ids).
@@ -160,16 +163,17 @@ class PreComputedClusterer(Clusterer):
     cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
         A dictionary representing the cluster tree.
     """
+
     def __init__(self):
         super().__init__()
 
     def fit(self, cluster_label_layers):
-        self.cluster_layers = build_cluster_layers(cluster_label_layers)
-        self.cluster_tree = build_cluster_tree(cluster_label_layers)
+        self.cluster_layers_ = build_cluster_layers(cluster_label_layers)
+        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
 
     def fit_predict(self, cluster_label_layers):
-        self.fit(label_layers)
-        return self.cluster_layers, self.cluster_tree
+        self.fit(cluster_label_layers)
+        return self.cluster_layers_, self.cluster_tree_
 
 
 class KMeansClusterer(Clusterer):
@@ -269,6 +273,7 @@ class PLSCANClusterer(Clusterer):
         The minimum cluster sizes explored by PLSCAN, when exposed by the
         upstream implementation.
     """
+
     def __init__(
         self,
         min_clusters: int = 6,
@@ -302,9 +307,7 @@ class PLSCANClusterer(Clusterer):
             default_verbose=False,
         )
 
-        vectors = np.ascontiguousarray(
-            vectors, dtype=np.float32
-        )
+        vectors = np.ascontiguousarray(vectors, dtype=np.float32)
 
         self.plscan_ = PLSCAN(
             min_samples=self.min_samples,
@@ -344,9 +347,11 @@ class PLSCANClusterer(Clusterer):
                 f"min_clusters={self.min_clusters}."
             )
 
-        cluster_label_layers, self.cluster_probabilities_, self.cluster_persistence_scores_ = list(
-            map(list, zip(*filtered_cluster_layers))
-        )
+        (
+            cluster_label_layers,
+            self.cluster_probabilities_,
+            self.cluster_persistence_scores_,
+        ) = list(map(list, zip(*filtered_cluster_layers)))
         self.plscan_min_cluster_sizes_ = getattr(
             self.plscan_, "min_cluster_sizes_", None
         )
