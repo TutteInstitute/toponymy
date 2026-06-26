@@ -24,6 +24,7 @@ dependencies = [
     "apricot-select",
     "datasets",
     "fast_hdbscan>=0.3.2",
+    "evoc>=0.3.1",
     "httpx",
     "jinja2",
     "litellm>=1.83.10",
