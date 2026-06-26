@@ -1902,7 +1902,7 @@ try:
         to use local models, rather than requiring a service API key. However this does require you to have the model
         and suitable hardware to run it.
 
-        Note: This wrapper does not support system prompts, as LlamaCpp does not support them.
+        System prompts are supported through llama-cpp-python's chat completion API.
 
         Parameters:
         -----------
@@ -1928,8 +1928,10 @@ try:
             Additional instructions specific to the LLM, appended to the prompt.
 
         supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For LlamaCpp, this is always False.
+            Indicates whether the wrapper supports system prompts.
         """
+
+        supports_system_prompts = True
 
         def __init__(
             self,
@@ -1939,6 +1941,7 @@ try:
             **kwargs,
         ):
             self.model_path = model_path
+            self.model = model_path
             for arg, val in kwargs.items():
                 if arg == "n_ctx":
                     continue
@@ -1950,13 +1953,16 @@ try:
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
 
-        def _call_llm(self, prompt: str, temperature: float, max_tokens: int) -> str:
-            response = self.llm(
-                prompt + self.extra_prompting,
-                max_new_tokens=max_tokens,
+        def _call_llm(self, prompt: Prompt, temperature: float, max_tokens: int) -> str:
+            response = self.llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": prompt.system},
+                    {"role": "user", "content": prompt.user + self.extra_prompting},
+                ],
+                max_tokens=max_tokens,
                 temperature=temperature,
             )
-            result = response["choices"][0]["text"]
+            result = response["choices"][0]["message"]["content"]
             return result
 
         def _call_llm_with_system_prompt(
@@ -1966,8 +1972,10 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-            raise InvalidLLMInputError(
-                "System prompts are not supported for LlamaCpp wrapper"
+            return self._call_llm(
+                Prompt(system_prompt, user_prompt),
+                temperature=temperature,
+                max_tokens=max_tokens,
             )
 
 except ImportError:
