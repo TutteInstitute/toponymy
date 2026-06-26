@@ -1,8 +1,7 @@
 import numpy as np
 import pytest
 
-from toponymy.feature_extractor import (
-    centroids_from_labels,
+from toponymy.new_feature_extractor import (
     FeatureExtractorBase,
     TextExemplarExtractor,
 )
@@ -23,7 +22,10 @@ def test_cannot_create_abstract_feature_extractor():
 
 @pytest.mark.parametrize("n_exemplars", [4, 15])
 def test_random_exemplar(
-    n_exemplars, test_object_cluster_label_vector, all_topic_objects, topic_objects
+    n_exemplars,
+    test_object_cluster_label_vector,
+    all_topic_objects,
+    topic_objects
 ):
     exemplars, indices = TextExemplarExtractor.random_exemplars(
         test_object_cluster_label_vector, all_topic_objects, n_exemplars=n_exemplars
@@ -46,7 +48,6 @@ def test_diverse_exemplar_result_sizes(
     test_object_cluster_label_vector,
     all_topic_objects,
     topic_vectors,
-    test_object_centroid_vectors,
 ):
     exemplar_results, exemplar_indices = TextExemplarExtractor.diverse_exemplars(
         cluster_label_vector=test_object_cluster_label_vector,
@@ -70,7 +71,6 @@ def test_empty_cluster_diverse(
     test_object_cluster_label_vector,
     all_topic_objects,
     topic_vectors,
-    test_object_centroid_vectors,
 ):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
@@ -91,7 +91,6 @@ def test_empty_cluster_diverse(
     test_object_cluster_label_vector,
     all_topic_objects,
     topic_vectors,
-    test_object_centroid_vectors,
 ):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
@@ -105,7 +104,9 @@ def test_empty_cluster_diverse(
 
 
 def test_bad_submodular_function(
-    test_object_cluster_label_vector, all_topic_objects, topic_vectors
+    test_object_cluster_label_vector,
+    all_topic_objects,
+    topic_vectors
 ):
     with pytest.raises(ValueError):
         TextExemplarExtractor.submodular_selection_exemplars(
@@ -138,7 +139,10 @@ def test_submodular_exemplar(
         )
 
 
-def test_empty_cluster_random(test_object_cluster_label_vector, all_topic_objects):
+def test_empty_cluster_random(
+    test_object_cluster_label_vector,
+    all_topic_objects
+):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
     exemplar_results, exemplar_indices = TextExemplarExtractor.random_exemplars(

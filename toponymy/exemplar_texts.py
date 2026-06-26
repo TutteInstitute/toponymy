@@ -8,7 +8,7 @@ from sklearn.neighbors import KNeighborsTransformer
 from sklearn.utils.validation import check_is_fitted
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
-from toponymy.feature_extractor import centroids_from_labels, FeatureExtractorBase
+from toponymy.new_feature_extractor import centroids_from_labels, FeatureExtractorBase
 from toponymy.new_clustering import Clusterer
 
 from tqdm.auto import tqdm

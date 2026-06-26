@@ -10,8 +10,6 @@ import httpx
 
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
-from toponymy.clustering import centroids_from_labels, ToponymyClusterer
-from toponymy.tests.helpers.llm_test_config import make_mock_data
 import litellm
 
 # fallback to httpx transport for testing to avoid aiohttp issues in test environments
@@ -53,12 +51,6 @@ def is_ollama_model_available(model_name):
         return any(model_name in m for m in models)
     except Exception:
         return False
-
-
-@pytest.fixture
-def mock_data():
-    """Make mock data for testing LLM responses."""
-    return make_mock_data()
 
 
 @pytest.fixture(scope="function")
@@ -117,18 +109,6 @@ def clusterable_vectors(object_vectors):
 
 
 @pytest.fixture(scope="session")
-def cluster_centroid_vectors(cluster_label_vector, object_vectors):
-    """Calculate cluster centroid vectors from labels."""
-    return centroids_from_labels(cluster_label_vector, object_vectors)
-
-
-@pytest.fixture(scope="session")
-def subtopic_centroid_vectors(subtopic_label_vector, object_vectors):
-    """Calculate subtopic centroid vectors from labels."""
-    return centroids_from_labels(subtopic_label_vector, object_vectors)
-
-
-@pytest.fixture(scope="session")
 def subtopics(subtopic_objects):
     """Extract subtopics from subtopic objects."""
     return [[x["subtopic"] for x in topic["subtopics"]] for topic in subtopic_objects]
@@ -146,24 +126,6 @@ def subtopic_vectors():  # embedder, all_subtopics):
     # return embedder.encode(all_subtopics)
     npy_path = Path(__file__).parent / "subtopic_vectors.npy"
     return np.load(npy_path)
-
-
-@pytest.fixture(scope="session")
-def cluster_tree():
-    """Create a mock cluster tree structure."""
-    return {(1, i): [(0, i * 5 + j) for j in range(5)] for i in range(5)}
-
-
-@pytest.fixture(scope="session")
-def clusterer():
-    """Create a mock clusterer."""
-    return ToponymyClusterer(
-        min_samples=5,
-        base_min_cluster_size=4,
-        next_cluster_size_quantile=1.0,
-        min_clusters=4,
-        verbose=True,
-    )
 
 
 @pytest.fixture(scope="session")
@@ -198,18 +160,6 @@ def topic_vectors():  # embedder, all_topic_objects):
 @pytest.fixture(scope="session")
 def test_object_cluster_label_vector():
     return np.concatenate([np.arange(10).repeat(10), np.full(10, -1)])
-
-
-@pytest.fixture(scope="session")
-def test_object_centroid_vectors(test_object_cluster_label_vector, topic_vectors):
-    """Calculate centroid vectors for test objects."""
-    return centroids_from_labels(test_object_cluster_label_vector, topic_vectors)
-
-
-@pytest.fixture(scope="session")
-def centroid_vectors(cluster_label_vector, topic_vectors):
-    """Calculate centroid vectors for topics."""
-    return centroids_from_labels(cluster_label_vector, topic_vectors)
 
 
 @pytest.fixture(scope="session")
