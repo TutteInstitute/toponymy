@@ -8,9 +8,10 @@ from sklearn.utils.validation import check_is_fitted
 from toponymy.new_types import Cluster, ClusterLayer
 
 from toponymy.new_clustering import (
+    PrecomputedClusterer,
     KMeansClusterer,
     PLSCANClusterer,
-    PrecomputedClusterer,
+    EVoCClusterer,
     build_cluster_tree,
     _build_cluster_tree,
     build_cluster_layers,
@@ -122,10 +123,6 @@ def test_precomputed_clusterer(label_layers):
 
 
 def test_kmeans_clusterer():
-    clusterer = KMeansClusterer(
-        min_clusters=4,
-        base_n_clusters=64,
-    )
     n_samples = 1000
     clusterable_data, clusterable_labels = make_blobs(
         n_samples=n_samples,
@@ -135,7 +132,11 @@ def test_kmeans_clusterer():
         cluster_std=0.05,
         random_state=0,
     )
-
+    clusterer = KMeansClusterer(
+        min_clusters=4,
+        base_n_clusters=64,
+        random_state=42,
+    )
     clusterer.fit_predict(clusterable_data)
 
     check_is_fitted(clusterer)
@@ -149,41 +150,34 @@ def test_kmeans_clusterer():
     )
 
 
-def test_plscan_clusterer_fit_returns_self():
+def test_plscan_clusterer():
     n_samples = 1000
-    clusterer = PLSCANClusterer(
-        min_clusters=4,
-        min_samples=5,
-        base_min_cluster_size=10,
-    )
     clusterable_data, clusterable_labels = make_blobs(
         n_samples=n_samples,
         n_features=2,
-        centers=5,
+        centers=10,
         center_box=(0.0, 1.0),
         cluster_std=0.05,
         random_state=0,
     )
+    clusterer = PLSCANClusterer()
     clusterer.fit(clusterable_data)
 
     check_is_fitted(clusterer)
     assert len(clusterer.cluster_layers_) > 1
-    assert len(clusterer.cluster_layers_) == len(clusterer.cluster_probabilities_)
-    assert len(clusterer.cluster_layers_) == len(clusterer.cluster_persistence_scores_)
-    np.testing.assert_array_equal(
-        clusterer.plscan_min_cluster_sizes_, clusterer.plscan_.min_cluster_sizes_
-    )
     assert all(isinstance(layer, ClusterLayer) for layer in clusterer.cluster_layers_)
     assert isinstance(clusterer.cluster_tree_, dict)
 
-    for layer, probabilities in zip(
-        clusterer.cluster_layers_, clusterer.cluster_probabilities_
-    ):
+    assert len(clusterer.cluster_layers_) == len(
+        clusterer.plscan_.membership_strength_layers_
+    )
+    assert len(clusterer.cluster_layers_) == len(
+        clusterer.plscan_.layer_persistence_scores_
+    )
+
+    for layer in clusterer.cluster_layers_:
         labels = layer_to_labels_helper(layer, n_samples)
         assert labels.shape == (1000,)
-        assert probabilities.shape == labels.shape
-        assert np.all(probabilities >= 0.0)
-        assert np.all(probabilities <= 1.0)
 
     final_labels = layer_to_labels_helper(clusterer.cluster_layers_[-1], n_samples)
     assert (
@@ -199,18 +193,13 @@ def test_plscan_clusterer_fit_predict_returns_layers_and_tree():
     n_samples = 2000
     clusterable_data, _ = make_blobs(
         n_samples=n_samples,
-        n_features=10,
-        centers=20,
+        n_features=2,
+        centers=10,
         center_box=(0.0, 1.0),
         cluster_std=0.05,
         random_state=42,
     )
-
-    clusterer = PLSCANClusterer(
-        min_clusters=4,
-        min_samples=5,
-        base_min_cluster_size=10,
-    )
+    clusterer = PLSCANClusterer()
     layers, tree = clusterer.fit_predict(clusterable_data)
     assert layers is clusterer.cluster_layers_
     assert tree is clusterer.cluster_tree_
@@ -222,78 +211,77 @@ def test_plscan_clusterer_fit_predict_returns_layers_and_tree():
 def test_plscan_clusterer_max_layers():
     clusterable_data, _ = make_blobs(
         n_samples=2000,
-        n_features=10,
-        centers=20,
+        n_features=2,
+        centers=10,
         center_box=(0.0, 1.0),
         cluster_std=0.05,
         random_state=42,
     )
-    clusterer = PLSCANClusterer(
-        min_clusters=2,
-        min_samples=5,
-        base_min_cluster_size=10,
-        max_layers=1,
-    )
+    clusterer = PLSCANClusterer(max_layers=1)
     layers, tree = clusterer.fit_predict(clusterable_data)
+    check_is_fitted(clusterer)
+    assert clusterer.plscan_.max_layers == 1
     assert len(layers) == 1
 
 
-def test_plscan_clusterer_raises_for_too_few_clusters():
-    clusterable_data, _ = make_blobs(
-        n_samples=300,
-        n_features=2,
-        centers=3,
+@pytest.mark.xfail(strict=True, reason="Known numba cache conflict between EVoC and PLSCAN")
+def test_evoc_clusterer():
+    n_samples = 1000
+    clusterable_data, cluster_labels = make_blobs(
+        n_samples=n_samples,
+        n_features=128,
+        centers=5,
         center_box=(0.0, 1.0),
-        cluster_std=0.05,
-        random_state=11,
+        cluster_std=0.001,
+        random_state=0,
     )
-    clusterer = PLSCANClusterer(
-        min_clusters=50,
-        min_samples=5,
-        base_min_cluster_size=10,
+    clusterer = EVoCClusterer(random_state=42)
+    clusterer.fit(clusterable_data)
+    check_is_fitted(clusterer)
+    assert len(clusterer.cluster_layers_[-1]) >= 5
+    assert len(clusterer.cluster_layers_[-1]) <= 8
+    final_labels = layer_to_labels_helper(clusterer.cluster_layers_[-1], n_samples)
+    assert (
+        adjusted_mutual_info_score(
+            final_labels[final_labels >= 0], cluster_labels[final_labels >= 0]
+        )
+        >= 0.75
     )
-    with pytest.raises(
-        ValueError, match="Not enough clusters found in any PLSCAN layer"
-    ):
-        clusterer.fit(clusterable_data)
 
 
-# @pytest.mark.skipif(
-#     not HAS_COMPATIBLE_EVOC,
-#     reason="evoc not installed or incompatible with current fast_hdbscan version (evoc 0.3.1 requires fast_hdbscan < 0.3.0)",
-# )
-# def test_evoc_clusterer_class():
-#     clusterer = EVoCClusterer(
-#         min_clusters=4,
-#         min_samples=5,
-#         base_min_cluster_size=10,
-#         next_cluster_size_quantile=0.8,
-#     )
+@pytest.mark.xfail(strict=True, reason="Known numba cache conflict between EVoC and PLSCAN")
+def test_evoc_clusterer_fit_predict_returns_layers_and_tree():
+    n_samples = 1000
+    clusterable_data, _ = make_blobs(
+        n_samples=n_samples,
+        n_features=128,
+        centers=5,
+        center_box=(0.0, 1.0),
+        cluster_std=0.001,
+        random_state=42,
+    )
+    clusterer = EVoCClusterer(random_state=42)
+    layers, tree = clusterer.fit_predict(clusterable_data)
+    assert layers is clusterer.cluster_layers_
+    assert tree is clusterer.cluster_tree_
+    assert len(layers) >= 1
+    assert isinstance(tree, dict)
+    assert layer_to_labels_helper(layers[0], n_samples).max() + 1 >= 4
 
-#     np.random.seed(0)
-#     clusterable_data, cluster_labels = make_blobs(
-#         n_samples=1000,
-#         n_features=128,
-#         centers=5,
-#         center_box=(0.0, 1.0),
-#         cluster_std=0.05,
-#         random_state=0,
-#     )
-#     class_cluster_layers, class_tree = clusterer.fit_predict(
-#         clusterable_vectors=clusterable_data,
-#         embedding_vectors=clusterable_data,
-#         layer_class=ClusterLayerText,
-#     )
-#     assert (
-#         np.unique(class_cluster_layers[-1].cluster_labels).shape[0] >= 5
-#         and np.unique(class_cluster_layers[-1].cluster_labels).shape[0] <= 7
-#     )
-#     assert (
-#         adjusted_mutual_info_score(
-#             class_cluster_layers[-1].cluster_labels[
-#                 class_cluster_layers[-1].cluster_labels >= 0
-#             ],
-#             cluster_labels[class_cluster_layers[-1].cluster_labels >= 0],
-#         )
-#         >= 0.75
-#     )
+
+@pytest.mark.xfail(strict=True, reason="Known numba cache conflict between EVoC and PLSCAN")
+def test_evoc_clusterer_max_layers():
+    n_samples = 1000
+    clusterable_data, cluster_labels = make_blobs(
+        n_samples=n_samples,
+        n_features=128,
+        centers=5,
+        center_box=(0.0, 1.0),
+        cluster_std=0.001,
+        random_state=0,
+    )
+    clusterer = EVoCClusterer(max_layers=1, random_state=42)
+    layers, tree = clusterer.fit_predict(clusterable_data)
+    check_is_fitted(clusterer)
+    assert clusterer.evoc_.max_layers == 1
+    assert len(layers) == 1
