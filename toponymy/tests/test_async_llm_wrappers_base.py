@@ -6,6 +6,7 @@ from toponymy.llm_wrappers import (
     FailFastLLMError,
     InvalidLLMInputError,
 )
+from toponymy.new_templates import Prompt, TextTemplate
 
 from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
@@ -35,35 +36,20 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
     async def _call_single_llm(self, prompt, temperature, max_tokens):
         raise DummyAsyncProviderError("bad config")
 
-    async def _call_single_llm_with_system(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        raise DummyAsyncProviderError("bad config")
-
 
 class DummySingleWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
     model = "dummy-model"
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
-
-    async def _call_single_llm_with_system(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        return "single-system-ok"
+        return "single-system-ok" if prompt.system else "single-ok"
 
 
 class DummyBatchWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
 
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return ["batch-ok"]
-
-    async def _call_llm_with_system_prompt_batch(
-        self, system_prompts, user_prompts, temperature, max_tokens
-    ):
-        return ["batch-system-ok"]
+        return ["batch-system-ok" if prompts[0].system else "batch-ok"]
 
 
 class DummyBatchCallResultWrapper(AsyncLLMWrapper):
@@ -95,8 +81,7 @@ async def test_async_connectivity_status_uses_single_call_with_system():
     wrapper.model = "dummy-model"
 
     result = await wrapper.connectivity_status(
-        prompt="user prompt",
-        system_prompt="system prompt",
+        prompt=Prompt("system prompt", "user prompt"),
     )
 
     assert result["success"] is True
@@ -124,8 +109,7 @@ async def test_async_connectivity_status_falls_back_to_system_batch():
     wrapper.model = "dummy-model"
 
     result = await wrapper.connectivity_status(
-        prompt="user prompt",
-        system_prompt="system prompt",
+        prompt=Prompt("system prompt", "user prompt"),
     )
 
     assert result["success"] is True
@@ -220,24 +204,20 @@ async def test_safe_call_with_retry_result_raises_invalid_input():
 async def test_async_generate_topic_names_empty_input_returns_empty_list():
     wrapper = DummySingleWrapper()
 
-    result = await wrapper.generate_topic_names([])
+    result = await wrapper.generate_topic_names([], TextTemplate.extract_name)
 
     assert result == []
-
-
-@pytest.mark.asyncio
-async def test_async_generate_topic_names_invalid_prompt_type_raises():
-    wrapper = DummySingleWrapper()
-
-    with pytest.raises(InvalidLLMInputError):
-        await wrapper.generate_topic_names([123])
 
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_cluster_names_empty_input_returns_empty_list():
     wrapper = DummySingleWrapper()
 
-    result = await wrapper.generate_topic_cluster_names([], [])
+    result = await wrapper.generate_topic_cluster_names(
+        [],
+        [],
+        TextTemplate.extract_disambiguated_names,
+    )
 
     assert result == []
 
@@ -248,8 +228,9 @@ async def test_async_generate_topic_cluster_names_length_mismatch_raises():
 
     with pytest.raises(ValueError, match="Number of prompts must match"):
         await wrapper.generate_topic_cluster_names(
-            ["prompt 1", "prompt 2"],
+            [Prompt("", "prompt 1"), Prompt("", "prompt 2")],
             [["old1", "old2"]],
+            TextTemplate.extract_disambiguated_names,
         )
 
 
@@ -258,26 +239,26 @@ async def test_async_generate_topic_names_routes_string_prompts_to_call_llm_batc
     wrapper = DummySingleWrapper()
     wrapper._call_llm_batch = AsyncMock(return_value=[])
 
-    await wrapper.generate_topic_names(["test prompt"])
+    prompts = [Prompt("", "test prompt")]
+    await wrapper.generate_topic_names(prompts, TextTemplate.extract_name)
 
     wrapper._call_llm_batch.assert_awaited_once_with(
-        ["test prompt"],
+        prompts,
         0.4,
         max_tokens=128,
     )
 
 
 @pytest.mark.asyncio
-async def test_async_generate_topic_names_routes_dict_prompts_to_call_with_system_prompt_batch():
+async def test_async_generate_topic_names_routes_system_prompts_to_call_llm_batch():
     wrapper = DummySingleWrapper()
-    wrapper._call_llm_with_system_prompt_batch = AsyncMock(return_value=[])
+    wrapper._call_llm_batch = AsyncMock(return_value=[])
 
-    prompts = [{"system": "system prompt", "user": "test prompt"}]
-    await wrapper.generate_topic_names(prompts)
+    prompts = [Prompt("system prompt", "test prompt")]
+    await wrapper.generate_topic_names(prompts, TextTemplate.extract_name)
 
-    wrapper._call_llm_with_system_prompt_batch.assert_awaited_once_with(
-        ["system prompt"],
-        ["test prompt"],
+    wrapper._call_llm_batch.assert_awaited_once_with(
+        prompts,
         0.4,
         max_tokens=128,
     )
@@ -297,7 +278,10 @@ async def test_async_generate_topic_names_partial_success(
         ]
     )
 
-    result = await wrapper.generate_topic_names(["prompt 1", "prompt 2", "prompt 3"])
+    result = await wrapper.generate_topic_names(
+        [Prompt("", "prompt 1"), Prompt("", "prompt 2"), Prompt("", "prompt 3")],
+        TextTemplate.extract_name,
+    )
 
     validate_topic_name(result[0])
     assert result[1] == ""
@@ -325,8 +309,9 @@ async def test_async_generate_topic_cluster_names_partial_success(
         mock_data["old_names"],
     ]
     result = await wrapper.generate_topic_cluster_names(
-        ["prompt 1", "prompt 2", "prompt 3"],
+        [Prompt("", "prompt 1"), Prompt("", "prompt 2"), Prompt("", "prompt 3")],
         old_names,
+        TextTemplate.extract_disambiguated_names,
     )
 
     validate_cluster_names(result[0])
@@ -351,7 +336,7 @@ async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
 
     result = await wrapper._safe_call_with_retry_result(
         fn,
-        prompt="test prompt",
+        prompt=Prompt("", "test prompt"),
         temperature=0.4,
         max_tokens=128,
     )
@@ -362,7 +347,7 @@ async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
 
     event = events[0]
     assert event["event"] == "llm_call_success"
-    assert event["prompt"] == "test prompt"
+    assert event["prompt"] == Prompt("", "test prompt")
     assert event["raw_response"] == "single-ok"
     assert event["model"] == "dummy-model"
     assert event["wrapper"] == "DummySingleWrapper"

@@ -1,6 +1,7 @@
 import os
 import warnings
 
+import json
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
 import pytest_asyncio
@@ -17,7 +18,10 @@ from toponymy.llm_wrappers import (
     AsyncTogether,
     FailFastLLMError,
     CallResult,
+    repair_json_string_backslashes,
 )
+from toponymy.new_templates import Prompt, TextTemplate
+from toponymy.templates import default_extract_topic_names
 from toponymy.tests.helpers.llm_test_config import (
     validate_topic_name,
     validate_cluster_names,
@@ -36,6 +40,12 @@ from conftest import is_ollama_model_available
 LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
     "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
 )
+
+
+def extract_cluster_names(old_names):
+    return lambda response: default_extract_topic_names(
+        json.loads(repair_json_string_backslashes(response)), old_names, response
+    )
 
 
 # Helper for async tests
@@ -105,8 +115,10 @@ async def test_anthropic_connectivity_async_system_canary():
     namer = AsyncAnthropicNamer()
 
     result = await namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
     )
 
     assert result["success"], (
@@ -126,7 +138,7 @@ def test_async_anthropic_namer_default():
 
     assert namer.model == "anthropic/claude-haiku-4-5-20251001"
     assert namer.use_json_object is True
-    assert namer.disable_system_prompts is False
+    assert namer.supports_system_prompts is True
 
 
 def test_async_anthropic_namer_provider_kwargs_passthrough():
@@ -150,10 +162,15 @@ async def test_batch_anthropic_submit_batch(batch_anthropic_wrapper, mock_data):
     batch_anthropic_wrapper.client.beta.messages.batches.create = Mock(
         return_value=Mock(id=batch_id)
     )
+    batch_anthropic_wrapper._wait_for_completion_async = AsyncMock(return_value=True)
+    batch_anthropic_wrapper._retrieve_batch_results = AsyncMock(return_value=["ok"])
 
-    # Test the submit_batch method
-    result = batch_anthropic_wrapper.submit_batch(["prompt1", "prompt2"], 0.4, 128)
-    assert result == batch_id
+    result = await batch_anthropic_wrapper._call_llm_batch(
+        [Prompt("", "prompt1"), Prompt("", "prompt2")],
+        0.4,
+        128,
+    )
+    assert result == ["ok"]
 
     # Verify the client was called with the expected parameters
     batch_anthropic_wrapper.client.beta.messages.batches.create.assert_called_once()
@@ -213,8 +230,10 @@ async def test_openai_connectivity_async_system_canary():
     namer = AsyncOpenAINamer()
 
     result = await namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
     )
 
     assert result["success"], (
@@ -228,7 +247,7 @@ def test_async_openai_namer_default():
 
     assert namer.model == "openai/gpt-4o-mini"
     assert namer.use_json_object is True
-    assert namer.disable_system_prompts is False
+    assert namer.supports_system_prompts is True
 
 
 def test_async_openai_namer_provider_kwargs_passthrough():
@@ -265,8 +284,10 @@ async def test_cohere_connectivity_async_system_canary():
     namer = AsyncCohereNamer()
 
     result = await namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
     )
 
     assert result["success"], (
@@ -280,7 +301,7 @@ def test_async_cohere_namer_default():
 
     assert namer.model == "cohere/command-r-08-2024"
     assert namer.use_json_object is False  # until prompting is stricter
-    assert namer.disable_system_prompts is False
+    assert namer.supports_system_prompts is True
 
 
 def test_async_cohere_namer_provider_kwargs_passthrough():
@@ -422,8 +443,10 @@ async def test_gemini_connectivity_async_system_canary():
     namer = AsyncGoogleGeminiNamer()
 
     result = await namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
     )
 
     assert result["success"], (
@@ -445,7 +468,7 @@ def test_async_gemini_namer_default():
 
     assert namer.model == "gemini/gemini-2.5-flash-lite"
     assert namer.use_json_object is True
-    assert namer.disable_system_prompts is False
+    assert namer.supports_system_prompts is True
 
 
 @pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
@@ -553,8 +576,10 @@ async def test_litellm_connectivity_canary_async_system(provider_cfg):
     )
 
     result = await namer.connectivity_status(
-        prompt="Return a short JSON object describing your role.",
-        system_prompt="You are a topic naming assistant.",
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
     )
 
     assert result["success"], (
@@ -571,7 +596,10 @@ async def test_async_litellm_generate_topic_names_success(
     response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("", "test prompt")],
+            TextTemplate.extract_name,
+        )
 
     assert len(result) == 1
     validate_topic_name(result[0])
@@ -586,7 +614,8 @@ async def test_async_litellm_generate_topic_names_system_prompt(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_names(
-            [{"system": "system prompt", "user": "test prompt"}]
+            [Prompt("system prompt", "test prompt")],
+            TextTemplate.extract_name,
         )
 
     assert len(result) == 1
@@ -602,8 +631,9 @@ async def test_async_litellm_generate_topic_cluster_names_success(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            ["test prompt"],
+            [Prompt("", "test prompt")],
             [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
         )
 
     assert len(result) == 1
@@ -619,8 +649,9 @@ async def test_async_litellm_generate_topic_cluster_names_system_prompt(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            [{"system": "system prompt", "user": "test prompt"}],
+            [Prompt("system prompt", "test prompt")],
             [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
         )
 
     assert len(result) == 1
@@ -635,7 +666,8 @@ async def test_async_litellm_generate_topic_names_prompt_list(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_names(
-            ["prompt1", "prompt2", "prompt3"]
+            [Prompt("", "prompt1"), Prompt("", "prompt2"), Prompt("", "prompt3")],
+            TextTemplate.extract_name,
         )
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
@@ -649,10 +681,12 @@ async def test_async_litellm_generate_topic_cluster_names_prompt_list(
     response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
-        prompts = ["prompt1", "prompt2"]
+        prompts = [Prompt("", "prompt1"), Prompt("", "prompt2")]
 
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            prompts, old_names_list
+            prompts,
+            old_names_list,
+            extract_cluster_names(old_names_list[0]),
         )
     assert len(result) == 2
     validate_cluster_names(result[0])
@@ -667,8 +701,9 @@ async def test_async_litellm_generate_topic_cluster_names_malformed_mapping(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            ["test prompt"],
+            [Prompt("", "test prompt")],
             [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
         )
 
     assert len(result) == 1
@@ -686,7 +721,10 @@ async def test_async_litellm_generate_topic_names_fail_fast_raises(
         new=AsyncMock(side_effect=make_litellm_error(error_class)),
     ):
         with pytest.raises(FailFastLLMError):
-            await async_litellm_wrapper.generate_topic_names(["test prompt"])
+            await async_litellm_wrapper.generate_topic_names(
+                [Prompt("", "test prompt")],
+                TextTemplate.extract_name,
+            )
 
 
 @pytest.mark.asyncio
@@ -700,7 +738,10 @@ async def test_async_litellm_generate_topic_names_retryable_returns_empty(
         "litellm.acompletion",
         new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
     ) as mock_acompletion:
-        result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("", "test prompt")],
+            TextTemplate.extract_name,
+        )
 
     assert result == [""]
     assert mock_acompletion.await_count == 3
@@ -719,8 +760,9 @@ async def test_async_litellm_generate_topic_cluster_names_retryable_returns_old_
         new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
     ):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            ["test prompt"],
+            [Prompt("", "test prompt")],
             [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
         )
 
     assert result == [mock_data["old_names"]]
@@ -739,7 +781,7 @@ async def test_async_litellm_retries_per_item_not_whole_batch(
     call_counts = {"prompt1": 0, "prompt2": 0}
 
     async def mock_acompletion(**kwargs):
-        prompt_text = kwargs["messages"][0]["content"]
+        prompt_text = kwargs["messages"][-1]["content"]
         call_counts[prompt_text] += 1
 
         if prompt_text == "prompt1":
@@ -751,7 +793,8 @@ async def test_async_litellm_retries_per_item_not_whole_batch(
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=mock_acompletion)):
         result = await async_litellm_wrapper.generate_topic_names(
-            ["prompt1", "prompt2"]
+            [Prompt("", "prompt1"), Prompt("", "prompt2")],
+            TextTemplate.extract_name,
         )
 
     assert len(result) == 2
@@ -772,7 +815,10 @@ async def test_async_litellm_generate_topic_names_retry_exhausted_warns(
         new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
     ):
         with pytest.warns(UserWarning, match="Failed to generate topic name"):
-            result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+            result = await async_litellm_wrapper.generate_topic_names(
+                [Prompt("", "test prompt")],
+                TextTemplate.extract_name,
+            )
 
     assert result == [""]
 
@@ -790,8 +836,9 @@ async def test_async_litellm_generate_topic_cluster_names_retry_exhausted_warns(
     ):
         with pytest.warns(UserWarning):
             result = await async_litellm_wrapper.generate_topic_cluster_names(
-                ["test prompt"],
+                [Prompt("", "test prompt")],
                 [mock_data["old_names"]],
+                extract_cluster_names(mock_data["old_names"]),
             )
 
     assert result == [mock_data["old_names"]]
@@ -845,9 +892,8 @@ async def test_async_litellm_system_prompt_probe_falls_back_and_caches(
         "litellm.acompletion",
         new=AsyncMock(side_effect=[unsupported_error, good_response]),
     ) as mock_acompletion:
-        result = await async_litellm_wrapper._call_single_llm_with_system(
-            system_prompt="system",
-            user_prompt="user",
+        result = await async_litellm_wrapper._call_single_llm(
+            Prompt("system", "user"),
             temperature=0.4,
             max_tokens=20,
         )
@@ -868,9 +914,8 @@ async def test_async_litellm_system_prompt_cached_false_flattens_immediately(
         "litellm.acompletion",
         new=AsyncMock(return_value=good_response),
     ) as mock_acompletion:
-        await async_litellm_wrapper._call_single_llm_with_system(
-            system_prompt="system",
-            user_prompt="user",
+        await async_litellm_wrapper._call_single_llm(
+            Prompt("system", "user"),
             temperature=0.4,
             max_tokens=20,
         )
@@ -894,9 +939,8 @@ async def test_async_litellm_system_prompt_probe_success_caches_true(
         "litellm.acompletion",
         new=AsyncMock(return_value=good_response),
     ):
-        result = await async_litellm_wrapper._call_single_llm_with_system(
-            system_prompt="system",
-            user_prompt="user",
+        result = await async_litellm_wrapper._call_single_llm(
+            Prompt("system", "user"),
             temperature=0.4,
             max_tokens=20,
         )
@@ -910,9 +954,8 @@ async def test_async_litellm_system_prompt_probe_success_caches_true(
 async def test_async_wrapper_invalid_input(async_litellm_wrapper):
     """Test handling of invalid input types."""
     with pytest.raises(ValueError):
-        await async_litellm_wrapper.generate_topic_names([123])  # Not a string or dict
-
-    with pytest.raises(ValueError):
         await async_litellm_wrapper.generate_topic_cluster_names(
-            ["prompt1", "prompt2"], [["name1", "name2"]]
+            [Prompt("", "prompt1"), Prompt("", "prompt2")],
+            [["name1", "name2"]],
+            extract_cluster_names(["name1", "name2"]),
         )  # Mismatched lengths

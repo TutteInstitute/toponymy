@@ -1,9 +1,11 @@
 from warnings import warn, filterwarnings
 import transformers
-from new_templates import Prompt
+from toponymy.new_templates import Prompt
 
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
+import json
+import re
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -267,8 +269,54 @@ def repair_json_string_backslashes(s: str) -> str:
     return temp_s
 
 
+def _json_from_response(response: str, regex: str | None = None) -> dict[str, Any]:
+    try:
+        return json.loads(repair_json_string_backslashes(response))
+    except json.JSONDecodeError:
+        if regex is None:
+            raise
+        matches = re.findall(regex, response, re.DOTALL)
+        if not matches:
+            raise
+        return json.loads(repair_json_string_backslashes(matches[0]))
+
+
+def _extract_topic_name(
+    topic_extraction_function: Callable[[str], Any],
+    llm_response: str,
+    get_topic_name_regex: str | None = None,
+) -> Any:
+    try:
+        return topic_extraction_function(llm_response)
+    except (TypeError, KeyError):
+        if get_topic_name_regex is None:
+            raise
+        return topic_extraction_function(
+            _json_from_response(llm_response, get_topic_name_regex)
+        )
+
+
+def _extract_topic_names(
+    extract_topic_names_function: Callable[..., list[str]],
+    llm_response: str,
+    old_names: list[str],
+    get_topic_names_regex: str | None = None,
+) -> list[str]:
+    try:
+        return extract_topic_names_function(llm_response)
+    except TypeError:
+        if get_topic_names_regex is None:
+            raise
+        return extract_topic_names_function(
+            _json_from_response(llm_response, get_topic_names_regex),
+            old_names,
+            llm_response,
+        )
+
+
 class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
     FAIL_FAST_EXCEPTIONS: tuple = ()
+    supports_system_prompts: bool = True
 
     @abstractmethod
     def _call_llm(self, prompt: Prompt, temperature: float, max_tokens: int) -> str:
@@ -338,6 +386,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         topic_extraction_function: Callable[str, Any],
         temperature: float = 0.4,
         max_tokens: int | None = None,
+        get_topic_name_regex: str | None = None,
+        **kwargs,
     ) -> Any:
         if max_tokens is None:
             max_tokens = getattr(self, "max_tokens_topic_name", 128)
@@ -348,7 +398,11 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             max_tokens=max_tokens,
             routine="generate_topic_name",
         )
-        return topic_extraction_function(llm_response)
+        return _extract_topic_name(
+            topic_extraction_function,
+            llm_response,
+            get_topic_name_regex,
+        )
 
     @staticmethod
     def _topic_cluster_names_error_callback(retry_state):
@@ -380,6 +434,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         extract_topic_names_function: Callable[str, list[str]],
         temperature: float = 0.4,
         max_tokens: int | None = None,
+        get_topic_names_regex: str | None = None,
+        **kwargs,
     ) -> List[str]:
         if max_tokens is None:
             max_tokens = getattr(self, "max_tokens_cluster_names", 1024)
@@ -391,7 +447,12 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             routine="generate_topic_cluster_names",
         )
 
-        return extract_topic_names_function(llm_response)
+        return _extract_topic_names(
+            extract_topic_names_function,
+            llm_response,
+            old_names,
+            get_topic_names_regex,
+        )
 
     def test_llm_connectivity(self) -> str:
         result = self.connectivity_status()
@@ -455,6 +516,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
 
 class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
+    supports_system_prompts: bool = True
+
     async def _call_single_llm(
         self, prompt: Prompt, temperature: float, max_tokens: int
     ) -> str:
@@ -552,6 +615,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float = 0.4,
         null_result_value="",
         max_tokens: int | None = None,
+        get_topic_name_regex: str | None = None,
+        **kwargs,
     ) -> List[str]:
         """
         Generate topic names for a batch of prompts.
@@ -588,7 +653,13 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
             # Attempt to parse the response
             try:
-                results.append(extract_topic_name_function(response_text))
+                results.append(
+                    _extract_topic_name(
+                        extract_topic_name_function,
+                        response_text,
+                        get_topic_name_regex,
+                    )
+                )
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
@@ -606,6 +677,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         extract_topic_names_function: Callable[[str], List[str]],
         temperature: float = 0.4,
         max_tokens: int | None = None,
+        get_topic_names_regex: str | None = None,
+        **kwargs,
     ) -> List[List[str]]:
         """
         Generate topic cluster names for a batch of prompts.
@@ -642,7 +715,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             if not response_text:
                 results.append(old_names)
                 continue
-            results.append(extract_topic_names_function(response_text))
+            results.append(
+                _extract_topic_names(
+                    extract_topic_names_function,
+                    response_text,
+                    old_names,
+                    get_topic_names_regex,
+                )
+            )
 
         return results
 
@@ -1965,19 +2045,6 @@ try:
             result = response["choices"][0]["message"]["content"]
             return result
 
-        def _call_llm_with_system_prompt(
-            self,
-            system_prompt: str,
-            user_prompt: str,
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            return self._call_llm(
-                Prompt(system_prompt, user_prompt),
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
-
 except ImportError:
 
     class LlamaCppNamer(FailedImportLLMWrapper):
@@ -2038,7 +2105,7 @@ try:
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
 
-        def _call_llm_with_system_prompt(
+        def _call_llm(
             self,
             prompt: Prompt,
             temperature: float,
@@ -2056,7 +2123,6 @@ try:
                 pad_token_id=self.llm.tokenizer.eos_token_id,
             )
             result = response[0]["generated_text"]
-            print(result)
             return result
 
     class AsyncHuggingFaceNamer(AsyncLLMWrapper):
@@ -2086,7 +2152,7 @@ try:
             max_tokens: int,
         ) -> List[str]:
             responses = []
-            for system_prompt, user_prompt in Prompt:
+            for system_prompt, user_prompt in prompts:
                 response = self.llm(
                     [
                         {"role": "system", "content": system_prompt},
@@ -2264,7 +2330,7 @@ except ImportError:
 try:
     import cohere
 
-    class CohereBatchNamer(FailedImportAsyncLLMWrapper):
+    class CohereBatchNamer(AsyncLLMWrapper):
         """
         Provides access to Cohere's Batch Processing API with asynchronous support.
         This allows for processing large batches of prompts over an extended period.
@@ -3431,7 +3497,6 @@ def GoogleGeminiNamer(
         ),
         api_base=api_base,
         use_json_object=True,
-        disable_system_prompts=False,
         llm_specific_instructions=llm_specific_instructions,
         provider_kwargs=provider_kwargs,
         callback=callback,
@@ -3512,7 +3577,6 @@ def AsyncGoogleGeminiNamer(
             api_key=api_key, env_new="GEMINI_API_KEY", env_legacy="GOOGLE_API_KEY"
         ),
         api_base=api_base,
-        disable_system_prompts=False,
         use_json_object=True,
         llm_specific_instructions=llm_specific_instructions,
         max_concurrent_requests=max_concurrent_requests,

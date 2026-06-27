@@ -6857,6 +6857,7 @@ source = { editable = "." }
 dependencies = [
     { name = "apricot-select" },
     { name = "datasets" },
+    { name = "evoc" },
     { name = "fast-hdbscan" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -6941,6 +6942,7 @@ requires-dist = [
     { name = "cohere", marker = "extra == 'dev'" },
     { name = "datamapplot", marker = "extra == 'example-notebooks'", specifier = ">=0.7" },
     { name = "datasets" },
+    { name = "evoc", specifier = ">=0.3.1" },
     { name = "evoc", marker = "extra == 'dev'" },
     { name = "fast-hdbscan", specifier = ">=0.3.2" },
     { name = "google-generativeai", marker = "extra == 'dev'" },

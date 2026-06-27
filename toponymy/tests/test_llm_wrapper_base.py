@@ -6,6 +6,7 @@ from toponymy.llm_wrappers import (
     InvalidLLMInputError,
     repair_json_string_backslashes,
 )
+from toponymy.new_templates import Prompt
 import pytest
 
 
@@ -14,12 +15,7 @@ class DummySingleWrapper(LLMWrapper):
     _supports_debug_callback = True
 
     def _call_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
-
-    def _call_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        return "single-system-ok"
+        return "single-system-ok" if prompt.system else "single-ok"
 
 
 class DummyFailureWrapper(LLMWrapper):
@@ -27,11 +23,6 @@ class DummyFailureWrapper(LLMWrapper):
     _supports_debug_callback = True
 
     def _call_llm(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-    def _call_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
         raise RuntimeError("error")
 
 
@@ -46,23 +37,13 @@ class DummyFailFastWrapper(LLMWrapper):
     def _call_llm(self, prompt, temperature, max_tokens):
         raise DummyFailFastProviderError("bad config")
 
-    def _call_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        raise DummyFailFastProviderError("bad config")
-
 
 class DummyAsyncSingleWrapper(AsyncLLMWrapper):
     model = "dummy-model"
     _supports_debug_callback = True
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return "async-single-ok"
-
-    async def _call_single_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
-        return "async-system-ok"
+        return "async-system-ok" if prompt.system else "async-single-ok"
 
 
 class DummyAsyncFailureWrapper(AsyncLLMWrapper):
@@ -70,11 +51,6 @@ class DummyAsyncFailureWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-    async def _call_single_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
         raise RuntimeError("error")
 
 
@@ -88,11 +64,6 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
     FAIL_FAST_EXCEPTIONS = (DummyAsyncFailFastProviderError,)
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise DummyAsyncFailFastProviderError("bad config")
-
-    async def _call_single_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
         raise DummyAsyncFailFastProviderError("bad config")
 
 
@@ -112,8 +83,7 @@ def test_sync_connectivity_status_uses_system_call():
     wrapper = DummySingleWrapper()
 
     result = wrapper.connectivity_status(
-        prompt="user prompt",
-        system_prompt="system prompt",
+        prompt=Prompt("system prompt", "user prompt"),
     )
 
     assert result["success"] is True
@@ -168,35 +138,17 @@ def test_safe_call_llm_wraps_fail_fast_exception():
     wrapper = DummyFailFastWrapper()
 
     with pytest.raises(FailFastLLMError, match="dummy-model"):
-        wrapper._safe_call_llm("prompt", temperature=0.4, max_tokens=128)
+        wrapper._safe_call_llm(Prompt("", "prompt"), temperature=0.4, max_tokens=128)
 
 
 def test_safe_call_llm_with_system_prompt_wraps_fail_fast_exception():
     wrapper = DummyFailFastWrapper()
 
     with pytest.raises(FailFastLLMError, match="dummy-model"):
-        wrapper._safe_call_llm_with_system_prompt(
-            "system prompt",
-            "user prompt",
+        wrapper._safe_call_llm(
+            Prompt("system prompt", "user prompt"),
             temperature=0.4,
             max_tokens=128,
-        )
-
-
-def test_generate_topic_name_invalid_prompt_type_raises():
-    wrapper = DummySingleWrapper()
-
-    with pytest.raises(InvalidLLMInputError):
-        wrapper.generate_topic_name(["not", "a", "valid", "prompt"])
-
-
-def test_generate_topic_cluster_names_invalid_prompt_type_raises():
-    wrapper = DummySingleWrapper()
-
-    with pytest.raises(InvalidLLMInputError):
-        wrapper.generate_topic_cluster_names(
-            ["not", "a", "valid", "prompt"],
-            ["old1", "old2"],
         )
 
 
@@ -219,7 +171,7 @@ def test_safe_call_llm_emits_debug_callback_on_success():
     wrapper.callback = lambda payload: events.append(payload)
 
     result = wrapper._safe_call_llm(
-        "test prompt",
+        Prompt("", "test prompt"),
         temperature=0.4,
         max_tokens=128,
     )
@@ -227,7 +179,7 @@ def test_safe_call_llm_emits_debug_callback_on_success():
     assert result == "single-ok"
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_success"
-    assert events[0]["prompt"] == "test prompt"
+    assert events[0]["prompt"] == Prompt("", "test prompt")
     assert events[0]["raw_response"] == "single-ok"
     assert events[0]["model"] == "dummy-model"
     assert events[0]["wrapper"] == "DummySingleWrapper"
@@ -240,9 +192,8 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_success():
     wrapper = DummySingleWrapper()
     wrapper.callback = lambda payload: events.append(payload)
 
-    result = wrapper._safe_call_llm_with_system_prompt(
-        "system prompt",
-        "user prompt",
+    result = wrapper._safe_call_llm(
+        Prompt("system prompt", "user prompt"),
         temperature=0.4,
         max_tokens=128,
     )
@@ -250,10 +201,7 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_success():
     assert result == "single-system-ok"
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_success"
-    assert events[0]["prompt"] == {
-        "system": "system prompt",
-        "user": "user prompt",
-    }
+    assert events[0]["prompt"] == Prompt("system prompt", "user prompt")
     assert events[0]["raw_response"] == "single-system-ok"
 
 
@@ -265,14 +213,14 @@ def test_safe_call_llm_emits_debug_callback_on_error():
 
     with pytest.raises(RuntimeError, match="error"):
         wrapper._safe_call_llm(
-            "test prompt",
+            Prompt("", "test prompt"),
             temperature=0.4,
             max_tokens=128,
         )
 
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_error"
-    assert events[0]["prompt"] == "test prompt"
+    assert events[0]["prompt"] == Prompt("", "test prompt")
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
 
@@ -284,19 +232,15 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_error():
     wrapper.callback = lambda payload: events.append(payload)
 
     with pytest.raises(RuntimeError, match="error"):
-        wrapper._safe_call_llm_with_system_prompt(
-            "system prompt",
-            "user prompt",
+        wrapper._safe_call_llm(
+            Prompt("system prompt", "user prompt"),
             temperature=0.4,
             max_tokens=128,
         )
 
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_error"
-    assert events[0]["prompt"] == {
-        "system": "system prompt",
-        "user": "user prompt",
-    }
+    assert events[0]["prompt"] == Prompt("system prompt", "user prompt")
     assert events[0]["error"]["type"] == "RuntimeError"
     assert events[0]["error"]["message"] == "error"
 
