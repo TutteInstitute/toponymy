@@ -12,6 +12,7 @@ import httpx
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
+from toponymy.tools.notebook_test_helpers import OLLAMA_CI_MODEL
 from toponymy.tests.helpers.llm_test_config import make_mock_data
 import litellm
 
@@ -47,11 +48,20 @@ def async_llm():
     # )
 
 
-def is_ollama_model_available(model_name):
+def ollama_has_model(model_or_family: str) -> bool:
     try:
-        response = httpx.get("http://localhost:11434/api/tags")
-        models = [m["name"] for m in response.json()["models"]]
-        return any(model_name in m for m in models)
+        r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        r.raise_for_status()
+
+        models = [m["name"] for m in r.json().get("models", [])]
+
+        # CI case: exact match
+        if model_or_family == OLLAMA_CI_MODEL:
+            return any(m == OLLAMA_CI_MODEL for m in models)
+
+        # local case: family match (e.g. llama3.2:*)
+        return any(m.startswith(model_or_family + ":") for m in models)
+
     except Exception:
         return False
 

@@ -22,7 +22,8 @@ from toponymy.llm_wrappers import (
     ReplicateNamer,
     GoogleGeminiNamer,
 )
-from conftest import is_ollama_model_available
+from conftest import ollama_has_model
+from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 
 from toponymy.tests.helpers.llm_test_config import (
     validate_cluster_names,
@@ -484,8 +485,8 @@ def test_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
 
 # Ollama Tests
 def test_ollama_connectivity_plain_sync_canary():
-    model = "llama3.2"
-    if not is_ollama_model_available(model):
+    model = get_test_ollama_model()
+    if not ollama_has_model(model):
         pytest.skip(f"{model} not available in local Ollama")
     namer = OllamaNamer(model=model)
     result = namer.connectivity_status()

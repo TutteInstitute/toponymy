@@ -9,7 +9,10 @@ from toponymy.templates import (
     GET_TOPIC_NAME_REGEX,
     default_extract_topic_names,
 )
-from toponymy.tools.notebook_test_helpers import notebook_test_replacement
+from toponymy.tools.notebook_test_helpers import (
+    notebook_test_replacement,
+    get_test_ollama_model,
+)
 from abc import ABC, abstractmethod
 from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
 from tenacity import (
@@ -3490,11 +3493,7 @@ def NotebookOpenAINamerMock(*args, **kwargs):
     For mocking OpenAINamer calls with a local Ollama model.
     """
     logging.info("Using NotebookOpenAINamerMock instead of OpenAINamer")
-
-    if os.getenv("CI", "").lower() in {"true", "1"}:
-        return OllamaNamer(model="qwen2.5:0.5b")
-
-    return OllamaNamer()
+    return OllamaNamer(model=get_test_ollama_model())
 
 
 @notebook_test_replacement(NotebookOpenAINamerMock)

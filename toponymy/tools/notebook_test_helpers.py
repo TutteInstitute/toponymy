@@ -4,6 +4,10 @@ import os
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 
+# Ollama test models
+OLLAMA_CI_MODEL = "qwen2.5:0.5b"
+OLLAMA_LOCAL_FAMILY = "llama3.2"
+
 
 def doc_dir() -> Path:
     return PACKAGE_ROOT / "doc"
@@ -18,6 +22,12 @@ def get_notebooks(doc_dir: Path) -> list[Path]:
     Get a list of all ipynb notebooks in the specified directory.
     """
     return sorted(p for p in Path(doc_dir).glob("*.ipynb") if "xxx" not in p.name)
+
+
+def get_test_ollama_model():
+    if os.getenv("CI", "").lower() in {"true", "1"}:
+        return OLLAMA_CI_MODEL
+    return OLLAMA_LOCAL_FAMILY
 
 
 def notebook_test_replacement(replacement):

@@ -3,8 +3,13 @@ from pathlib import Path
 import logging
 import os
 
+from conftest import ollama_has_model
 from toponymy.tools.notebook_runner import run_notebook
-from toponymy.tools.notebook_test_helpers import doc_dir, get_notebooks
+from toponymy.tools.notebook_test_helpers import (
+    doc_dir,
+    get_notebooks,
+    get_test_ollama_model,
+)
 
 NOTEBOOK_CONFIG = {
     "basic_usage.ipynb": {
@@ -67,6 +72,10 @@ CI = os.getenv("CI", "").lower() == "true"
 def test_doc_notebook(notebook, notebook_testing_env):
     cfg = get_notebook_cfg(notebook)
     logging.info(notebook)
+    if cfg["has_openainamer"]:
+        model = get_test_ollama_model()
+        if not ollama_has_model(model):
+            pytest.skip(f"{model} not available in local Ollama for OpenAI mocking")
     run_notebook(
         notebook,
         timeout=3600,  # cfg["timeout"],
