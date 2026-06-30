@@ -3,7 +3,7 @@ from pathlib import Path
 import logging
 import os
 
-from conftest import ollama_has_model
+from conftest import ollama_has_model, ollama_running
 from toponymy.tools.notebook_runner import run_notebook
 from toponymy.tools.notebook_test_helpers import (
     doc_dir,
@@ -92,12 +92,12 @@ def test_doc_notebook(notebook, notebook_testing_env):
     #        pytest.skip(f"{model} not available in local Ollama for OpenAI mocking")
     model = get_test_ollama_model()
     logger.warning(f"get_test_ollama_model:{get_test_ollama_model()}")
+    logger.warning(f"ollama running:{ollama_running()}")
     logger.warning(f"ollama_has_model:{ollama_has_model(model)}")
     logger.warning(
         f'OPENI_API_KEY reset:{os.environ["OPENAI_API_KEY"] == "notarealkey"}'
     )
     logger.warning(f'NOTEBOOK_TESTING set:{os.environ["NOTEBOOK_TESTING"] == "true"}')
-    assert False
     run_notebook(
         notebook,
         timeout=3600,  # cfg["timeout"],

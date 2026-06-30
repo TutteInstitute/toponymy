@@ -8,6 +8,8 @@ import json
 import umap
 import pytest
 import httpx
+import subprocess
+import time
 
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
@@ -64,6 +66,44 @@ def ollama_has_model(model_or_family: str) -> bool:
 
     except Exception:
         return False
+
+
+def ollama_running() -> bool:
+    # Check if Ollama is installed
+    try:
+        subprocess.run(["ollama", "--version"], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.warning("Ollama not installed")
+        return False
+
+    # Check if Ollama service is running, if not try to start it briefly
+    try:
+        response = requests.get("http://localhost:11434/api/version", timeout=2)
+        service_running = response.status_code == 200
+    except:
+        service_running = False
+
+    if not service_running:
+        # Try to start Ollama service in background for testing
+        try:
+            ollama_process = subprocess.Popen(
+                ["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            time.sleep(3)  # Give it time to start
+
+            # Check if it started successfully
+            try:
+                response = requests.get("http://localhost:11434/api/version", timeout=2)
+                if response.status_code != 200:
+                    raise Exception("Ollama service failed to start")
+            except:
+                ollama_process.terminate()
+                logger.warning("Could not start Ollama service for testing")
+                return False
+        except:
+            logger.warning("Could not start Ollama service for testing")
+            return False
+    return True
 
 
 @pytest.fixture
