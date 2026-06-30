@@ -1,0 +1,961 @@
+import os
+import warnings
+
+import json
+import pytest
+from unittest.mock import Mock, patch, AsyncMock
+import pytest_asyncio
+
+from toponymy.llm_wrappers import (
+    AsyncCohereNamer,
+    AsyncAnthropicNamer,
+    AsyncLiteLLMNamer,
+    BatchAnthropicNamer,
+    AsyncOpenAINamer,
+    AsyncAzureAINamer,
+    AsyncOllamaNamer,
+    AsyncGoogleGeminiNamer,
+    AsyncTogether,
+    FailFastLLMError,
+    CallResult,
+    repair_json_string_backslashes,
+)
+from toponymy.new_templates import Prompt, TextTemplate
+from toponymy.templates import default_extract_topic_names
+from toponymy.tests.helpers.llm_test_config import (
+    validate_topic_name,
+    validate_cluster_names,
+    LITELLM_PROVIDER_CASES,
+    SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
+    UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
+)
+from toponymy.tests.helpers.errors import (
+    LITELLM_FAIL_FAST,
+    LITELLM_RETRYABLE,
+    make_litellm_error,
+)
+
+from conftest import is_ollama_model_available
+
+LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
+    "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
+)
+
+
+def extract_cluster_names(old_names):
+    return lambda response: default_extract_topic_names(
+        json.loads(repair_json_string_backslashes(response)), old_names, response
+    )
+
+
+# Helper for async tests
+async def async_return(value):
+    return value
+
+
+class MockAsyncResponse:
+    """Mock async response objects for different LLM services"""
+
+    @staticmethod
+    def create_chat_response(content: str):
+        class Choice:
+            def __init__(self, content):
+                self.message = Mock(content=content)
+
+        class Response:
+            def __init__(self, content):
+                self.choices = [Choice(content)]
+
+        return Response(content)
+
+
+# Test callback support in all wrappers
+@pytest.mark.parametrize("namer_cls, kwargs", SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS)
+def test_supported_async_namers_do_not_warn_on_callback(namer_cls, kwargs):
+    callback = lambda payload: None
+
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        namer = namer_cls(callback=callback, **kwargs)
+
+    debug_warnings = [w for w in record if "debug callback" in str(w.message)]
+
+    assert len(debug_warnings) == 0
+    assert namer._supports_debug_callback is True
+
+
+@pytest.mark.parametrize("namer_cls, kwargs", UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS)
+def test_unsupported_async_namers_warn_on_callback(namer_cls, kwargs):
+    callback = lambda payload: None
+
+    with pytest.warns(UserWarning, match="debug callback") as record:
+        namer = namer_cls(callback=callback, **kwargs)
+    assert namer._supports_debug_callback is False
+
+
+@pytest.mark.parametrize(
+    "namer_cls, kwargs",
+    SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS + UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
+)
+def test_async_no_warning_when_no_callback(namer_cls, kwargs):
+    with warnings.catch_warnings(record=True) as record:
+        warnings.simplefilter("always")
+        namer_cls(callback=None, **kwargs)
+    debug_warnings = [w for w in record if "debug callback" in str(w.message)]
+    assert len(debug_warnings) == 0
+
+
+# AsyncAnthropic Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY not set"
+)
+async def test_anthropic_connectivity_async_system_canary():
+    namer = AsyncAnthropicNamer()
+
+    result = await namer.connectivity_status(
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for Anthropic:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_anthropic_namer_returns_litellm_namer():
+    namer = AsyncAnthropicNamer()
+
+    assert isinstance(namer, AsyncLiteLLMNamer)
+
+
+def test_async_anthropic_namer_default():
+    namer = AsyncAnthropicNamer()
+
+    assert namer.model == "anthropic/claude-haiku-4-5-20251001"
+    assert namer.use_json_object is True
+    assert namer.supports_system_prompts is True
+
+
+def test_async_anthropic_namer_provider_kwargs_passthrough():
+    namer = AsyncAnthropicNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+# BatchAnthropic Tests
+@pytest_asyncio.fixture
+async def batch_anthropic_wrapper():
+    with patch("anthropic.Anthropic"):
+        wrapper = BatchAnthropicNamer(api_key="dummy")
+        yield wrapper
+
+
+@pytest.mark.asyncio
+async def test_batch_anthropic_submit_batch(batch_anthropic_wrapper, mock_data):
+    # Mock the batch creation
+    batch_id = "batch_123456"
+    batch_anthropic_wrapper.client.beta.messages.batches.create = Mock(
+        return_value=Mock(id=batch_id)
+    )
+    batch_anthropic_wrapper._wait_for_completion_async = AsyncMock(return_value=True)
+    batch_anthropic_wrapper._retrieve_batch_results = AsyncMock(return_value=["ok"])
+
+    result = await batch_anthropic_wrapper._call_llm_batch(
+        [Prompt("", "prompt1"), Prompt("", "prompt2")],
+        0.4,
+        128,
+    )
+    assert result == ["ok"]
+
+    # Verify the client was called with the expected parameters
+    batch_anthropic_wrapper.client.beta.messages.batches.create.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_anthropic_get_batch_status(batch_anthropic_wrapper):
+    # Mock the batch retrieval
+    status = "processing"
+    batch_anthropic_wrapper.client.beta.messages.batches.retrieve = Mock(
+        return_value=Mock(processing_status=status)
+    )
+
+    # Test the get_batch_status method
+    result = batch_anthropic_wrapper.get_batch_status("batch_123456")
+    assert result == status
+
+
+@pytest.mark.asyncio
+async def test_batch_anthropic_cancel_batch(batch_anthropic_wrapper):
+    # Mock the batch cancellation
+    batch_anthropic_wrapper.client.beta.messages.batches.cancel = Mock()
+
+    # Test the cancel_batch method
+    batch_anthropic_wrapper.cancel_batch("batch_123456")
+
+    # Verify the client was called with the expected parameters
+    batch_anthropic_wrapper.client.beta.messages.batches.cancel.assert_called_once_with(
+        "batch_123456"
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_anthropic_wait_for_completion(batch_anthropic_wrapper):
+    # Mock the batch retrieval to simulate a completed batch
+    batch_anthropic_wrapper.client.beta.messages.batches.retrieve = Mock(
+        return_value=Mock(processing_status="ended")
+    )
+
+    # Test the _wait_for_completion_async method with a very short timeout
+    batch_anthropic_wrapper.polling_interval = (
+        0.01  # Use a short polling interval for the test
+    )
+    result = await batch_anthropic_wrapper._wait_for_completion_async("batch_123456")
+    assert result is True
+
+
+# AsyncOpenAI Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")
+async def test_openai_connectivity_async_system_canary():
+    """
+    Canary test verifying live async connectivity to the OpenAI API
+    using the system prompt path.
+    """
+    namer = AsyncOpenAINamer()
+
+    result = await namer.connectivity_status(
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for OpenAI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_openai_namer_default():
+    namer = AsyncOpenAINamer()
+
+    assert namer.model == "openai/gpt-4o-mini"
+    assert namer.use_json_object is True
+    assert namer.supports_system_prompts is True
+
+
+def test_async_openai_namer_provider_kwargs_passthrough():
+    namer = AsyncOpenAINamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_openai_namer_base_url_maps_to_api_base():
+    """Remove once deprecation of base_url complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncOpenAINamer(base_url="http://localhost")
+
+    assert namer.api_base == "http://localhost"
+
+
+def test_async_openai_namer_organization_maps_to_provider_kwargs():
+    """Remove once deprecation of organization complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncOpenAINamer(organization="org-123")
+
+    assert namer.provider_kwargs["organization"] == "org-123"
+
+
+# Async Cohere Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("COHERE_API_KEY"), reason="COHERE_API_KEY not set")
+async def test_cohere_connectivity_async_system_canary():
+    """
+    Canary test verifying live async connectivity to the Cohere API
+    using the system prompt path.
+    """
+    namer = AsyncCohereNamer()
+
+    result = await namer.connectivity_status(
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for Cohere:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_cohere_namer_default():
+    namer = AsyncCohereNamer()
+
+    assert namer.model == "cohere/command-r-08-2024"
+    assert namer.use_json_object is False  # until prompting is stricter
+    assert namer.supports_system_prompts is True
+
+
+def test_async_cohere_namer_provider_kwargs_passthrough():
+    namer = AsyncCohereNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_cohere_namer_base_url_maps_to_api_base():
+    """Remove once deprecation of base_url complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer(base_url="http://localhost")
+
+    assert namer.api_base == "http://localhost"
+
+
+def test_async_cohere_namer_httpx_client_maps_to_provider_kwargs():
+    """Remove once deprecation of http_client complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer(httpx_client="httpx.Client(timeout=123)")
+
+    assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
+
+
+def test_async_cohere_namer_env_co_api_key_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("COHERE_API_KEY", raising=False)
+    monkeypatch.setenv("CO_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer()
+
+    assert namer.api_key == "dummy"
+
+
+def test_async_cohere_namer_env_co_api_url_maps_to_api_base(monkeypatch):
+    monkeypatch.delenv("COHERE_API_BASE", raising=False)
+    monkeypatch.setenv("CO_API_URL", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncCohereNamer()
+
+    assert namer.api_base == "dummy"
+
+
+# AsyncAzureAI Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("AZURE_AI_API_KEY"), reason="AZURE_AI_API_KEY not set"
+)
+async def test_azureai_connectivity_async_plain_canary():
+    """
+    Canary test verifying live async connectivity to the Azure AI API
+    using the plain prompt path.
+    """
+    namer = AsyncAzureAINamer(model="gpt-4o")
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Azure AI:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_azureai_namer_default():
+    namer = AsyncAzureAINamer(model="dummy")
+
+    assert namer.model == "azure_ai/dummy"
+
+
+def test_async_azureai_namer_provider_kwargs_passthrough():
+    namer = AsyncAzureAINamer(model="dummy", provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_azureai_namer_endpoint_maps_to_api_base():
+    namer = AsyncAzureAINamer(model="dummy", endpoint="http://localhost")
+
+    assert namer.api_base == "http://localhost"
+
+
+def test_async_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("AZURE_AI_API_KEY", raising=False)
+    monkeypatch.setenv("AZURE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncAzureAINamer(model="dummy")
+
+    assert namer.api_key == "dummy"
+
+
+# AsyncOllama Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+async def test_ollama_connectivity_async_plain_canary():
+    """
+    Canary test verifying live async connectivity to the Azure AI API
+    using the plain prompt path.
+    """
+    model = "llama3.2"
+    if not is_ollama_model_available(model):
+        pytest.skip(f"{model} not available in local Ollama")
+    namer = AsyncOllamaNamer(model=model)
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Ollama:\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_ollama_namer_default():
+    namer = AsyncOllamaNamer()
+
+    assert namer.model == "ollama_chat/llama3.2"
+    assert namer.api_base == "http://localhost:11434"
+
+
+def test_async_ollama_namer_provider_kwargs_passthrough():
+    namer = AsyncOllamaNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_ollama_namer_host_maps_to_api_base():
+    """Remove once deprecation of host is complete"""
+    with pytest.warns(FutureWarning):
+        namer = AsyncOllamaNamer(host="http://localhost")
+
+    assert namer.api_base == "http://localhost"
+
+
+# AsyncGoogleGemini Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(not os.getenv("GEMINI_API_KEY"), reason="GEMINI_API_KEY not set")
+@pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
+async def test_gemini_connectivity_async_system_canary():
+    namer = AsyncGoogleGeminiNamer()
+
+    result = await namer.connectivity_status(
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for Gemini:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_gemini_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = AsyncGoogleGeminiNamer()
+
+    assert isinstance(namer, AsyncLiteLLMNamer)
+
+
+@pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
+def test_async_gemini_namer_default():
+    namer = AsyncGoogleGeminiNamer()
+
+    assert namer.model == "gemini/gemini-2.5-flash-lite"
+    assert namer.use_json_object is True
+    assert namer.supports_system_prompts is True
+
+
+@pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
+def test_async_gemini_namer_provider_kwargs_passthrough():
+    namer = AsyncGoogleGeminiNamer(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+def test_async_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "dummy")
+    with pytest.warns(FutureWarning):
+        namer = AsyncGoogleGeminiNamer()
+
+    assert namer.api_key == "dummy"
+
+
+# AsyncTogether Tests
+@pytest.mark.external
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.getenv("TOGETHERAI_API_KEY"), reason="TOGETHERAI_API_KEY not set"
+)
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
+async def test_together_connectivity_async_plain_canary():
+    namer = AsyncTogether()
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for Together:\n"
+        f"{result['error_type']}: {result['error_message']}"
+    )
+
+
+def test_async_together_namer_returns_litellm_namer():
+    with pytest.warns(FutureWarning):
+        namer = AsyncTogether(api_key="dummy")
+
+    assert isinstance(namer, AsyncLiteLLMNamer)
+
+
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
+def test_async_together_namer_default():
+    namer = AsyncTogether()
+
+    assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
+
+
+@pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
+def test_async_together_namer_provider_kwargs_passthrough():
+    namer = AsyncTogether(provider_kwargs={"timeout": 123})
+
+    assert namer.provider_kwargs["timeout"] == 123
+
+
+# LiteLLM Tests
+@pytest_asyncio.fixture
+async def async_litellm_wrapper():
+    mock_client = AsyncMock()
+    mock_client.close = AsyncMock()
+    with patch("litellm.acompletion", return_value=mock_client):
+        wrapper = AsyncLiteLLMNamer(api_key="dummy")
+        try:
+            yield wrapper
+        finally:
+            await wrapper.close()
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+# Temporary workaround for upstream LiteLLM async logging teardown noise.
+# Remove once LiteLLM cleanup is fixed
+@pytest.mark.filterwarnings(LITELLM_ASYNC_LOGGING_WARNING_FILTER)
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+async def test_litellm_connectivity_canary_async_plain(provider_cfg):
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
+    namer = AsyncLiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = await namer.connectivity_status()
+
+    assert result["success"], (
+        f"Async plain canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.external
+@pytest.mark.asyncio
+# Temporary workaround for upstream LiteLLM async logging teardown noise.
+# Remove once LiteLLM cleanup is fixed
+@pytest.mark.filterwarnings(LITELLM_ASYNC_LOGGING_WARNING_FILTER)
+@pytest.mark.parametrize("provider_cfg", LITELLM_PROVIDER_CASES)
+async def test_litellm_connectivity_canary_async_system(provider_cfg):
+    if not os.getenv(provider_cfg["api_key_env"]):
+        pytest.skip(f"{provider_cfg['api_key_env']} not set")
+
+    namer = AsyncLiteLLMNamer(
+        model=provider_cfg["model"],
+    )
+
+    result = await namer.connectivity_status(
+        prompt=Prompt(
+            "You are a topic naming assistant.",
+            "Return a short JSON object describing your role.",
+        ),
+    )
+
+    assert result["success"], (
+        f"Async system canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
+        f"  Error: {result['error_type']}: {result['error_message']}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_success(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("", "test prompt")],
+            TextTemplate.extract_name,
+        )
+
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_system_prompt(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("system prompt", "test prompt")],
+            TextTemplate.extract_name,
+        )
+
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_success(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            [Prompt("", "test prompt")],
+            [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
+        )
+
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_system_prompt(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            [Prompt("system prompt", "test prompt")],
+            [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
+        )
+
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_prompt_list(
+    async_litellm_wrapper, mock_data
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("", "prompt1"), Prompt("", "prompt2"), Prompt("", "prompt3")],
+            TextTemplate.extract_name,
+        )
+    assert len(result) == 3
+    assert all(name == "Machine Learning" for name in result)
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_prompt_list(
+    async_litellm_wrapper, mock_data
+):
+    """Test processing multiple prompt/old_names pairs in a single call."""
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
+        prompts = [Prompt("", "prompt1"), Prompt("", "prompt2")]
+
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            prompts,
+            old_names_list,
+            extract_cluster_names(old_names_list[0]),
+        )
+    assert len(result) == 2
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_malformed_mapping(
+    async_litellm_wrapper,
+    mock_data,
+):
+    response = MockAsyncResponse.create_chat_response(mock_data["malformed_mapping"])
+
+    with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            [Prompt("", "test prompt")],
+            [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
+        )
+
+    assert len(result) == 1
+    validate_cluster_names(result[0])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", LITELLM_FAIL_FAST)
+async def test_async_litellm_generate_topic_names_fail_fast_raises(
+    async_litellm_wrapper,
+    error_class,
+):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=make_litellm_error(error_class)),
+    ):
+        with pytest.raises(FailFastLLMError):
+            await async_litellm_wrapper.generate_topic_names(
+                [Prompt("", "test prompt")],
+                TextTemplate.extract_name,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", LITELLM_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_litellm_generate_topic_names_retryable_returns_empty(
+    async_litellm_wrapper,
+    error_class,
+):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ) as mock_acompletion:
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("", "test prompt")],
+            TextTemplate.extract_name,
+        )
+
+    assert result == [""]
+    assert mock_acompletion.await_count == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error_class", LITELLM_RETRYABLE)
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_litellm_generate_topic_cluster_names_retryable_returns_old_names(
+    async_litellm_wrapper,
+    mock_data,
+    error_class,
+):
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ):
+        result = await async_litellm_wrapper.generate_topic_cluster_names(
+            [Prompt("", "test prompt")],
+            [mock_data["old_names"]],
+            extract_cluster_names(mock_data["old_names"]),
+        )
+
+    assert result == [mock_data["old_names"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore:Failed to generate")
+async def test_async_litellm_retries_per_item_not_whole_batch(
+    async_litellm_wrapper,
+    mock_data,
+):
+    good_response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+    error_class = LITELLM_RETRYABLE[0]
+    call_counts = {"prompt1": 0, "prompt2": 0}
+
+    async def mock_acompletion(**kwargs):
+        prompt_text = kwargs["messages"][-1]["content"]
+        call_counts[prompt_text] += 1
+
+        if prompt_text == "prompt1":
+            return good_response
+        if prompt_text == "prompt2":
+            raise make_litellm_error(error_class)
+
+        raise AssertionError(f"Unexpected prompt: {prompt_text}")
+
+    with patch("litellm.acompletion", new=AsyncMock(side_effect=mock_acompletion)):
+        result = await async_litellm_wrapper.generate_topic_names(
+            [Prompt("", "prompt1"), Prompt("", "prompt2")],
+            TextTemplate.extract_name,
+        )
+
+    assert len(result) == 2
+    validate_topic_name(result[0])
+    assert result[1] == ""
+    assert call_counts["prompt1"] == 1
+    assert call_counts["prompt2"] == 3
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_names_retry_exhausted_warns(
+    async_litellm_wrapper,
+):
+    error_class = LITELLM_RETRYABLE[0]
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ):
+        with pytest.warns(UserWarning, match="Failed to generate topic name"):
+            result = await async_litellm_wrapper.generate_topic_names(
+                [Prompt("", "test prompt")],
+                TextTemplate.extract_name,
+            )
+
+    assert result == [""]
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_generate_topic_cluster_names_retry_exhausted_warns(
+    async_litellm_wrapper,
+    mock_data,
+):
+    error_class = LITELLM_RETRYABLE[0]
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
+    ):
+        with pytest.warns(UserWarning):
+            result = await async_litellm_wrapper.generate_topic_cluster_names(
+                [Prompt("", "test prompt")],
+                [mock_data["old_names"]],
+                extract_cluster_names(mock_data["old_names"]),
+            )
+
+    assert result == [mock_data["old_names"]]
+
+
+@pytest.mark.parametrize(
+    "use_json_object,detected_support,expected",
+    [
+        (True, False, True),
+        (False, True, False),
+        (None, True, True),
+        (None, False, False),
+    ],
+)
+def test_async_litellm_should_use_json_object(
+    use_json_object,
+    detected_support,
+    expected,
+):
+    wrapper = AsyncLiteLLMNamer(
+        model="openai/gpt-4o-mini",
+        use_json_object=use_json_object,
+    )
+
+    with patch.object(
+        wrapper,
+        "_detect_json_object_support",
+        return_value=detected_support,
+    ) as mock_detect:
+        assert wrapper._should_use_json_object() is expected
+        # run a second time to verify caching behavior via call_count
+        assert wrapper._should_use_json_object() is expected
+
+    if use_json_object is None:
+        assert mock_detect.call_count == 1
+    else:
+        mock_detect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_system_prompt_probe_falls_back_and_caches(
+    async_litellm_wrapper,
+    mock_data,
+):
+    unsupported_error = Exception("system messages are not supported")
+    good_response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[unsupported_error, good_response]),
+    ) as mock_acompletion:
+        result = await async_litellm_wrapper._call_single_llm(
+            Prompt("system", "user"),
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert async_litellm_wrapper._system_prompt_capability is False
+    assert mock_acompletion.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_system_prompt_cached_false_flattens_immediately(
+    async_litellm_wrapper,
+):
+    async_litellm_wrapper._system_prompt_capability = False
+    good_response = MockAsyncResponse.create_chat_response("prompt response")
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=good_response),
+    ) as mock_acompletion:
+        await async_litellm_wrapper._call_single_llm(
+            Prompt("system", "user"),
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    kwargs = mock_acompletion.await_args.kwargs
+    assert kwargs["messages"] == [
+        {"role": "user", "content": "System: system\n\nUser: user"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_system_prompt_probe_success_caches_true(
+    async_litellm_wrapper,
+    mock_data,
+):
+    good_response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=good_response),
+    ):
+        result = await async_litellm_wrapper._call_single_llm(
+            Prompt("system", "user"),
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert async_litellm_wrapper._system_prompt_capability is True
+
+
+# Test for AsyncLLMWrapper base class error cases
+@pytest.mark.asyncio
+async def test_async_wrapper_invalid_input(async_litellm_wrapper):
+    """Test handling of invalid input types."""
+    with pytest.raises(ValueError):
+        await async_litellm_wrapper.generate_topic_cluster_names(
+            [Prompt("", "prompt1"), Prompt("", "prompt2")],
+            [["name1", "name2"]],
+            extract_cluster_names(["name1", "name2"]),
+        )  # Mismatched lengths
