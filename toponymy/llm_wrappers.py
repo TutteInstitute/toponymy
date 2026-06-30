@@ -3572,6 +3572,7 @@ def OpenAINamer(
     --------
     LiteLLMNamer : The underlying namer, supports 100+ providers directly.
     """
+    logger.info("Using OpenAINamer")
     if base_url is not None:
         warn(
             "base_url is deprecated, use api_base instead.",

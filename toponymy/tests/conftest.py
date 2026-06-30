@@ -55,11 +55,11 @@ def async_llm():
 
 def ollama_has_model(model_or_family: str) -> bool:
     try:
-        r = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
-        r.raise_for_status()
+        response = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        response.raise_for_status()
 
-        models = [m["name"] for m in r.json().get("models", [])]
-
+        models = [m["name"] for m in response.json().get("models", [])]
+        logger.warning(f"ollama models:{models}")
         # CI case: exact match
         if model_or_family == OLLAMA_CI_MODEL:
             return any(m == OLLAMA_CI_MODEL for m in models)
@@ -81,8 +81,9 @@ def ollama_running() -> bool:
 
     # Check if Ollama service is running, if not try to start it briefly
     try:
-        response = requests.get("http://localhost:11434/api/version", timeout=2)
-        service_running = response.status_code == 200
+        response = httpx.get("http://localhost:11434/api/version", timeout=2)
+        response.raise_for_status()
+        service_running = True
     except:
         service_running = False
 
@@ -96,9 +97,8 @@ def ollama_running() -> bool:
 
             # Check if it started successfully
             try:
-                response = requests.get("http://localhost:11434/api/version", timeout=2)
-                if response.status_code != 200:
-                    raise Exception("Ollama service failed to start")
+                response = httpx.get("http://localhost:11434/api/version", timeout=2)
+                response.raise_for_status()
             except:
                 ollama_process.terminate()
                 logger.warning("Could not start Ollama service for testing")
