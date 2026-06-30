@@ -84,10 +84,10 @@ def test_doc_notebook(notebook, notebook_testing_env):
     logging.info(notebook)
     if not cfg.get("run_in_pr") and (os.getenv("BUILD_REASON") == "PullRequest"):
         pytest.skip(f"Skipped in PR CI")
-    if cfg.get("has_openainamer", False):
-        model = get_test_ollama_model()
-        if not ollama_has_model(model):
-            pytest.skip(f"{model} not available in local Ollama for OpenAI mocking")
+    # if cfg.get("has_openainamer", False):
+    #    model = get_test_ollama_model()
+    #    if not ollama_has_model(model):
+    #        pytest.skip(f"{model} not available in local Ollama for OpenAI mocking")
     run_notebook(
         notebook,
         timeout=3600,  # cfg["timeout"],

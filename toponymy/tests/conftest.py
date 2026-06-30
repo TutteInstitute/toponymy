@@ -231,6 +231,11 @@ def premade_topic_model_path():
 
 @pytest.fixture(scope="function")
 def notebook_testing_env():
+    """
+    Sets/unsets the NOTEBOOK_TESTING environment variable to signal
+    notebook_test_replacement decorator, and sets/unsets the OPENAI_API_KEY
+    to a non-existing key make sure live calls aren't made by accident.
+    """
     old = os.environ.get("NOTEBOOK_TESTING")
     old_openai = os.environ.get("OPENAI_API_KEY")
 
