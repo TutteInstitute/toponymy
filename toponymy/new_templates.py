@@ -34,6 +34,7 @@ class Template(ABC):
         """Build the prompt used to name one topic cluster."""
         pass
 
+    @staticmethod
     @abstractmethod
     def extract_name(response: str) -> Any:
         """Extract the generated name from a model response."""
@@ -49,6 +50,7 @@ class Template(ABC):
         """Build the prompt used to rename similar topic clusters."""
         pass
 
+    @staticmethod
     @abstractmethod
     def extract_disambiguated_names(response: str) -> list[str]:
         """Extract renamed topics from a disambiguation response."""
@@ -194,6 +196,7 @@ Please provide new {{name_kind}} names for each topic, following the JSON output
         context = self._disambiguation_context(names, features, name_kind)
         return Prompt(system_prompt.render(**context), user_prompt.render(**context))
 
+    @staticmethod
     def extract_disambiguated_names(response: str) -> list[str]:
         try:
             response_json = _json_from_response(response, GET_TOPIC_CLUSTER_NAMES_REGEX)
@@ -278,6 +281,7 @@ Recall that the response must be {{cluster_response_description}}
         context = self._add_template_features(features, name_kind)
         return Prompt(system_prompt.render(**context), user_prompt.render(**context))
 
+    @staticmethod
     def extract_name(response: str) -> str:
         try:
             response_json = _json_from_response(response, GET_TOPIC_NAME_REGEX)
@@ -299,6 +303,7 @@ class MultilingualENFRTemplate(TextTemplate):
         "well-defined the topic name is given the input information."
     )
 
+    @staticmethod
     def extract_name(response: str) -> str:
         try:
             response_json = _json_from_response(
@@ -344,6 +349,7 @@ class SummaryTemplate(TextTemplate):
         "provide a detailed topic analysis, a summary, and a name"
     )
 
+    @staticmethod
     def extract_name(response: str) -> tuple[str, str, str]:
         try:
             response_json = _json_from_response(
