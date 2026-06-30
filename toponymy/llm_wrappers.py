@@ -3492,7 +3492,7 @@ def NotebookOpenAINamerMock(*args, **kwargs):
     """
     For mocking OpenAINamer calls with a local Ollama model.
     """
-    logging.info("Using NotebookOpenAINamerMock instead of OpenAINamer")
+    logger.info("Using NotebookOpenAINamerMock instead of OpenAINamer")
     return OllamaNamer(model=get_test_ollama_model())
 
 
