@@ -3,8 +3,10 @@ from pathlib import Path
 import logging
 import os
 
+from nbformat.v4 import new_notebook, new_code_cell
+
 from conftest import ollama_has_model, ollama_running
-from toponymy.tools.notebook_runner import run_notebook
+from toponymy.tools.notebook_runner import collect_log_lines, run_notebook
 from toponymy.tools.notebook_test_helpers import (
     doc_dir,
     get_notebooks,
@@ -77,6 +79,65 @@ def get_notebook_cfg(path: str):
 TEST_NOTEBOOKS = get_notebooks(doc_dir())
 
 CI = os.getenv("CI", "").lower() == "true"
+
+
+def test_show_env():
+    import os
+
+    print("PYTEST process NOTEBOOK_TESTING:", os.getenv("NOTEBOOK_TESTING"))
+    assert os.getenv("NOTEBOOK_TESTING") is None
+
+
+def test_collect_log_lines_from_stream_output():
+    nb = new_notebook(cells=[new_code_cell("print('WARNING: hello from notebook')")])
+    nb.cells[0].outputs = [
+        {
+            "name": "stdout",
+            "output_type": "stream",
+            "text": "WARNING: hello from notebook\n",
+        }
+    ]
+
+    assert collect_log_lines(nb) == [("warning", "WARNING: hello from notebook")]
+
+
+def test_run_notebook_captures_logger_output(tmp_path):
+    path = tmp_path / "logging_capture.ipynb"
+    nb = new_notebook(
+        cells=[new_code_cell("import logging\nlogging.warning('hello from logger')")]
+    )
+    with open(path, "w") as f:
+        import nbformat
+
+        nbformat.write(nb, f)
+
+    lines = run_notebook(str(path), timeout=30, return_log_lines=True)
+    assert any(
+        level == "warning" and "hello from logger" in line for level, line in lines
+    )
+
+
+def test_run_notebook_ignores_litellm_output(tmp_path):
+    path = tmp_path / "litellm_ignore.ipynb"
+    nb = new_notebook(
+        cells=[
+            new_code_cell(
+                "import logging\nlogging.warning('LiteLLM:WARNING: silly warning from provider')"
+            )
+        ]
+    )
+    with open(path, "w") as f:
+        import nbformat
+
+        nbformat.write(nb, f)
+
+    lines = run_notebook(
+        str(path),
+        timeout=30,
+        return_log_lines=True,
+        ignore_litellm=True,
+    )
+    assert not lines
 
 
 # @pytest.mark.skipif(CI, reason="Skipping in CI environment")

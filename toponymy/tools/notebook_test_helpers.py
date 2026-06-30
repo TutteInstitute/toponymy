@@ -36,13 +36,13 @@ def notebook_test_replacement(replacement):
     """
 
     def decorator(func):
-        if os.getenv("NOTEBOOK_TESTING", "").lower() == "true":
 
-            @functools.wraps(func)
-            def wrapper(*args, **kwargs):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            if os.getenv("NOTEBOOK_TESTING", "").lower() == "true":
                 return replacement(*args, **kwargs)
+            return func(*args, **kwargs)
 
-            return wrapper
-        return func
+        return wrapper
 
     return decorator
