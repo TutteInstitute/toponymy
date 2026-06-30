@@ -92,8 +92,9 @@ def test_doc_notebook(notebook, notebook_testing_env):
     logging.warning(f"get_test_ollama_model:{get_test_ollama_model()}")
     logging.warning(f"ollama_has_model:{ollama_has_model(model)}")
     logging.warning(
-        f"OPENI_API_KEY reset:{os.environ["OPENAI_API_KEY"] == "notarealkey"}"
+        f'OPENI_API_KEY reset:{os.environ["OPENAI_API_KEY"] == "notarealkey"}'
     )
+    logging.warning(f'NOTEBOOK_TESTING set:{os.environ["NOTEBOOK_TESTING"] == "true"}')
     assert False
     run_notebook(
         notebook,
