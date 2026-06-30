@@ -147,18 +147,15 @@ def test_doc_notebook(notebook, notebook_testing_env):
 
     if not cfg.get("run_in_pr") and (os.getenv("BUILD_REASON") == "PullRequest"):
         pytest.skip(f"Skipped in PR CI")
-    # if cfg.get("has_openainamer", False):
-    #    model = get_test_ollama_model()
-    #    if not ollama_has_model(model):
-    #        pytest.skip(f"{model} not available in local Ollama for OpenAI mocking")
-    model = get_test_ollama_model()
-    logger.warning(f"get_test_ollama_model:{get_test_ollama_model()}")
-    logger.warning(f"ollama running:{ollama_running()}")
-    logger.warning(f"ollama_has_model:{ollama_has_model(model)}")
-    logger.warning(
-        f'OPENI_API_KEY reset:{os.environ["OPENAI_API_KEY"] == "notarealkey"}'
-    )
-    logger.warning(f'NOTEBOOK_TESTING set:{os.environ["NOTEBOOK_TESTING"] == "true"}')
+    if cfg.get("has_openainamer", False):
+        model = get_test_ollama_model()
+        logger.info(f"get_test_ollama_model:{get_test_ollama_model()}")
+        logger.info(f"ollama running:{ollama_running()}")
+        logger.info(f"ollama_has_model:{ollama_has_model(model)}")
+        if not ollama_has_model(model):
+            pytest.skip(f"{model} not available in local Ollama for OpenAI mocking")
+    logger.info(f'OPENI_API_KEY reset:{os.environ["OPENAI_API_KEY"] == "notarealkey"}')
+    logger.info(f'NOTEBOOK_TESTING set:{os.environ["NOTEBOOK_TESTING"] == "true"}')
     run_notebook(
         notebook,
         timeout=3600,  # cfg["timeout"],

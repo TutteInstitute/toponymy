@@ -106,7 +106,7 @@ stages:
       - template: .azure/templates/run-tests.yml
         parameters:
           pytestMarker: 'not external'
-          includeOllama: true
+          installOllama: true
           includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
 
     - job: ExternalTests
