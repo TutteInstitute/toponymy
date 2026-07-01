@@ -149,7 +149,7 @@ def test_doc_notebook(notebook, notebook_testing_env):
         pytest.skip(f"Skipped in PR CI")
     if cfg.get("has_openainamer", False):
         model = get_test_ollama_model()
-        logger.info(f"get_test_ollama_model:{get_test_ollama_model()}")
+        logger.info(f"get_test_ollama_model:{model}")
         logger.info(f"ollama running:{ollama_running()}")
         logger.info(f"ollama_has_model:{ollama_has_model(model)}")
         if not ollama_has_model(model):
