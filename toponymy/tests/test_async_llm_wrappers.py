@@ -31,7 +31,8 @@ from toponymy.tests.helpers.errors import (
     make_litellm_error,
 )
 
-from conftest import is_ollama_model_available
+from conftest import ollama_has_model
+from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 
 LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
     "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
@@ -379,8 +380,8 @@ async def test_ollama_connectivity_async_plain_canary():
     Canary test verifying live async connectivity to the Azure AI API
     using the plain prompt path.
     """
-    model = "llama3.2"
-    if not is_ollama_model_available(model):
+    model = get_test_ollama_model()
+    if not ollama_has_model(model):
         pytest.skip(f"{model} not available in local Ollama")
     namer = AsyncOllamaNamer(model=model)
 
