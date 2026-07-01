@@ -145,8 +145,8 @@ def test_run_notebook_ignores_litellm_output(tmp_path):
 def test_doc_notebook(notebook, notebook_testing_env):
     cfg = get_notebook_cfg(notebook)
 
-    if not cfg.get("run_in_pr") and (os.getenv("BUILD_REASON") == "PullRequest"):
-        pytest.skip(f"Skipped in PR CI")
+    # if not cfg.get("run_in_pr") and (os.getenv("BUILD_REASON") == "PullRequest"):
+    #    pytest.skip(f"Skipped in PR CI")
     if cfg.get("has_openainamer", False):
         model = get_test_ollama_model()
         logger.info(f"get_test_ollama_model:{model}")
