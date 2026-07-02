@@ -22,10 +22,7 @@ def test_cannot_create_abstract_feature_extractor():
 
 @pytest.mark.parametrize("n_exemplars", [4, 15])
 def test_random_exemplar(
-    n_exemplars,
-    test_object_cluster_label_vector,
-    all_topic_objects,
-    topic_objects
+    n_exemplars, test_object_cluster_label_vector, all_topic_objects, topic_objects
 ):
     exemplars, indices = TextExemplarExtractor.random_exemplars(
         test_object_cluster_label_vector, all_topic_objects, n_exemplars=n_exemplars
@@ -94,19 +91,19 @@ def test_empty_cluster_diverse(
 ):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
-    exemplar_results, exemplar_indices = TextExemplarExtractor.submodular_selection_exemplars(
-        cluster_label_vector=new_clustering,
-        objects=all_topic_objects,
-        object_vectors=topic_vectors,
-        submodular_function=submodular_function,
+    exemplar_results, exemplar_indices = (
+        TextExemplarExtractor.submodular_selection_exemplars(
+            cluster_label_vector=new_clustering,
+            objects=all_topic_objects,
+            object_vectors=topic_vectors,
+            submodular_function=submodular_function,
+        )
     )
     assert len(exemplar_results[0]) == 0
 
 
 def test_bad_submodular_function(
-    test_object_cluster_label_vector,
-    all_topic_objects,
-    topic_vectors
+    test_object_cluster_label_vector, all_topic_objects, topic_vectors
 ):
     with pytest.raises(ValueError):
         TextExemplarExtractor.submodular_selection_exemplars(
@@ -125,11 +122,13 @@ def test_submodular_exemplar(
     topic_vectors,
     topic_objects,
 ):
-    exemplar_results, exemplar_indices = TextExemplarExtractor.submodular_selection_exemplars(
-        cluster_label_vector=test_object_cluster_label_vector,
-        objects=all_topic_objects,
-        object_vectors=topic_vectors,
-        n_exemplars=n_exemplars,
+    exemplar_results, exemplar_indices = (
+        TextExemplarExtractor.submodular_selection_exemplars(
+            cluster_label_vector=test_object_cluster_label_vector,
+            objects=all_topic_objects,
+            object_vectors=topic_vectors,
+            n_exemplars=n_exemplars,
+        )
     )
     assert len(exemplar_results) == test_object_cluster_label_vector.max() + 1
 
@@ -139,10 +138,7 @@ def test_submodular_exemplar(
         )
 
 
-def test_empty_cluster_random(
-    test_object_cluster_label_vector,
-    all_topic_objects
-):
+def test_empty_cluster_random(test_object_cluster_label_vector, all_topic_objects):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
     exemplar_results, exemplar_indices = TextExemplarExtractor.random_exemplars(
