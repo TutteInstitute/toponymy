@@ -13,7 +13,7 @@ from typing import (
 )
 from warnings import warn
 
-from apricot import SaturatedCoverageSelection
+from apricot import GraphCutSelection, SaturatedCoverageSelection
 from joblib import delayed, effective_n_jobs, Parallel
 import numba
 import numpy as np
@@ -24,6 +24,7 @@ from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from sklearn.metrics import pairwise_distances
 from sklearn.utils.validation import check_is_fitted
 from tqdm.auto import tqdm
+from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.new_clustering import Clusterer
 from toponymy.new_types import TextEmbedderProtocol
@@ -232,7 +233,7 @@ class TextExemplarExtractor(FeatureExtractorBase):
             cluster_label_vector = layer.labels
 
             if selection_method == "facility_location":
-                exemplars, indices = submodular_selection_exemplars(
+                exemplars, indices = TextExemplarExtractor.submodular_selection_exemplars(
                     cluster_label_vector,
                     objects,
                     object_vectors,
@@ -240,7 +241,7 @@ class TextExemplarExtractor(FeatureExtractorBase):
                     **kwargs,
                 )
             elif selection_method == "saturated_coverage":
-                exemplars, indices = submodular_selection_exemplars(
+                exemplars, indices = TextExemplarExtractor.submodular_selection_exemplars(
                     cluster_label_vector,
                     objects,
                     object_vectors,
@@ -248,11 +249,11 @@ class TextExemplarExtractor(FeatureExtractorBase):
                     **kwargs,
                 )
             elif selection_method == "random":
-                exemplars, indices = random_exemplars(
+                exemplars, indices = TextExemplarExtractor.random_exemplars(
                     cluster_label_vector, objects, object_vectors, **kwargs
                 )
             elif selection_method == "central":
-                exemplars, indices = diverse_exemplars(
+                exemplars, indices = TextExemplarExtractor.diverse_exemplars(
                     cluster_label_vector, objects, object_vectors, **kwargs
                 )
             else:
@@ -660,7 +661,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             )
             ngrammer = cv.build_analyzer()
         else:
-            ngrammer = _create_tokenizers_ngrammer(tokenizer, ngram_range=ngram_range)
+            ngrammer = TextKeyphraseExtractor._create_tokenizers_ngrammer(tokenizer, ngram_range=ngram_range)
         return ngrammer
 
     def build_keyphrase_vocabulary(
@@ -710,7 +711,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                 f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase identification."
             )
         chunked_count_dicts = Parallel(n_jobs=n_chunks)(
-            delayed(self._count_docs_ngrams)(
+            delayed(TextKeyphraseExtractor._count_docs_ngrams)(
                 objects[i : i + chunk_size],
                 ngrammer,
                 stop_words,
@@ -723,7 +724,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             print("Combining count dictionaries ...")
         # Combine dictionaries and count the most common ngrams
         # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
-        all_vocab_counts = self._tree_combine_dicts(
+        all_vocab_counts = TextKeyphraseExtractor._tree_combine_dicts(
             chunked_count_dicts, max_ngrams=max_features * 10
         )
         vocab_counter = Counter(all_vocab_counts)
@@ -740,6 +741,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         return result
 
     def build_keyphrase_count_matrix(
+        self,
         objects: List[str],
         keyphrases: Dict[str, int],
         ngrammer: Ngrammer,
@@ -775,17 +777,17 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         n_chunks = effective_n_jobs(n_jobs)
         chunk_size = max((len(objects) // n_chunks) + 1, min_chunk_size)
         n_chunks = (len(objects) // chunk_size) + 1
-        if verbose_output:
+        if verbose:
             print(
                 f"Chunking into {n_chunks} chunks of size {chunk_size} for keyphrase count construction."
             )
         chunked_count_matrices = Parallel(n_jobs=n_chunks)(
-            delayed(build_count_matrix)(
+            delayed(TextKeyphraseExtractor.build_count_matrix)(
                 objects[i : i + chunk_size], keyphrases, ngrammer
             )
             for i in range(0, len(objects), chunk_size)
         )
-        if verbose_output:
+        if verbose:
             print("Combining count matrix chunks ...")
 
         # stack the count matrices
@@ -966,7 +968,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             cluster_label_vector = layer.labels
 
             if selection_method == "information_weighted":
-                keyphrases_per_cluster = information_weighted_keyphrases(
+                keyphrases_per_cluster = TextKeyphrasExtractor.information_weighted_keyphrases(
                     cluster_label_vector=cluster_label_vector,
                     object_x_keyphrase_matrix=self.object_x_feature_matrix,
                     keyphrase_list=self.keyphrases,
@@ -975,7 +977,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                     **kwargs,
                 )
             elif selection_method == "central":
-                keyphrases_per_cluster = central_keyphrases(
+                keyphrases_per_cluster = TextKeyphraseExtractor.central_keyphrases(
                     cluster_label_vector=cluster_label_vector,
                     object_x_keyphrase_matrix=self.object_x_feature_matrix,
                     keyphrase_list=self.keyphrases,
@@ -984,7 +986,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                     **kwargs,
                 )
             elif selection_method == "bm25":
-                keyphrases_per_cluster = bm25_keyphrases(
+                keyphrases_per_cluster = TextKeyphraseExtractor.bm25_keyphrases(
                     cluster_label_vector=cluster_label_vector,
                     object_x_keyphrase_matrix=self.object_x_feature_matrix,
                     keyphrase_list=self.keyphrases,
@@ -997,7 +999,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                 "facility_location",
                 "graph_cut",
             ]:
-                keyphrases_per_cluster = submodular_selection_information_keyphrases(
+                keyphrases_per_cluster = TextKeyphraseExtractor.submodular_selection_information_keyphrases(
                     cluster_label_vector=cluster_label_vector,
                     object_x_keyphrase_matrix=self.object_x_feature_matrix,
                     keyphrase_list=self.keyphrases,
@@ -1102,7 +1104,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         result = []
         for i in range(0, len(dict_list) - 1, 2):
             result.append(
-                _combine_dicts(dict_list[i], dict_list[i + 1], max_ngrams=max_ngrams)
+                TextKeyphraseExtractor._combine_dicts(dict_list[i], dict_list[i + 1], max_ngrams=max_ngrams)
             )
         if len(dict_list) % 2 == 1:
             result.append(dict_list[-1])
@@ -1113,8 +1115,41 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         dict_list: List[Dict[str, int]], max_ngrams: int = 250_000
     ) -> Dict[str, int]:
         while len(dict_list) > 1:
-            dict_list = self._combine_tree_layer(dict_list, max_ngrams=max_ngrams)
+            dict_list = TextKeyphraseExtractor._combine_tree_layer(dict_list, max_ngrams=max_ngrams)
         return dict_list[0]
+
+    @staticmethod
+    def build_count_matrix(
+        docs: List[str], vocab: Dict[str, int], ngrammer: Ngrammer
+    ) -> scipy.sparse.csr_matrix:
+        col_indices = []
+        indptr = [0]
+        data = []
+        for doc in docs:
+            ngram_counter = {}
+            for gram in ngrammer(doc):
+                try:
+                    ngram_idx = vocab[gram]
+                    if ngram_idx in ngram_counter:
+                        ngram_counter[ngram_idx] += 1
+                    else:
+                        ngram_counter[ngram_idx] = 1
+                except KeyError:
+                    continue
+
+            col_indices.extend(ngram_counter.keys())
+            data.extend(ngram_counter.values())
+            indptr.append(len(col_indices))
+
+        col_indices = np.asarray(col_indices, dtype=np.int32)
+        data = np.asarray(data, dtype=np.int32)
+        indptr = np.asarray(indptr, dtype=np.int32)
+
+        X = scipy.sparse.csr_matrix(
+            (data, col_indices, indptr), shape=(len(docs), len(vocab))
+        )
+        X.sort_indices()
+        return X
 
     @staticmethod
     @numba.njit()
@@ -1165,8 +1200,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         max_alpha: float = 1.0,
         min_alpha: float = 0.5,
         alpha_tolerance: float = 0.1,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
+        verbose: bool = False,
     ) -> List[List[str]]:
         """Generates a list of keyphrases for each cluster in a cluster layer.
 
@@ -1202,17 +1236,12 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         keyphrases List[List[str]]
             A list of lists of keyphrases for each cluster.
         """
-        # Handle verbose parameters
-        show_progress_bar_val, _ = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
-
         keyphrase_vector_mapping = {
             keyphrase: vector
             for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
             if not np.all(vector == 0.0)
         }
-        count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
             cluster_label_vector, object_x_keyphrase_matrix
         )
 
@@ -1227,7 +1256,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         for cluster_num in tqdm(
             range(cluster_label_vector.max() + 1),
             desc="Generating informative keyphrases",
-            disable=not show_progress_bar_val,
+            disable=not verbose,
             leave=False,
             unit="cluster",
             position=1,
@@ -1286,11 +1315,11 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             ]
 
             # Extract the longest keyphrases, then diversify the selection
-            chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
+            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(chosen_keyphrases)
             chosen_vectors = np.asarray(
                 [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
             )
-            chosen_indices = diversify(
+            chosen_indices = diversify_max_alpha(
                 centroid_vector,
                 chosen_vectors,
                 n_keyphrases,
@@ -1318,8 +1347,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         embedding_model: Optional[TextEmbedderProtocol],
         n_keyphrases: int = 16,
         diversify_alpha: float = 1.0,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
+        verbose: bool = False,
     ):
         """
         Generates a list of keyphrases for each cluster in a cluster layer using the central keyphrase method.
@@ -1348,17 +1376,13 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         keyphrases : List[List[str]]
             A list of lists of keyphrases for each cluster.
         """
-        # Handle verbose parameters
-        show_progress_bar_val, _ = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
         keyphrase_vector_mapping = {
             keyphrase: vector
             for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
             if not np.all(vector == 0.0)
         }
 
-        count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
             cluster_label_vector, object_x_keyphrase_matrix
         )
 
@@ -1366,7 +1390,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         for cluster_num in tqdm(
             range(cluster_label_vector.max() + 1),
             desc="Generating central keyphrases",
-            disable=not show_progress_bar_val,
+            disable=not verbose,
             leave=False,
             unit="cluster",
             position=1,
@@ -1426,11 +1450,11 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             ]
 
             # Extract the longest keyphrases, then diversify the selection
-            chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
+            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(chosen_keyphrases)
             chosen_vectors = np.asarray(
                 [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
             )
-            chosen_indices = diversify(
+            chosen_indices = diversify_max_alpha(
                 centroid,
                 chosen_vectors,
                 n_keyphrases,
@@ -1458,8 +1482,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         k1: float = 1.5,
         b: float = 0.75,
         diversify_alpha: float = 1.0,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
+        verbose: bool = False,
     ) -> List[List[str]]:
         """Generates a list of keyphrases for each cluster in a cluster layer using BM25 for scoring.
 
@@ -1489,17 +1512,13 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         keyphrases : List[List[str]]
             A list of lists of keyphrases for each cluster.
         """
-        # Handle verbose parameters
-        show_progress_bar_val, _ = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
         keyphrase_vector_mapping = {
             keyphrase: vector
             for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
             if not np.all(vector == 0.0)
         }
 
-        count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
             cluster_label_vector, object_x_keyphrase_matrix
         )
 
@@ -1539,7 +1558,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         for cluster_num in tqdm(
             range(cluster_label_vector.max() + 1),
             desc="Generating bm25 keyphrases",
-            disable=not show_progress_bar_val,
+            disable=not verbose,
             leave=False,
             unit="meta-cluster",
             position=1,
@@ -1594,11 +1613,11 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             ]
 
             # Extract the longest keyphrases, then diversify the selection
-            chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
+            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(chosen_keyphrases)
             chosen_vectors = np.asarray(
                 [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
             )
-            chosen_indices = diversify(
+            chosen_indices = diversify_max_alpha(
                 centroid_vector,
                 chosen_vectors,
                 n_keyphrases,
@@ -1626,8 +1645,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         prior_strength: float = 0.01,
         weight_power: float = 2.0,
         submodular_function: str = "saturated_coverage",
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
+        verbose: bool = False,
     ) -> List[List[str]]:
         """Generates a list of keyphrases for each cluster in a cluster layer using saturated coverage information.
 
@@ -1660,16 +1678,12 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         keyphrases : List[List[str]]
             A list of lists of keyphrases for each cluster.
         """
-        # Handle verbose parameters
-        show_progress_bar_val, _ = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
         keyphrase_vector_mapping = {
             keyphrase: vector
             for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
             if not np.all(vector == 0.0)
         }
-        count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
+        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
             cluster_label_vector, object_x_keyphrase_matrix
         )
         central_vector = keyphrase_vectors.mean(axis=0)
@@ -1701,7 +1715,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         for cluster_num in tqdm(
             range(cluster_label_vector.max() + 1),
             desc="Generating saturated coverage keyphrases",
-            disable=not show_progress_bar_val,
+            disable=not verbose,
             leave=False,
             unit="cluster",
             position=1,

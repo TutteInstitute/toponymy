@@ -6,6 +6,7 @@ import pytest
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 from sklearn.preprocessing import normalize
+from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.new_feature_extractor import (
     FeatureExtractorBase,
