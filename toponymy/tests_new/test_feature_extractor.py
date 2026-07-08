@@ -204,9 +204,50 @@ def test_empty_cluster_random(test_object_cluster_label_vector, all_topic_object
     assert len(exemplar_results[0]) == 0
 
 
+def test_convert_objects_to_text_passes_strings(text_keyphrase_extractor):
+    string_objects = ["a", "b", "c"]
+    output = text_keyphrase_extractor._convert_objects_to_text(string_objects)
+    assert output == string_objects
+
+
+def test_convert_objects_to_text_fails_no_object_to_text_non_string(
+    text_keyphrase_extractor,
+):
+    non_string_objects = ["a", 1]
+    with pytest.raises(
+        TypeError,
+        match="No object_to_text_function provided and not all objects are strings; cannot convert to text representations",
+    ):
+        text_keyphrase_extractor._convert_objects_to_text(non_string_objects)
+
+
+def test_convert_objects_to_text_converts_with_custom_string_function(
+    text_keyphrase_extractor,
+):
+    class Digit:
+        def __init__(self, x: int):
+            self.x = x
+
+        def __str__(self):
+            strmap = {
+                0: "zero",
+                1: "one",
+                2: "two",
+            }
+            return strmap[self.x]
+
+    non_string_objects = [Digit(0), Digit(1), Digit(2)]
+    output = text_keyphrase_extractor._convert_objects_to_text(
+        non_string_objects, object_to_text_function=lambda x: str(x)
+    )
+    assert output == ["zero", "one", "two"]
+
+
 @pytest.mark.parametrize("max_features", [900, 300])
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
-def test_vocabulary_building(text_keyphrase_extractor, test_objects, max_features, ngram_range):
+def test_vocabulary_building(
+    text_keyphrase_extractor, test_objects, max_features, ngram_range
+):
     ngrammer = create_ngrammer((1, ngram_range))
     vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
         test_objects, n_jobs=4, max_features=max_features, ngrammer=ngrammer
@@ -222,7 +263,9 @@ def test_vocabulary_building(text_keyphrase_extractor, test_objects, max_feature
 def test_tokenizer_vocabulary_building(
     text_keyphrase_extractor, test_objects, embedder, max_features, ngram_range
 ):
-    ngrammer = text_keyphrase_extractor._create_tokenizers_ngrammer(embedder.tokenizer, (1, ngram_range))
+    ngrammer = text_keyphrase_extractor._create_tokenizers_ngrammer(
+        embedder.tokenizer, (1, ngram_range)
+    )
     vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
         test_objects, n_jobs=4, max_features=max_features, ngrammer=ngrammer
     )
@@ -263,7 +306,9 @@ def test_count_matrix_building(text_keyphrase_extractor, test_objects, ngram_ran
 
 @pytest.mark.parametrize("ngram_range", [3, 1])
 @pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
-def test_count_matrix_building_in_parts(text_keyphrase_extractor, test_objects, ngram_range, token_pattern):
+def test_count_matrix_building_in_parts(
+    text_keyphrase_extractor, test_objects, ngram_range, token_pattern
+):
     ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
     vocabulary_split = text_keyphrase_extractor.build_keyphrase_vocabulary(
         test_objects, max_features=1000, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
@@ -292,7 +337,9 @@ def test_count_matrix_building_in_parts(text_keyphrase_extractor, test_objects, 
 @pytest.mark.parametrize("ngram_range", [3, 2])
 @pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
 @pytest.mark.parametrize("max_features", [1000, 100])
-def test_matching_sklearn(text_keyphrase_extractor, test_objects, ngram_range, token_pattern, max_features):
+def test_matching_sklearn(
+    text_keyphrase_extractor, test_objects, ngram_range, token_pattern, max_features
+):
     ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
     vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
         test_objects,
@@ -520,8 +567,8 @@ def test_information_weighted_keyphrases(
         min_alpha=0.0,
         max_alpha=0.0,
     )
-    sub_matrix, class_layer, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
-        cluster_layer, matrix
+    sub_matrix, class_layer, column_map = (
+        TextKeyphraseExtractor.subset_matrix_and_class_labels(cluster_layer, matrix)
     )
     iwt_transformer = InformationWeightTransformer(weight_power=2.0, prior_strength=0.1)
     class_layer = cluster_layer[cluster_layer >= 0]
@@ -567,14 +614,16 @@ def test_submodular_keyphrases_result_sizes(
     n_keyphrases,
     submodular_function,
 ):
-    submodular_keyphrases_results = TextKeyphraseExtractor.submodular_selection_information_keyphrases(
-        cluster_layer,
-        matrix,
-        keyphrases,
-        keyphrase_vectors,
-        embedder,
-        submodular_function=submodular_function,
-        n_keyphrases=n_keyphrases,
+    submodular_keyphrases_results = (
+        TextKeyphraseExtractor.submodular_selection_information_keyphrases(
+            cluster_layer,
+            matrix,
+            keyphrases,
+            keyphrase_vectors,
+            embedder,
+            submodular_function=submodular_function,
+            n_keyphrases=n_keyphrases,
+        )
     )
     assert len(submodular_keyphrases_results) == len(np.unique(cluster_layer)) - 1
     assert (

@@ -233,20 +233,24 @@ class TextExemplarExtractor(FeatureExtractorBase):
             cluster_label_vector = layer.labels
 
             if selection_method == "facility_location":
-                exemplars, indices = TextExemplarExtractor.submodular_selection_exemplars(
-                    cluster_label_vector,
-                    objects,
-                    object_vectors,
-                    submodular_function=selection_method,
-                    **kwargs,
+                exemplars, indices = (
+                    TextExemplarExtractor.submodular_selection_exemplars(
+                        cluster_label_vector,
+                        objects,
+                        object_vectors,
+                        submodular_function=selection_method,
+                        **kwargs,
+                    )
                 )
             elif selection_method == "saturated_coverage":
-                exemplars, indices = TextExemplarExtractor.submodular_selection_exemplars(
-                    cluster_label_vector,
-                    objects,
-                    object_vectors,
-                    submodular_function=selection_method,
-                    **kwargs,
+                exemplars, indices = (
+                    TextExemplarExtractor.submodular_selection_exemplars(
+                        cluster_label_vector,
+                        objects,
+                        object_vectors,
+                        submodular_function=selection_method,
+                        **kwargs,
+                    )
                 )
             elif selection_method == "random":
                 exemplars, indices = TextExemplarExtractor.random_exemplars(
@@ -629,8 +633,17 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         -------
         List[str]
             A list of string representations of objects.
+
+        Raises
+        ------
+        TypeError
+            If `object_to_text_function` is None and `objects` is not a list of strings.
         """
         if object_to_text_function is None:
+            if not all([isinstance(obj, str) for obj in objects]):
+                raise TypeError(
+                    "No object_to_text_function provided and not all objects are strings; cannot convert to text representations"
+                )
             object_texts = objects
         else:
             object_texts = [object_to_text_function(obj) for obj in objects]
@@ -661,7 +674,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             )
             ngrammer = cv.build_analyzer()
         else:
-            ngrammer = TextKeyphraseExtractor._create_tokenizers_ngrammer(tokenizer, ngram_range=ngram_range)
+            ngrammer = TextKeyphraseExtractor._create_tokenizers_ngrammer(
+                tokenizer, ngram_range=ngram_range
+            )
         return ngrammer
 
     def build_keyphrase_vocabulary(
@@ -968,13 +983,15 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             cluster_label_vector = layer.labels
 
             if selection_method == "information_weighted":
-                keyphrases_per_cluster = TextKeyphrasExtractor.information_weighted_keyphrases(
-                    cluster_label_vector=cluster_label_vector,
-                    object_x_keyphrase_matrix=self.object_x_feature_matrix,
-                    keyphrase_list=self.keyphrases,
-                    keyphrase_vectors=self.keyphrase_vectors,
-                    embedding_model=embedder,
-                    **kwargs,
+                keyphrases_per_cluster = (
+                    TextKeyphrasExtractor.information_weighted_keyphrases(
+                        cluster_label_vector=cluster_label_vector,
+                        object_x_keyphrase_matrix=self.object_x_feature_matrix,
+                        keyphrase_list=self.keyphrases,
+                        keyphrase_vectors=self.keyphrase_vectors,
+                        embedding_model=embedder,
+                        **kwargs,
+                    )
                 )
             elif selection_method == "central":
                 keyphrases_per_cluster = TextKeyphraseExtractor.central_keyphrases(
@@ -999,14 +1016,16 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                 "facility_location",
                 "graph_cut",
             ]:
-                keyphrases_per_cluster = TextKeyphraseExtractor.submodular_selection_information_keyphrases(
-                    cluster_label_vector=cluster_label_vector,
-                    object_x_keyphrase_matrix=self.object_x_feature_matrix,
-                    keyphrase_list=self.keyphrases,
-                    keyphrase_vectors=self.keyphrase_vectors,
-                    embedding_model=embedder,
-                    submodular_function=selection_method,
-                    **kwargs,
+                keyphrases_per_cluster = (
+                    TextKeyphraseExtractor.submodular_selection_information_keyphrases(
+                        cluster_label_vector=cluster_label_vector,
+                        object_x_keyphrase_matrix=self.object_x_feature_matrix,
+                        keyphrase_list=self.keyphrases,
+                        keyphrase_vectors=self.keyphrase_vectors,
+                        embedding_model=embedder,
+                        submodular_function=selection_method,
+                        **kwargs,
+                    )
                 )
             else:
                 raise ValueError(
@@ -1075,7 +1094,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
 
         if len(result) > max_ngrams:
             trim_value = np.sort(list(result.values()))[-max_ngrams]
-            result = {key: value for key, value in result.items() if value >= trim_value}
+            result = {
+                key: value for key, value in result.items() if value >= trim_value
+            }
 
         return result
 
@@ -1104,7 +1125,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         result = []
         for i in range(0, len(dict_list) - 1, 2):
             result.append(
-                TextKeyphraseExtractor._combine_dicts(dict_list[i], dict_list[i + 1], max_ngrams=max_ngrams)
+                TextKeyphraseExtractor._combine_dicts(
+                    dict_list[i], dict_list[i + 1], max_ngrams=max_ngrams
+                )
             )
         if len(dict_list) % 2 == 1:
             result.append(dict_list[-1])
@@ -1115,7 +1138,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         dict_list: List[Dict[str, int]], max_ngrams: int = 250_000
     ) -> Dict[str, int]:
         while len(dict_list) > 1:
-            dict_list = TextKeyphraseExtractor._combine_tree_layer(dict_list, max_ngrams=max_ngrams)
+            dict_list = TextKeyphraseExtractor._combine_tree_layer(
+                dict_list, max_ngrams=max_ngrams
+            )
         return dict_list[0]
 
     @staticmethod
@@ -1241,8 +1266,10 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
             if not np.all(vector == 0.0)
         }
-        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
-            cluster_label_vector, object_x_keyphrase_matrix
+        count_matrix, class_labels, column_map = (
+            TextKeyphraseExtractor.subset_matrix_and_class_labels(
+                cluster_label_vector, object_x_keyphrase_matrix
+            )
         )
 
         iwt = InformationWeightTransformer(
@@ -1315,7 +1342,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             ]
 
             # Extract the longest keyphrases, then diversify the selection
-            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(chosen_keyphrases)
+            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(
+                chosen_keyphrases
+            )
             chosen_vectors = np.asarray(
                 [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
             )
@@ -1382,8 +1411,10 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             if not np.all(vector == 0.0)
         }
 
-        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
-            cluster_label_vector, object_x_keyphrase_matrix
+        count_matrix, class_labels, column_map = (
+            TextKeyphraseExtractor.subset_matrix_and_class_labels(
+                cluster_label_vector, object_x_keyphrase_matrix
+            )
         )
 
         result = []
@@ -1450,7 +1481,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             ]
 
             # Extract the longest keyphrases, then diversify the selection
-            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(chosen_keyphrases)
+            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(
+                chosen_keyphrases
+            )
             chosen_vectors = np.asarray(
                 [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
             )
@@ -1518,8 +1551,10 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             if not np.all(vector == 0.0)
         }
 
-        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
-            cluster_label_vector, object_x_keyphrase_matrix
+        count_matrix, class_labels, column_map = (
+            TextKeyphraseExtractor.subset_matrix_and_class_labels(
+                cluster_label_vector, object_x_keyphrase_matrix
+            )
         )
 
         # Build a class based count matrix
@@ -1613,7 +1648,9 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             ]
 
             # Extract the longest keyphrases, then diversify the selection
-            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(chosen_keyphrases)
+            chosen_keyphrases = TextKeyphraseExtractor.longest_keyphrases(
+                chosen_keyphrases
+            )
             chosen_vectors = np.asarray(
                 [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
             )
@@ -1683,8 +1720,10 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
             for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
             if not np.all(vector == 0.0)
         }
-        count_matrix, class_labels, column_map = TextKeyphraseExtractor.subset_matrix_and_class_labels(
-            cluster_label_vector, object_x_keyphrase_matrix
+        count_matrix, class_labels, column_map = (
+            TextKeyphraseExtractor.subset_matrix_and_class_labels(
+                cluster_label_vector, object_x_keyphrase_matrix
+            )
         )
         central_vector = keyphrase_vectors.mean(axis=0)
 
