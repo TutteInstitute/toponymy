@@ -8,7 +8,8 @@ from sklearn.cluster import KMeans
 from fast_hdbscan import PLSCAN
 from evoc import EVoC
 
-from toponymy.new_types import Cluster, ClusterLayer, ClusterTree
+from collections.abc import Mapping, Sequence
+from toponymy.types import Cluster, ClusterLayer, ClusterTree, _integer_vector, _nonnegative_integer
 
 
 class Clusterer(ABC, BaseEstimator):
@@ -115,40 +116,36 @@ def build_cluster_tree(labels: List[np.ndarray]) -> ClusterTree:
     return result
 
 
-def build_cluster_layers(labels: List[np.ndarray]) -> List[ClusterLayer]:
+def _validate_label_layers(labels: Sequence[np.ndarray]) -> list[np.ndarray]:
+    if isinstance(labels, np.ndarray) and labels.ndim != 2:
+        raise ValueError("labels must be a sequence of one-dimensional label layers")
+    result = [_integer_vector(layer, "labels", -1) for layer in labels]
+    if result and any(layer.size != result[0].size for layer in result[1:]):
+        raise ValueError("all label layers must have the same observation count")
+    return result
+
+def _group_labels(labels: np.ndarray):
+    indices = np.flatnonzero(labels >= 0)
+    order = indices[np.argsort(labels[indices], kind="stable")]
+    ids, starts = np.unique(labels[order], return_index=True)
+    return ids, starts, order
+
+def build_cluster_layers(labels: Sequence[np.ndarray]) -> list[ClusterLayer]:
+    """Group observations by original nonnegative IDs, excluding noise (-1).
+
+    Layers have equal observation counts. IDs must have integer dtype, need
+    not be contiguous, and are never used as allocation sizes. Empty layers
+    and all-noise layers are valid. Returned arrays are owned and read-only.
     """
-    Builds a list of cluster layers and a cluster tree from the given layers.
-
-    Parameters
-    ----------
-    labels : List[np.ndarray]
-        A list of numpy arrays where labels[i][j] is the label of the cluster of data j at layer i
-        (label -1 denotes noise).
-
-    Returns
-    -------
-    ClusterLayers
-        A list of ClusterLayers
-    ClusterTree
-        A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
-        and the values are lists of tuples representing the child clusters (layer, cluster index).
-    """
-    cluster_layers: List[ClusterLayer] = []
-    for i, layer_labels in enumerate(labels):
-        # Group indices by label
-        indices_to_sort_layer = np.argsort(layer_labels, kind="stable")
-        sorted_layer = layer_labels[indices_to_sort_layer]
-        cluster_ids, change_indices = np.unique(sorted_layer, return_index=True)
-        cluster_members = np.split(indices_to_sort_layer, change_indices[1:])
-
-        clusters = [
-            Cluster(cluster_id, members)
-            for cluster_id, members in zip(cluster_ids, cluster_members)
-            if cluster_id >= 0
-        ]
-        cluster_layer = ClusterLayer(clusters=clusters, layer_index=i)
-        cluster_layers.append(cluster_layer)
-    return cluster_layers
+    layers = []
+    for layer_index, layer_labels in enumerate(_validate_label_layers(labels)):
+        ids, starts, order = _group_labels(layer_labels)
+        members = np.split(order, starts[1:])
+        clusters = tuple(
+            Cluster(int(label), group) for label, group in zip(ids, members)
+        )
+        layers.append(ClusterLayer(clusters, layer_index, layer_labels))
+    return layers
 
 
 class PrecomputedClusterer(Clusterer):
