@@ -59,61 +59,88 @@ class Clusterer(ABC, BaseEstimator):
         return False
 
 
-@numba.njit(cache=True)
-def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
-    mapping = [(-1, -1, -1, -1) for _ in range(0)]
-    found = [set([-1]) for _ in range(len(labels))]
-    for upper_layer in range(1, labels.shape[0]):
-        upper_layer_unique_labels = np.unique(labels[upper_layer])
-        for lower_layer in range(upper_layer - 1, -1, -1):
-            upper_cluster_order = np.argsort(labels[upper_layer])
-            cluster_groups = np.split(
-                labels[lower_layer][upper_cluster_order],
-                np.cumsum(np.bincount(labels[upper_layer] + 1))[:-1],
-            )
-            # If there is no noise we are off by one, and need to drop the first cluster group
-            if len(cluster_groups) > upper_layer_unique_labels.shape[0]:
-                cluster_groups = cluster_groups[1:]
-            for i, label in enumerate(upper_layer_unique_labels):
-                if label >= 0:
-                    for child in cluster_groups[i]:
-                        if child >= 0 and child not in found[lower_layer]:
-                            mapping.append((upper_layer, label, lower_layer, child))
-                            found[lower_layer].add(child)
-
-    for lower_layer in range(labels.shape[0] - 1, -1, -1):
-        for child in range(labels[lower_layer].max() + 1):
-            if child >= 0 and child not in found[lower_layer]:
-                mapping.append((labels.shape[0], 0, lower_layer, child))
-
-    return mapping
 
 
-def build_cluster_tree(labels: List[np.ndarray]) -> ClusterTree:
+def build_cluster_tree(labels: Sequence[np.ndarray]) -> ClusterTree:
+    """Attach each cluster to its nearest fully containing upper cluster.
+
+    Crossing clusters and clusters covered partly by upper-layer noise skip
+    that layer. Clusters without a containing ancestor attach to the synthetic
+    root ``(number_of_layers, 0)``. No nodes are invented for absent IDs.
     """
-    Builds a cluster tree from the given labels.
+    labels = _validate_label_layers(labels)
+    tree: ClusterTree = {}
+    root = (len(labels), 0)
+    for lower_index, lower in enumerate(labels):
+        ids, starts, order = _group_labels(lower)
+        if not ids.size:
+            continue
+        unresolved = np.ones(ids.size, dtype=bool)
+        for upper_index in range(lower_index + 1, len(labels)):
+            upper = labels[upper_index][order]
+            minimum = np.minimum.reduceat(upper, starts)
+            maximum = np.maximum.reduceat(upper, starts)
+            contained = unresolved & (minimum >= 0) & (minimum == maximum)
+            for child_id, parent_id in zip(ids[contained], minimum[contained]):
+                parent = (upper_index, int(parent_id))
+                tree.setdefault(parent, []).append((lower_index, int(child_id)))
+            unresolved[contained] = False
+            if not unresolved.any():
+                break
+        for child_id in ids[unresolved]:
+            tree.setdefault(root, []).append((lower_index, int(child_id)))
+    return tree
 
-    Parameters
-    ----------
-    labels : List[np.ndarray]
-        A list of numpy arrays where labels[i][j] is the label of the cluster of data j at layer i
-        (label -1 denotes noise).
+def validate_cluster_tree(tree: ClusterTree, layers: Sequence[ClusterLayer]) -> None:
+    """Reject unknown nodes, duplicate parents, missing nodes and false edges.
 
-    Returns
-    -------
-    ClusterTree
-        A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
-        and the values are lists of tuples representing the child clusters (layer, cluster index).
+    Strictly increasing parent layer indices also rule out cycles. A supplied
+    tree may skip a containing layer, but every edge must be true containment.
     """
-    result: ClusterTree = {}
-    raw_mapping = _build_cluster_tree(np.vstack(labels))
-    for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
-        parent_name = (parent_layer, parent_cluster)
-        if parent_name in result:
-            result[parent_name].append((child_layer, child_cluster))
-        else:
-            result[parent_name] = [(child_layer, child_cluster)]
-    return result
+    if not isinstance(tree, Mapping):
+        raise TypeError("cluster_tree must be a mapping")
+    if any(
+        not isinstance(layer, ClusterLayer) or layer.layer_index != i
+        for i, layer in enumerate(layers)
+    ):
+        raise ValueError("layers must be ClusterLayers in consecutive index order")
+    if layers and any(len(layer.labels) != len(layers[0].labels) for layer in layers):
+        raise ValueError("all label layers must have the same observation count")
+    clusters = {
+        (layer.layer_index, cluster.label): cluster
+        for layer in layers
+        for cluster in layer
+    }
+    root = (len(layers), 0)
+
+    def check_key(key):
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise ValueError("tree nodes must be (layer, cluster ID) tuples")
+        for value in key:
+            _nonnegative_integer(value, "tree node index")
+
+    children_seen = set()
+    for parent, children in tree.items():
+        check_key(parent)
+        if parent != root and parent not in clusters:
+            raise ValueError(f"unknown parent cluster {parent}")
+        if not isinstance(children, (list, tuple)):
+            raise ValueError("tree children must be a list or tuple")
+        for child in children:
+            check_key(child)
+            if child not in clusters:
+                raise ValueError(f"unknown child cluster {child}")
+            if parent[0] <= child[0]:
+                raise ValueError("parent layer must be strictly above its child")
+            if child in children_seen:
+                raise ValueError(f"cluster {child} must have exactly one parent")
+            children_seen.add(child)
+            if parent != root and not np.all(
+                layers[parent[0]].labels[clusters[child].members] == parent[1]
+            ):
+                raise ValueError(f"parent {parent} does not contain child {child}")
+    if children_seen != clusters.keys():
+        raise ValueError("every cluster must occur exactly once as a child")
 
 
 def _validate_label_layers(labels: Sequence[np.ndarray]) -> list[np.ndarray]:
@@ -539,3 +566,34 @@ class EVoCClusterer(Clusterer):
         if len(self.cluster_layers_) == 0:
             raise ValueError("EVoCClusterer found no layers with clusters.")
         return self
+
+
+@numba.njit(cache=True)
+def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
+    mapping = [(-1, -1, -1, -1) for _ in range(0)]
+    found = [set([-1]) for _ in range(len(labels))]
+    for upper_layer in range(1, labels.shape[0]):
+        upper_layer_unique_labels = np.unique(labels[upper_layer])
+        for lower_layer in range(upper_layer - 1, -1, -1):
+            upper_cluster_order = np.argsort(labels[upper_layer])
+            cluster_groups = np.split(
+                labels[lower_layer][upper_cluster_order],
+                np.cumsum(np.bincount(labels[upper_layer] + 1))[:-1],
+            )
+            # If there is no noise we are off by one, and need to drop the first cluster group
+            if len(cluster_groups) > upper_layer_unique_labels.shape[0]:
+                cluster_groups = cluster_groups[1:]
+            for i, label in enumerate(upper_layer_unique_labels):
+                if label >= 0:
+                    for child in cluster_groups[i]:
+                        if child >= 0 and child not in found[lower_layer]:
+                            mapping.append((upper_layer, label, lower_layer, child))
+                            found[lower_layer].add(child)
+
+    for lower_layer in range(labels.shape[0] - 1, -1, -1):
+        for child in range(labels[lower_layer].max() + 1):
+            if child >= 0 and child not in found[lower_layer]:
+                mapping.append((labels.shape[0], 0, lower_layer, child))
+
+    return mapping
+
