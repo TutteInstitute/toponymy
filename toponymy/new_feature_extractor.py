@@ -64,15 +64,7 @@ class FeatureExtractorBase(ABC, BaseEstimator):
         """
         return False
 
-    @property
-    @abstractmethod
-    def feature_return_type(self) -> FeatureReturnType:
-        """
-        The return type of features extracted by the FeatureExtractor.
-
-        Must be implemented in any subclass.
-        """
-        raise NotImplementedError
+    feature_return_type = str
 
     @property
     def features(self) -> List[List[List[FeatureReturnType]]]:
