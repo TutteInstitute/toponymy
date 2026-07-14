@@ -34,8 +34,9 @@ class Template(ABC):
         """Build the prompt used to name one topic cluster."""
         pass
 
+    @staticmethod
     @abstractmethod
-    def extract_name(self, response: str) -> Any:
+    def extract_name(response: str) -> Any:
         """Extract the generated name from a model response."""
         pass
 
@@ -49,8 +50,9 @@ class Template(ABC):
         """Build the prompt used to rename similar topic clusters."""
         pass
 
+    @staticmethod
     @abstractmethod
-    def extract_disambiguated_names(self, response: str) -> list[str]:
+    def extract_disambiguated_names(response: str) -> list[str]:
         """Extract renamed topics from a disambiguation response."""
         pass
 
@@ -194,7 +196,8 @@ Please provide new {{name_kind}} names for each topic, following the JSON output
         context = self._disambiguation_context(names, features, name_kind)
         return Prompt(system_prompt.render(**context), user_prompt.render(**context))
 
-    def extract_disambiguated_names(self, response: str) -> list[str]:
+    @staticmethod
+    def extract_disambiguated_names(response: str) -> list[str]:
         try:
             response_json = _json_from_response(response, GET_TOPIC_CLUSTER_NAMES_REGEX)
             mapping = response_json["new_topic_name_mapping"]
@@ -278,7 +281,8 @@ Recall that the response must be {{cluster_response_description}}
         context = self._add_template_features(features, name_kind)
         return Prompt(system_prompt.render(**context), user_prompt.render(**context))
 
-    def extract_name(self, response: str) -> str:
+    @staticmethod
+    def extract_name(response: str) -> str:
         try:
             response_json = _json_from_response(response, GET_TOPIC_NAME_REGEX)
             return str(response_json["topic_name"])
@@ -299,7 +303,8 @@ class MultilingualENFRTemplate(TextTemplate):
         "well-defined the topic name is given the input information."
     )
 
-    def extract_name(self, response: str) -> str:
+    @staticmethod
+    def extract_name(response: str) -> str:
         try:
             response_json = _json_from_response(
                 response,
@@ -344,7 +349,8 @@ class SummaryTemplate(TextTemplate):
         "provide a detailed topic analysis, a summary, and a name"
     )
 
-    def extract_name(self, response: str) -> tuple[str, str, str]:
+    @staticmethod
+    def extract_name(response: str) -> tuple[str, str, str]:
         try:
             response_json = _json_from_response(
                 response,
