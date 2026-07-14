@@ -1,64 +1,58 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, NewType, Optional, Tuple, Type
-
+"""Validated clustering output and small adapters to maintained algorithms."""
 import numba
-import numpy as np
-from sklearn.base import BaseEstimator
-from sklearn.cluster import KMeans
-from fast_hdbscan import PLSCAN
-from evoc import EVoC
+from typing import List
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from toponymy.types import Cluster, ClusterLayer, ClusterTree, _integer_vector, _nonnegative_integer
+from typing import Iterator, Optional, Tuple
+import warnings
+
+import numpy as np
+from scipy import sparse
+from sklearn.base import BaseEstimator
+from sklearn.exceptions import NotFittedError
+
+from toponymy.types import (
+    Cluster,
+    ClusterLayer,
+    ClusterTree,
+    _integer_vector,
+    _nonnegative_integer,
+)
 
 
-class Clusterer(ABC, BaseEstimator):
+def _validate_label_layers(labels: Sequence[np.ndarray]) -> list[np.ndarray]:
+    if isinstance(labels, np.ndarray) and labels.ndim != 2:
+        raise ValueError("labels must be a sequence of one-dimensional label layers")
+    result = [_integer_vector(layer, "labels", -1) for layer in labels]
+    if result and any(layer.size != result[0].size for layer in result[1:]):
+        raise ValueError("all label layers must have the same observation count")
+    return result
+
+
+def _group_labels(labels: np.ndarray):
+    indices = np.flatnonzero(labels >= 0)
+    order = indices[np.argsort(labels[indices], kind="stable")]
+    ids, starts = np.unique(labels[order], return_index=True)
+    return ids, starts, order
+
+
+def build_cluster_layers(labels: Sequence[np.ndarray]) -> list[ClusterLayer]:
+    """Group observations by original nonnegative IDs, excluding noise (-1).
+
+    Layers have equal observation counts. IDs must have integer dtype, need
+    not be contiguous, and are never used as allocation sizes. Empty layers
+    and all-noise layers are valid. Returned arrays are owned and read-only.
     """
-    Abstract Clusterer Class that defines the properties required of a clusterer
-    and implements formatter / validator methods that should be common to all
-    subclasses.
-
-    Attributes
-    ----------
-    cluster_layers_ : List[ClusterLayer]
-        A list of the created cluster layers.
-    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
-        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index)
-        and values are lists of tuples representing child clusters.
-    """
-
-    def __init__(self):
-        pass
-
-    @abstractmethod
-    def fit(
-        self,
-        data: Any,
-        **layer_kwargs,
-    ):
-        pass
-
-    def fit_predict(
-        self,
-        data: Any,
-    ) -> Tuple[List[ClusterLayer], ClusterTree]:
-        self.fit(data)
-        return self.cluster_layers_, self.cluster_tree_
-
-    def __sklearn_is_fitted__(self):
-        if (
-            hasattr(self, "cluster_layers_")
-            and isinstance(self.cluster_layers_, list)
-            and all(
-                isinstance(cluster, ClusterLayer) for cluster in self.cluster_layers_
-            )
-            and hasattr(self, "cluster_tree_")
-            and isinstance(self.cluster_tree_, dict)
-        ):
-            return True
-        return False
-
-
+    layers = []
+    for layer_index, layer_labels in enumerate(_validate_label_layers(labels)):
+        ids, starts, order = _group_labels(layer_labels)
+        members = np.split(order, starts[1:])
+        clusters = tuple(
+            Cluster(int(label), group) for label, group in zip(ids, members)
+        )
+        layers.append(ClusterLayer(clusters, layer_index, layer_labels))
+    return layers
 
 
 def build_cluster_tree(labels: Sequence[np.ndarray]) -> ClusterTree:
@@ -90,6 +84,7 @@ def build_cluster_tree(labels: Sequence[np.ndarray]) -> ClusterTree:
         for child_id in ids[unresolved]:
             tree.setdefault(root, []).append((lower_index, int(child_id)))
     return tree
+
 
 def validate_cluster_tree(tree: ClusterTree, layers: Sequence[ClusterLayer]) -> None:
     """Reject unknown nodes, duplicate parents, missing nodes and false edges.
@@ -143,122 +138,142 @@ def validate_cluster_tree(tree: ClusterTree, layers: Sequence[ClusterLayer]) -> 
         raise ValueError("every cluster must occur exactly once as a child")
 
 
-def _validate_label_layers(labels: Sequence[np.ndarray]) -> list[np.ndarray]:
-    if isinstance(labels, np.ndarray) and labels.ndim != 2:
-        raise ValueError("labels must be a sequence of one-dimensional label layers")
-    result = [_integer_vector(layer, "labels", -1) for layer in labels]
-    if result and any(layer.size != result[0].size for layer in result[1:]):
-        raise ValueError("all label layers must have the same observation count")
-    return result
+def _validate_vectors(vectors, *, precomputed: bool = False):
+    """Validate without copying large matrices; estimators own their work arrays."""
+    if sparse.issparse(vectors):
+        if not precomputed:
+            raise ValueError("sparse vectors require metric='precomputed'")
+        array = vectors.tocsr(copy=False)
+        values = array.data
+    else:
+        if precomputed:
+            raise ValueError("metric='precomputed' requires a sparse distance graph")
+        array = np.asarray(vectors)
+        values = array
+    if array.ndim != 2 or (array.shape[1] == 0 and array.shape[0] != 0):
+        raise ValueError("vectors must have shape (observations, nonzero dimensions)")
+    if values.dtype.kind not in "iuf" or not np.isfinite(values).all():
+        raise ValueError("vectors must contain finite real numbers")
+    if precomputed and (array.shape[0] != array.shape[1] or np.any(values < 0)):
+        raise ValueError("a precomputed distance graph must be square and nonnegative")
+    return array
 
-def _group_labels(labels: np.ndarray):
-    indices = np.flatnonzero(labels >= 0)
-    order = indices[np.argsort(labels[indices], kind="stable")]
-    ids, starts = np.unique(labels[order], return_index=True)
-    return ids, starts, order
 
-def build_cluster_layers(labels: Sequence[np.ndarray]) -> list[ClusterLayer]:
-    """Group observations by original nonnegative IDs, excluding noise (-1).
+class Clusterer(ABC, BaseEstimator):
+    """Estimator whose fitted state consists of cluster layers and their tree."""
 
-    Layers have equal observation counts. IDs must have integer dtype, need
-    not be contiguous, and are never used as allocation sizes. Empty layers
-    and all-noise layers are valid. Returned arrays are owned and read-only.
-    """
-    layers = []
-    for layer_index, layer_labels in enumerate(_validate_label_layers(labels)):
-        ids, starts, order = _group_labels(layer_labels)
-        members = np.split(order, starts[1:])
-        clusters = tuple(
-            Cluster(int(label), group) for label, group in zip(ids, members)
-        )
-        layers.append(ClusterLayer(clusters, layer_index, layer_labels))
-    return layers
+    @abstractmethod
+    def fit(self, data, **kwargs):
+        """Fit this estimator and return it."""
+
+    def fit_predict(self, data=None, **kwargs):
+        self.fit(data, **kwargs)
+        return self.cluster_layers_, self.cluster_tree_
+
+    def __iter__(self) -> Iterator[ClusterLayer]:
+        if not self.__sklearn_is_fitted__():
+            raise NotFittedError("fit the clusterer before iterating its layers")
+        return iter(self.cluster_layers_)
+
+    def __sklearn_is_fitted__(self):
+        return hasattr(self, "cluster_layers_") and hasattr(self, "cluster_tree_")
+
+    def _set_labels(self, labels, *, tree=None):
+        layers = build_cluster_layers(labels)
+        if tree is None:
+            tree = build_cluster_tree([layer.labels for layer in layers])
+        validate_cluster_tree(tree, layers)
+        self.cluster_layers_ = layers
+        self.cluster_tree_ = {parent: list(children) for parent, children in tree.items()}
+        return self
 
 
 class PrecomputedClusterer(Clusterer):
-    """
-    A class for formatting a precomputed set of cluster layers as a clusterer.
-    Pass a list of layer labels (i.e. each layer is a list of cluster ids).
+    """Use precomputed label layers, preserving their IDs and observation order.
 
-    Attributes
-    ----------
-    cluster_layers_ : List[ClusterLayer]
-        A list of the created cluster layers.
-    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
-        A dictionary representing the cluster tree.
-
+    Supply labels at construction for use in a pipeline: ``fit(vectors)`` then
+    validates the observation count without interpreting vectors as labels.
+    Without configured labels, ``fit(label_layers)`` retains the earlier API.
+    Explicit ``fit(vectors, labels=label_layers)`` is also supported.
     """
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, labels=None, cluster_tree=None):
+        self.labels = None if labels is None else _validate_label_layers(labels)
+        if self.labels is not None:
+            for layer in self.labels:
+                layer.flags.writeable = False
+        self.cluster_tree = (
+            None
+            if cluster_tree is None
+            else {parent: list(children) for parent, children in cluster_tree.items()}
+        )
 
-    def fit(self, cluster_label_layers):
-        self.cluster_layers_ = build_cluster_layers(cluster_label_layers)
-        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
+    def __sklearn_clone__(self):
+        return type(self)(labels=self.labels, cluster_tree=self.cluster_tree)
 
-    def fit_predict(self, cluster_label_layers):
-        self.fit(cluster_label_layers)
-        return self.cluster_layers_, self.cluster_tree_
+    def fit(self, data=None, *, labels=None):
+        configured = labels if labels is not None else self.labels
+        if configured is None:
+            if data is None:
+                raise ValueError("supply precomputed labels at construction or fit")
+            configured = _validate_label_layers(data)
+        else:
+            configured = _validate_label_layers(configured)
+            if data is not None:
+                vectors = _validate_vectors(data)
+                if configured and vectors.shape[0] != configured[0].size:
+                    raise ValueError("vectors and labels must have the same observation count")
+        return self._set_labels(configured, tree=self.cluster_tree)
 
 
 class KMeansClusterer(Clusterer):
-    """
-    A class for clustering data in layers using KMeans. This class is mostly to demonstrate how one might write
-    an alternative Clusterer.
+    """Fit independent KMeans resolutions, reducing cluster counts by four.
 
-    Parameters
-    ----------
-    min_clusters : int, optional
-        The minimum number of clusters to form in a layer (default is 6).
-
-    base_n_clusters : int, optional
-        The initial number of clusters for the most fine-grained cluster layer (default is 1024).
-
-    random_state : int or None, default=None
-        The random seed to use for the random number generator. If None, the random
-        number generator will not be seeded and will use the system time as the seed.
-
-    Attributes
-    ----------
-    cluster_layers_ : List[ClusterLayer]
-        A list of the created cluster layers.
-
-    cluster_tree_ : ClusterTree]
-        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of
-        tuples representing child clusters.
-
+    The tree uses containment, since independently fitted resolutions need not
+    nest. The finest layer is capped at the observation count.
     """
 
     def __init__(
-        self,
-        min_clusters: int = 6,
-        base_n_clusters: int = 1024,
-        random_state: Optional[int] = None,
-        verbose: Optional[bool] = None,
+        self, min_clusters=6, base_n_clusters=1024, random_state=None, verbose=None
     ):
-        super().__init__()
         self.min_clusters = min_clusters
         self.base_n_clusters = base_n_clusters
         self.random_state = random_state
         self.verbose = verbose
 
-    def fit(
-        self,
-        vectors: np.ndarray,
-        verbose: Optional[bool] = None,
-    ):
-        n_clusters = self.base_n_clusters
-        cluster_label_layers: List[np.ndarray] = []
-        while n_clusters >= self.min_clusters:
-            if self.verbose:
-                print(f"Layer {len(cluster_label_layers)} found {n_clusters} clusters")
-            kmeans = KMeans(n_clusters=n_clusters, random_state=self.random_state)
-            cluster_labels = kmeans.fit_predict(vectors)
-            cluster_label_layers.append(cluster_labels)
+    def fit(self, vectors, verbose=None):
+        from sklearn.cluster import KMeans
+
+        vectors = _validate_vectors(vectors)
+        for name in ("min_clusters", "base_n_clusters"):
+            value = _nonnegative_integer(getattr(self, name), name)
+            if value == 0:
+                raise ValueError(f"{name} must be positive")
+        if self.base_n_clusters < self.min_clusters:
+            raise ValueError("base_n_clusters must be at least min_clusters")
+        if not vectors.shape[0]:
+            return self._set_labels([])
+        n_clusters = min(self.base_n_clusters, vectors.shape[0])
+        labels = []
+        while not labels or n_clusters >= self.min_clusters:
+            estimator = KMeans(
+                n_clusters=n_clusters,
+                random_state=self.random_state,
+                verbose=bool(self.verbose if verbose is None else verbose),
+            )
+            labels.append(estimator.fit_predict(vectors))
             n_clusters //= 4
-        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
-        self.cluster_layers_ = build_cluster_layers(cluster_label_layers)
-        return self
+            if n_clusters == 0:
+                break
+        return self._set_labels(labels)
+
+
+def _validate_density_parameters(estimator):
+    for name in ("min_samples", "base_min_cluster_size", "max_layers"):
+        value = _nonnegative_integer(getattr(estimator, name), name)
+        if value < (2 if name == "base_min_cluster_size" else 1):
+            raise ValueError(f"{name} is too small")
+
 
 
 class PLSCANClusterer(Clusterer):
@@ -368,31 +383,23 @@ class PLSCANClusterer(Clusterer):
         self.metric_kwds = metric_kwds
         self.verbose = verbose
 
-    def fit(
-        self,
-        vectors: np.ndarray,
-        verbose: Optional[bool] = None,
-    ):
-        self.plscan_ = PLSCAN(
-            min_samples=self.min_samples,
-            max_layers=self.max_layers,
-            base_min_cluster_size=self.base_min_cluster_size,
-            base_n_clusters=self.base_n_clusters,
-            layer_similarity_threshold=self.layer_similarity_threshold,
-            reproducible=self.reproducible,
-            metric=self.metric,
-            algorithm=self.algorithm,
-            knn_k=self.knn_k,
-            cannot_link=self.cannot_link,
-            validate_cannot_link=self.validate_cannot_link,
-            metric_kwds=self.metric_kwds,
-            verbose=self.verbose,
-        )
-        self.plscan_.fit(vectors)
-        self.cluster_layers_ = build_cluster_layers(self.plscan_.cluster_layers_)
-        self.cluster_tree_ = build_cluster_tree(self.plscan_.cluster_layers_)
-        if len(self.cluster_layers_) == 0:
-            raise ValueError("PLSCANClusterer found no layers with clusters.")
+    def fit(self, vectors: np.ndarray, verbose: Optional[bool] = None):
+        vectors = _validate_vectors(vectors, precomputed=self.metric == "precomputed")
+        _validate_density_parameters(self)
+        if not vectors.shape[0]:
+            self.plscan_ = None
+            return self._set_labels([])
+        if vectors.shape[0] < max(2, self.min_samples, self.base_min_cluster_size):
+            self.plscan_ = None
+            return self._set_labels([np.full(vectors.shape[0], -1, dtype=np.int64)])
+        from fast_hdbscan import PLSCAN
+
+        options = self.get_params(deep=False)
+        options["verbose"] = bool(self.verbose if verbose is None else verbose)
+        estimator = PLSCAN(**options)
+        estimator.fit(vectors)
+        self._set_labels(estimator.cluster_layers_)
+        self.plscan_ = estimator
         return self
 
 
@@ -539,33 +546,42 @@ class EVoCClusterer(Clusterer):
         self.n_label_prop_iter = n_label_prop_iter
         self.verbose = verbose
 
-    def fit(
-        self,
-        vectors: np.ndarray,
-    ):
-        self.evoc_ = EVoC(
-            noise_level=self.noise_level,
-            base_min_cluster_size=self.base_min_cluster_size,
-            base_n_clusters=self.base_n_clusters,
-            approx_n_clusters=self.approx_n_clusters,
-            n_neighbors=self.n_neighbors,
-            min_samples=self.min_samples,
-            n_epochs=self.n_epochs,
-            node_embedding_init=self.node_embedding_init,
-            symmetrize_graph=self.symmetrize_graph,
-            node_embedding_dim=self.node_embedding_dim,
-            neighbor_scale=self.neighbor_scale,
-            random_state=self.random_state,
-            min_similarity_threshold=self.min_similarity_threshold,
-            max_layers=self.max_layers,
-            n_label_prop_iter=self.n_label_prop_iter,
-        )
-        self.evoc_.fit(vectors)
-        self.cluster_layers_ = build_cluster_layers(self.evoc_.cluster_layers_)
-        self.cluster_tree_ = self.evoc_.cluster_tree_
-        if len(self.cluster_layers_) == 0:
-            raise ValueError("EVoCClusterer found no layers with clusters.")
+    def fit(self, vectors: np.ndarray):
+        vectors = _validate_vectors(vectors)
+        _validate_density_parameters(self)
+        if not vectors.shape[0]:
+            self.evoc_ = None
+            return self._set_labels([])
+        if vectors.shape[0] < max(2, self.min_samples, self.base_min_cluster_size):
+            self.evoc_ = None
+            return self._set_labels([np.full(vectors.shape[0], -1, dtype=np.int64)])
+        try:
+            from evoc import EVoC
+        except ModuleNotFoundError as error:
+            if error.name != "evoc":
+                raise
+            raise ImportError("EVoCClusterer requires toponymy[evoc]") from error
+
+        options = self.get_params(deep=False)
+        # EVoC 0.3.1 has no verbose constructor argument.
+        options.pop("verbose")
+        estimator = EVoC(**options)
+        estimator.fit(vectors)
+        self._set_labels(estimator.cluster_layers_)
+        self.evoc_ = estimator
         return self
+
+
+class ToponymyClusterer(PLSCANClusterer):
+    """Deprecated name for PLSCANClusterer; legacy kernel options are removed."""
+
+    def fit(self, vectors, verbose=None):
+        warnings.warn(
+            "ToponymyClusterer now uses PLSCAN; use PLSCANClusterer explicitly",
+            FutureWarning,
+            stacklevel=2,
+        )
+        return super().fit(vectors, verbose=verbose)
 
 
 @numba.njit(cache=True)
