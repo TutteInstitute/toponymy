@@ -323,9 +323,9 @@ class PLSCANClusterer(Clusterer):
         reproducible: bool = False,
         metric: str = "euclidean",
         algorithm: str = "boruvka",
-        knn_k : Optional[int] = None,
-        cannot_link : Optional[list[Tuple[int, int]]] = None,
-        validate_cannot_link : bool = True,
+        knn_k: Optional[int] = None,
+        cannot_link: Optional[list[Tuple[int, int]]] = None,
+        validate_cannot_link: bool = True,
         metric_kwds: dict or None = None,
         verbose: Optional[bool] = None,
     ):

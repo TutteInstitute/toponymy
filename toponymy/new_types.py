@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Any, NewType, Dict, List, Tuple
+from typing import Any, NewType, Dict, List, Protocol, Sequence, Tuple
+import numpy as np
 from numpy.typing import NDArray
 
 
@@ -54,3 +55,15 @@ class ClusterLayer:
 
 
 ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
+
+
+class TextEmbedderProtocol(Protocol):
+    """Protocol defining the minimal interface required by a text embedder."""
+
+    def encode(
+        self,
+        texts: Sequence[str],
+        verbose: bool,
+        *args,
+        **kwargs,
+    ) -> NDArray[np.floating]: ...

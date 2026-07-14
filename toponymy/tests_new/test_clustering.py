@@ -224,7 +224,9 @@ def test_plscan_clusterer_max_layers():
     assert len(layers) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="Known numba cache conflict between EVoC and PLSCAN")
+@pytest.mark.xfail(
+    strict=True, reason="Known numba cache conflict between EVoC and PLSCAN"
+)
 def test_evoc_clusterer():
     n_samples = 1000
     clusterable_data, cluster_labels = make_blobs(
@@ -249,7 +251,9 @@ def test_evoc_clusterer():
     )
 
 
-@pytest.mark.xfail(strict=True, reason="Known numba cache conflict between EVoC and PLSCAN")
+@pytest.mark.xfail(
+    strict=True, reason="Known numba cache conflict between EVoC and PLSCAN"
+)
 def test_evoc_clusterer_fit_predict_returns_layers_and_tree():
     n_samples = 1000
     clusterable_data, _ = make_blobs(
@@ -269,7 +273,9 @@ def test_evoc_clusterer_fit_predict_returns_layers_and_tree():
     assert layer_to_labels_helper(layers[0], n_samples).max() + 1 >= 4
 
 
-@pytest.mark.xfail(strict=True, reason="Known numba cache conflict between EVoC and PLSCAN")
+@pytest.mark.xfail(
+    strict=True, reason="Known numba cache conflict between EVoC and PLSCAN"
+)
 def test_evoc_clusterer_max_layers():
     n_samples = 1000
     clusterable_data, cluster_labels = make_blobs(
