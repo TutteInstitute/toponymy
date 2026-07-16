@@ -101,6 +101,9 @@ class TextExemplarExtractor(FeatureExtractorBase):
         n_exemplars = parameters["n_exemplars"]
         if not isinstance(n_exemplars, (int, np.integer)) or n_exemplars < 1:
             raise ValueError("n_exemplars must be a positive integer")
+        parameters.setdefault("random_state", self.random_state)
+        if method == "central":
+            parameters.setdefault("diversify_alpha", self.diversify_alpha)
         layers = list(clusterer)
         labels_and_ids = [_dense_labels(layer.labels, len(objects)) for layer in layers]
         vectors = embedding_vectors if embedding_vectors is not None else object_vectors
@@ -116,8 +119,7 @@ class TextExemplarExtractor(FeatureExtractorBase):
                 )
             elif method == "central":
                 layer_features, layer_indices = diverse_exemplars(
-                    labels, objects, vectors, diversify_alpha=self.diversify_alpha,
-                    **parameters,
+                    labels, objects, vectors, **parameters,
                 )
             else:
                 layer_features, layer_indices = submodular_selection_exemplars(

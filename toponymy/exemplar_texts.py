@@ -201,7 +201,7 @@ class FacilityLocationSelection(BaseGraphSelection):
         metric="euclidean",
         initial_subset=None,
         optimizer="lazy",
-        optimizer_kwds={},
+        optimizer_kwds=None,
         n_neighbors=None,
         reservoir=None,
         max_reservoir_size=1000,
@@ -215,7 +215,7 @@ class FacilityLocationSelection(BaseGraphSelection):
             metric=metric,
             initial_subset=initial_subset,
             optimizer=optimizer,
-            optimizer_kwds=optimizer_kwds,
+            optimizer_kwds={} if optimizer_kwds is None else dict(optimizer_kwds),
             n_neighbors=n_neighbors,
             reservoir=reservoir,
             max_reservoir_size=max_reservoir_size,
@@ -273,13 +273,17 @@ class FacilityLocationSelection(BaseGraphSelection):
             X_pairwise = KNeighborsTransformer(
                 n_neighbors=512, metric=self.metric
             ).fit_transform(X)
+            # Apricot's precomputed graph expects similarities, not distances.
+            X_pairwise.data = X_pairwise.data.max() - X_pairwise.data
+            X_pairwise.eliminate_zeros()
             original_metric = self.metric
             self.metric = "precomputed"
-            result = super(FacilityLocationSelection, self).fit(
-                X_pairwise, y=y, sample_weight=sample_weight, sample_cost=sample_cost
-            )
-            self.metric = original_metric
-            return result
+            try:
+                return super(FacilityLocationSelection, self).fit(
+                    X_pairwise, y=y, sample_weight=sample_weight, sample_cost=sample_cost
+                )
+            finally:
+                self.metric = original_metric
         else:
             return super(FacilityLocationSelection, self).fit(
                 X, y=y, sample_weight=sample_weight, sample_cost=sample_cost
@@ -309,7 +313,7 @@ class FacilityLocationSelection(BaseGraphSelection):
             )
         else:
             self.calculate_gains_(X_pairwise, gains, self.current_values, idxs)
-        gains -= self.current_values_sum
+            gains -= self.current_values_sum
 
         return gains
 
@@ -345,6 +349,7 @@ def submodular_selection_exemplars(
     submodular_function: str = "facility_location",
     verbose: bool = None,
     show_progress_bar: bool = None,
+    random_state=None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
     These exemplars are selected to be the closest vectors to the cluster centroid while retaining
@@ -378,6 +383,9 @@ def submodular_selection_exemplars(
         - A list of lists of exemplar texts for each cluster
         - A list of lists of indices indicating the position of each exemplar in the original object list
     """
+    rng = np.random if random_state is None else np.random.default_rng(random_state)
+    if not len(cluster_label_vector) or not np.any(cluster_label_vector >= 0):
+        return [], []
     results = []
     indices = []
 
@@ -401,7 +409,7 @@ def submodular_selection_exemplars(
     )
 
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc=f"Selecting {submodular_function} exemplars",
         disable=not show_progress_bar_val,
         unit="cluster",
@@ -412,7 +420,7 @@ def submodular_selection_exemplars(
         cluster_mask = cluster_label_vector == cluster_num
         # subsample if it is too large
         if np.sum(cluster_mask) > 16384:
-            cluster_mask = np.random.choice(
+            cluster_mask = rng.choice(
                 np.where(cluster_mask)[0], size=16384, replace=False
             )
             cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
@@ -433,7 +441,7 @@ def submodular_selection_exemplars(
         cluster_object_vectors = object_vectors[cluster_mask] - null_topic_vector
         cluster_indices = np.arange(cluster_object_vectors.shape[0])
 
-        if cluster_object_vectors.shape[0] >= n_exemplars:
+        if cluster_object_vectors.shape[0] > n_exemplars:
             _, candidate_indices = selector.fit_transform(
                 cluster_object_vectors, y=cluster_indices
             )
@@ -463,6 +471,7 @@ def random_exemplars(
     object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
     verbose: bool = None,
     show_progress_bar: bool = None,
+    random_state=None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar texts for each cluster in a cluster layer.
     These exemplars are randomly sampled from each cluster.
@@ -493,10 +502,11 @@ def random_exemplars(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
+    rng = np.random if random_state is None else np.random.default_rng(random_state)
     results = []
     indices = []
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc="Selecting random exemplars",
         disable=not show_progress_bar_val,
         unit="cluster",
@@ -519,9 +529,9 @@ def random_exemplars(
             continue
 
         # Randomly permute the index to create a random selection
-        exemplar_order = np.random.permutation(len(cluster_objects))[:n_exemplars]
+        exemplar_order = rng.permutation(len(cluster_objects))[:n_exemplars]
         if object_to_text_function is None:
-            chosen_exemplars = cluster_objects[exemplar_order].tolist()
+            chosen_exemplars = [cluster_objects[i] for i in exemplar_order]
         else:
             chosen_exemplars = object_to_text_function(
                 [cluster_objects[i] for i in exemplar_order]
@@ -546,6 +556,7 @@ def diverse_exemplars(
     method: str = "centroid",
     verbose: bool = None,
     show_progress_bar: bool = None,
+    random_state=None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
     These exemplars are selected to be the closest vectors to the cluster centroid while retaining
@@ -582,6 +593,9 @@ def diverse_exemplars(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
+    rng = np.random if random_state is None else np.random.default_rng(random_state)
+    if not len(cluster_label_vector) or not np.any(cluster_label_vector >= 0):
+        return [], []
     # Compute centroid vectors
     if verbose:
         print("Computing centroid vectors")
@@ -592,7 +606,7 @@ def diverse_exemplars(
     null_topic = np.mean(object_vectors, axis=0)
 
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc="Selecting central exemplars",
         disable=not show_progress_bar_val,
         unit="cluster",
@@ -625,7 +639,7 @@ def diverse_exemplars(
             )
             exemplar_order = np.argsort(exemplar_distances.flatten())
         elif method == "random":
-            exemplar_order = np.random.permutation(len(cluster_objects))
+            exemplar_order = rng.permutation(len(cluster_objects))
         else:
             raise ValueError(
                 f"method={method} is not a valid selection. Please choose one of (centroid,random)"

@@ -15,17 +15,20 @@ def distance_to_vector(vector, other_vectors):
             result[i] += vector[j] * other_vectors[i, j]
             other_vector_norms[i] += other_vectors[i, j] * other_vectors[i, j]
 
-    if vector_norm == 0.0:
-        return np.ones(other_vectors.shape[0], dtype=np.float64)
-    else:
-        return 1.0 - (result / np.sqrt(vector_norm * other_vector_norms))
+    distances = np.ones(other_vectors.shape[0], dtype=np.float64)
+    if vector_norm > 0.0:
+        for i in range(other_vectors.shape[0]):
+            if other_vector_norms[i] > 0.0:
+                cosine = result[i] / np.sqrt(vector_norm * other_vector_norms[i])
+                distances[i] = 1.0 - min(1.0, max(-1.0, cosine))
+    return distances
 
 
 @numba.njit(cache=True)
 def diversify_fixed_alpha(query_vector, candidate_neighbor_vectors, alpha=1.0):
     distance_to_query = distance_to_vector(query_vector, candidate_neighbor_vectors)
 
-    retained_neighbor_indices = [0]
+    retained_neighbor_indices = [i for i in range(min(1, len(candidate_neighbor_vectors)))]
     for i, vector in enumerate(candidate_neighbor_vectors[1:], 1):
         retained_vectors = candidate_neighbor_vectors[
             np.array(retained_neighbor_indices)
@@ -52,6 +55,12 @@ def diversify_max_alpha(
     min_alpha=0.0,
     tolerance=0.01,
 ):
+    if tolerance <= 0 or not np.isfinite(tolerance):
+        raise ValueError("tolerance must be finite and positive")
+    if not np.isfinite(min_alpha) or not np.isfinite(max_alpha) or min_alpha < 0 or max_alpha < min_alpha:
+        raise ValueError("alpha bounds must be finite and satisfy 0 <= min <= max")
+    if n_results <= 0:
+        return [i for i in range(0)]
     mid_alpha = (max_alpha + min_alpha) / 2.0
 
     while abs(max_alpha - min_alpha) > tolerance:
@@ -70,12 +79,13 @@ def diversify_max_alpha(
     )
 
 
-@numba.njit()
+@numba.njit(cache=True)
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
 ) -> np.ndarray:  # pragma: no cover
-    result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
-    counts = np.zeros(cluster_labels.max() + 1)
+    n_clusters = cluster_labels.max() + 1 if len(cluster_labels) else 0
+    result = np.zeros((n_clusters, vector_data.shape[1]))
+    counts = np.zeros(n_clusters)
     for i in range(cluster_labels.shape[0]):
         cluster_num = cluster_labels[i]
         if cluster_num >= 0:

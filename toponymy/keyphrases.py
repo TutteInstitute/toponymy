@@ -524,16 +524,37 @@ def subset_matrix_and_class_labels(
 ) -> Tuple[scipy.sparse.spmatrix, np.ndarray, np.ndarray]:
     # Mask out noise points, and then columns and rows that then have no entries
     count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
-    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+    column_mask = np.ravel(np.asarray(count_matrix.sum(axis=0))) > 0.0
     count_matrix = count_matrix[:, column_mask]
     column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
-    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+    row_mask = np.ravel(np.asarray(count_matrix.sum(axis=1))) > 0.0
     count_matrix = count_matrix[row_mask, :]
 
     # Make a label vector contracted to the appropriate space
     class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
 
     return count_matrix, class_labels, column_map
+
+
+def _information_weighted_matrix(
+    count_matrix, class_labels, prior_strength, weight_power
+):
+    if min(count_matrix.shape) < 2 or np.unique(class_labels).size < 2:
+        return None
+    try:
+        # Constant class distributions can have zero information, making the
+        # transformer's normalization undefined. Use representative selection.
+        with np.errstate(divide="raise", invalid="raise"):
+            transformer = InformationWeightTransformer(
+                prior_strength=prior_strength, weight_power=weight_power
+            ).fit(count_matrix, class_labels)
+    except FloatingPointError:
+        return None
+    if not np.isfinite(transformer.information_weights_).all():
+        return None
+    count_matrix.data = np.log(count_matrix.data + 1)
+    count_matrix.eliminate_zeros()
+    return transformer.transform(count_matrix)
 
 
 def information_weighted_keyphrases(
@@ -599,12 +620,22 @@ def information_weighted_keyphrases(
         cluster_label_vector, object_x_keyphrase_matrix
     )
 
-    iwt = InformationWeightTransformer(
-        prior_strength=prior_strength, weight_power=weight_power
-    ).fit(count_matrix, class_labels)
-    count_matrix.data = np.log(count_matrix.data + 1)
-    count_matrix.eliminate_zeros()
-    weighted_matrix = iwt.transform(count_matrix)
+    # Information weighting needs multiple observations, terms, and classes.
+    # Without that contrast, select representative terms using the central strategy.
+    weighted_matrix = _information_weighted_matrix(
+        count_matrix, class_labels, prior_strength, weight_power
+    )
+    if weighted_matrix is None:
+        return central_keyphrases(
+            cluster_label_vector,
+            object_x_keyphrase_matrix,
+            keyphrase_list,
+            keyphrase_vectors,
+            embedding_model,
+            n_keyphrases=n_keyphrases,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+        )
 
     result = []
     for cluster_num in tqdm(
@@ -616,7 +647,7 @@ def information_weighted_keyphrases(
         position=1,
     ):
         # Sum over the cluster; get the top scoring indices
-        contrastive_scores = np.squeeze(
+        contrastive_scores = np.ravel(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
         if sum(contrastive_scores) == 0:
@@ -749,11 +780,15 @@ def central_keyphrases(
     ):
         # Sum over the cluster; get the non-zero indices
         base_candidate_indices = np.where(
-            np.squeeze(
+            np.ravel(
                 np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
             )
             > 0
         )[0]
+
+        if len(base_candidate_indices) == 0:
+            result.append(["No notable keyphrases"])
+            continue
 
         null_topic = np.mean(keyphrase_vectors, axis=0)
 
@@ -782,7 +817,7 @@ def central_keyphrases(
             np.asarray([keyphrase_vector_mapping[phrase] for phrase in base_candidates])
             - null_topic
         )
-        base_weights = np.squeeze(
+        base_weights = np.ravel(
             np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
         )[base_candidate_indices]
         centroid = np.average(base_vectors, axis=0, weights=base_weights)
@@ -879,7 +914,7 @@ def bm25_keyphrases(
             np.ones(class_labels.shape[0]),
             (class_labels, np.arange(class_labels.shape[0])),
         ),
-        shape=(class_labels.max() + 1, class_labels.shape[0]),
+        shape=(cluster_label_vector.max() + 1, class_labels.shape[0]),
     )
     class_count_matrix = groupby_matrix @ count_matrix
 
@@ -888,7 +923,7 @@ def bm25_keyphrases(
     df = (class_count_matrix > 0).sum(axis=0)
     idf = np.log(1 + (N - df + 0.5) / (df + 0.5))
 
-    doc_lengths = count_matrix.sum(axis=1)
+    doc_lengths = np.asarray(class_count_matrix.sum(axis=1)).ravel()
     avg_doc_length = doc_lengths.mean()
 
     for i in range(class_count_matrix.shape[0]):
@@ -1039,12 +1074,21 @@ def submodular_selection_information_keyphrases(
     )
     central_vector = keyphrase_vectors.mean(axis=0)
 
-    iwt = InformationWeightTransformer(
-        prior_strength=prior_strength, weight_power=weight_power
-    ).fit(count_matrix, class_labels)
-    count_matrix.data = np.log(count_matrix.data + 1)
-    count_matrix.eliminate_zeros()
-    weighted_matrix = iwt.transform(count_matrix)
+    weighted_matrix = _information_weighted_matrix(
+        count_matrix, class_labels, prior_strength, weight_power
+    )
+    if weighted_matrix is None:
+        return central_keyphrases(
+            cluster_label_vector,
+            object_x_keyphrase_matrix,
+            keyphrase_list,
+            keyphrase_vectors,
+            embedding_model,
+            n_keyphrases=n_keyphrases,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+        )
+
     if submodular_function == "facility_location":
         selector = FacilityLocationSelection(
             n_keyphrases, metric="cosine", optimizer="lazy"
@@ -1070,7 +1114,7 @@ def submodular_selection_information_keyphrases(
         position=1,
     ):
         # Sum over the cluster; get the top scoring indices
-        contrastive_scores = np.squeeze(
+        contrastive_scores = np.ravel(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
         if sum(contrastive_scores) == 0:
