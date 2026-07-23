@@ -5,7 +5,7 @@ import pytest
 from sklearn.exceptions import NotFittedError
 import scipy.sparse as sp
 
-from toponymy.new_feature_extractor import TextExemplarExtractor, TextKeyphraseExtractor
+from toponymy.new_feature_extractor import TextExemplarExtractor, TextKeyphraseExtractor, SubtopicExtractor
 
 
 def layers(*labels):
@@ -127,3 +127,35 @@ def test_zero_vectors_and_empty_diversification_are_finite():
     assert centroids_from_labels(np.array([], dtype=np.int64), np.empty((0, 3))).shape == (0, 3)
     with pytest.raises(ValueError, match="tolerance"):
         diversify_max_alpha(np.zeros(2), np.zeros((2, 2)), 1, tolerance=0)
+
+
+def test_subtopics_follow_containment_tree_after_lower_topics_are_named():
+    from toponymy.new_clustering import PrecomputedClusterer
+    clustering = PrecomputedClusterer([
+        np.array([8, 8, 9, 12, 12, 12]),
+        np.array([30, 30, 30, 90, 90, 90]),
+        np.array([200, 200, 200, 200, 200, 200]),
+    ]).fit(np.ones((6, 2)))
+    extractor = SubtopicExtractor(n_subtopics=2)
+    assert extractor.layer_dependent
+    assert extractor.extract_layer(0, {}, clustering) == [[], [], []]
+    topics = {(0, 8): SimpleNamespace(name="Fruit"),
+              (0, 9): SimpleNamespace(name="Seeds"),
+              (0, 12): SimpleNamespace(name="Engines")}
+    assert extractor.extract_layer(1, topics, clustering) == [["Fruit", "Seeds"], ["Engines"]]
+    with pytest.raises(ValueError, match="must be named"):
+        extractor.extract_layer(2, topics, clustering)
+    topics.update({(1, 30): {"name": "Plants"}, (1, 90): {"name": "Machines"}})
+    assert extractor.extract_layer(2, topics, clustering) == [["Plants", "Machines"]]
+
+
+def test_subtopics_use_skipped_layers_and_deduplicate_names():
+    from toponymy.new_clustering import PrecomputedClusterer
+    clustering = PrecomputedClusterer([
+        np.array([4, 4, -1, -1]),
+        np.array([8, -1, 8, -1]),
+        np.array([20, 20, 20, 20]),
+    ]).fit(np.ones((4, 2)))
+    topics = {(0, 4): SimpleNamespace(name="Shared"),
+              (1, 8): SimpleNamespace(name="Shared")}
+    assert SubtopicExtractor().extract_layer(2, topics, clustering) == [["Shared"]]
