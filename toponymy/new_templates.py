@@ -1,3 +1,5 @@
+from copy import deepcopy
+from dataclasses import field
 import json
 import re
 from abc import ABC, abstractmethod
@@ -21,9 +23,32 @@ GET_TOPIC_CLUSTER_NAMES_REGEX = (
 )
 
 
-class Prompt(NamedTuple):
+@dataclass(frozen=True, init=False)
+class Prompt:
+    """Inspectable provider-independent messages and optional JSON Schema."""
+
     system: str
     user: str
+    _json_schema: dict[str, Any] | None = field(repr=False)
+
+    def __init__(
+        self, system: str, user: str, json_schema: dict[str, Any] | None = None
+    ):
+        object.__setattr__(self, "system", system)
+        object.__setattr__(self, "user", user)
+        object.__setattr__(self, "_json_schema", deepcopy(json_schema))
+
+    @property
+    def json_schema(self) -> dict[str, Any] | None:
+        """Return an owned schema copy; inspection cannot alter future requests."""
+        return deepcopy(self._json_schema)
+
+    def _asdict(self) -> dict[str, Any]:
+        return {
+            "system": self.system,
+            "user": self.user,
+            "json_schema": self.json_schema,
+        }
 
 
 class Template(ABC):
