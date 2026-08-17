@@ -1,26 +1,22 @@
-from copy import deepcopy
-from dataclasses import field
-import json
-import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, ClassVar, NamedTuple
+from copy import deepcopy
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
 import jinja2
 
+from .response_parsing import (
+    ResponseParseError,
+    extract_response,
+    topic_fields,
+    topic_name_mapping,
+)
+
 GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
-GET_TOPIC_NAME_AND_SUMMARY_REGEX = (
-    r'\{\s*"topic_analysis":\s*.*?,\s*"topic_summary":\s*.*?,'
-    r'\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
-)
-GET_MULTILINGUAL_EN_FR_TOPIC_NAME_REGEX = (
-    r'\{\s*"english_topic_name":\s*.*?,'
-    r'\s*"nom_du_sujet_en_fran(?:\u00e7|\\u00e7)ais":\s*.*?,'
-    r'\s*"topic_specificity":\s*[\w.]+\s*\}'
-)
 GET_TOPIC_CLUSTER_NAMES_REGEX = (
     r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
 )
+TopicNameResult = str | tuple[str, str, str]
 
 
 @dataclass(frozen=True, init=False)
@@ -61,7 +57,7 @@ class Template(ABC):
 
     @staticmethod
     @abstractmethod
-    def extract_name(response: str) -> Any:
+    def extract_name(response: str) -> TopicNameResult:
         """Extract the generated name from a model response."""
         pass
 
@@ -101,52 +97,53 @@ class TextTemplate(Template):
     subtopic_end: ClassVar[str] = "\n</SUBTOPIC>"
 
     def _add_template_features(
-        self,
-        features: dict[str, Any],
-        name_kind: str,
+        self, features: dict[str, Any], name_kind: str
     ) -> dict[str, Any]:
-        features["document_type"] = self.document_type
-        features["corpus_description"] = self.corpus_description
-        features["name_kind"] = name_kind
-        features["subtopic_start"] = self.subtopic_start
-        features["subtopic_end"] = self.subtopic_end
-        features["cluster_keywords"] = features.get("cluster_keywords") or []
-        features["cluster_subtopics"] = features.get("cluster_subtopics") or {
-            "major": [],
-            "minor": [],
-            "misc": [],
-        }
-        features["cluster_subtopics"]["major"] = (
-            features["cluster_subtopics"].get("major") or []
+        context = dict(features)
+        subtopics = features.get("cluster_subtopics") or {}
+        if isinstance(subtopics, list):
+            subtopics = {"major": subtopics}
+        context.update(
+            document_type=self.document_type,
+            corpus_description=self.corpus_description,
+            name_kind=name_kind,
+            subtopic_start=self.subtopic_start,
+            subtopic_end=self.subtopic_end,
+            cluster_keywords=features.get("cluster_keywords") or [],
+            cluster_subtopics={
+                key: subtopics.get(key) or [] for key in ("major", "minor", "misc")
+            },
+            cluster_sentences=features.get("cluster_sentences") or [],
+            cluster_task=self.cluster_task,
+            cluster_response_description=self.cluster_response_description,
+            user_request=self.user_request,
+            summary_kind=getattr(self, "summary_kind", None),
         )
-        features["cluster_subtopics"]["minor"] = (
-            features["cluster_subtopics"].get("minor") or []
-        )
-        features["cluster_subtopics"]["misc"] = (
-            features["cluster_subtopics"].get("misc") or []
-        )
-        features["cluster_sentences"] = features.get("cluster_sentences") or []
-        features.setdefault("exemplar_start_delimiter", '    * "')
-        features.setdefault("exemplar_end_delimiter", '"\n')
-        features["cluster_task"] = self.cluster_task
-        features["cluster_response_description"] = self.cluster_response_description
-        features["user_request"] = self.user_request
-        return features
+        if context["summary_kind"]:
+            context["cluster_task"] = context["cluster_task"].replace(
+                "a short paragraph", context["summary_kind"]
+            )
+            context["cluster_response_description"] = context[
+                "cluster_response_description"
+            ].replace("a short paragraph", context["summary_kind"])
+        context.setdefault("exemplar_start_delimiter", '    * "')
+        context.setdefault("exemplar_end_delimiter", '"\n')
+        return context
 
     def _disambiguation_context(
-        self,
-        names: list[str],
-        features: list[dict[str, Any]],
-        name_kind: str,
+        self, names: list[str], features: list[dict[str, Any]], name_kind: str
     ) -> dict[str, Any]:
-        for feature in features:
-            self._add_template_features(feature, name_kind)
+        if len(names) != len(features):
+            raise ValueError("Names and features must have the same length")
+        contexts = [
+            self._add_template_features(feature, name_kind) for feature in features
+        ]
         return {
             "corpus_description": self.corpus_description,
             "document_type": self.document_type,
             "name_kind": name_kind,
-            "features_list": features,
-            "feature_names": list(zip(features, names)),
+            "features_list": contexts,
+            "feature_names": list(zip(contexts, names)),
         }
 
     def disambiguate_prompt(
@@ -219,39 +216,15 @@ Corpus description: {{corpus_description}}
 Please provide new {{name_kind}} names for each topic, following the JSON output format specified.
 """)
         context = self._disambiguation_context(names, features, name_kind)
-        return Prompt(system_prompt.render(**context), user_prompt.render(**context))
+        return Prompt(
+            system_prompt.render(**context),
+            user_prompt.render(**context),
+            _disambiguation_schema(len(names)),
+        )
 
     @staticmethod
     def extract_disambiguated_names(response: str) -> list[str]:
-        try:
-            response_json = _json_from_response(response, GET_TOPIC_CLUSTER_NAMES_REGEX)
-            mapping = response_json["new_topic_name_mapping"]
-            return [mapping[key] for key in sorted(mapping, key=_numeric_mapping_key)]
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            mapping_match = re.findall(
-                r'"new_topic_name_mapping":\s*\{(.*?)\}',
-                response,
-                re.DOTALL,
-            )
-            if mapping_match:
-                new_names = [
-                    name
-                    for _, name in sorted(
-                        (
-                            (_numeric_mapping_key(index), name)
-                            for index, name in re.findall(
-                                r'"\s*(\d+)(?:\.[^"]*)?\s*":\s*"(.*?)",?',
-                                mapping_match[0],
-                                re.DOTALL,
-                            )
-                        )
-                    )
-                ]
-                if new_names:
-                    return new_names
-            raise ValueError(
-                f"Failed to extract disambiguated topic names from response: {response}"
-            )
+        return extract_response(response, topic_name_mapping)
 
     def cluster_prompt(self, features: dict[str, Any], name_kind: str) -> Prompt:
         system_prompt = jinja2.Template("""
@@ -268,6 +241,9 @@ Make every requested output broad enough to capture the overall range at a glanc
 When major subtopics are present, primarily make use of the major and minor subtopics, and ensure each generated topic name reflects the core essence of *all* major subtopics.
 {% endif %}
 Ensure your entire response is only the JSON object, with no other text before or after it.
+{% if summary_kind %}
+If a summary is requested, its form should be {{summary_kind}}.
+{% endif %}
 Keep all JSON string values on a single line (escape any newlines as \\n).
 """)
         user_prompt = jinja2.Template("""
@@ -304,18 +280,17 @@ Based on this information, {{user_request}} for this group of {{document_type}}.
 Recall that the response must be {{cluster_response_description}}
 """)
         context = self._add_template_features(features, name_kind)
-        return Prompt(system_prompt.render(**context), user_prompt.render(**context))
+        return Prompt(
+            system_prompt.render(**context),
+            user_prompt.render(**context),
+            _name_schema(self),
+        )
 
     @staticmethod
-    def extract_name(response: str) -> str:
-        try:
-            response_json = _json_from_response(response, GET_TOPIC_NAME_REGEX)
-            return str(response_json["topic_name"])
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            match = re.search(r'"topic_name"\s*:\s*"(.*?)"', response, re.DOTALL)
-            if match:
-                return match.group(1)
-            raise ValueError(f"Failed to extract topic name from response: {response}")
+    def extract_name(response: str) -> TopicNameResult:
+        return extract_response(
+            response, lambda value: topic_fields(value, "topic_name")[0]
+        )
 
 
 @dataclass
@@ -330,31 +305,18 @@ class MultilingualENFRTemplate(TextTemplate):
 
     @staticmethod
     def extract_name(response: str) -> str:
-        try:
-            response_json = _json_from_response(
-                response,
-                GET_MULTILINGUAL_EN_FR_TOPIC_NAME_REGEX,
-            )
-            french_name = response_json["nom_du_sujet_en_français"]
-            return f'{response_json["english_topic_name"]} / {french_name}'
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            english_match = re.search(
-                r'"english_topic_name"\s*:\s*"(.*?)"',
-                response,
-                re.DOTALL,
-            )
-            french_match = re.search(
-                r'"nom_du_sujet_en_fran(?:\u00e7|\\u00e7)ais"\s*:\s*"(.*?)"',
-                response,
-                re.DOTALL,
-            )
-            if english_match and french_match:
-                return f"{english_match.group(1)} / {french_match.group(1)}"
-            raise ValueError(f"Failed to extract topic name from response: {response}")
+        return extract_response(
+            response,
+            lambda value: " / ".join(
+                topic_fields(value, "english_topic_name", "nom_du_sujet_en_français")
+            ),
+        )
 
 
 @dataclass
 class SummaryTemplate(TextTemplate):
+    summary_kind: str = "a short paragraph"
+
     cluster_task: ClassVar[str] = (
         "analyze the provided group information and provide a thorough analysis of "
         "the topic,\na short paragraph summary, and a name"
@@ -376,51 +338,56 @@ class SummaryTemplate(TextTemplate):
 
     @staticmethod
     def extract_name(response: str) -> tuple[str, str, str]:
-        try:
-            response_json = _json_from_response(
-                response,
-                GET_TOPIC_NAME_AND_SUMMARY_REGEX,
-            )
-            return (
-                response_json["topic_name"],
-                response_json["topic_summary"],
-                response_json["topic_analysis"],
-            )
-        except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-            name_match = re.search(r'"topic_name"\s*:\s*"(.*?)"', response, re.DOTALL)
-            summary_match = re.search(
-                r'"topic_summary"\s*:\s*"(.*?)"',
-                response,
-                re.DOTALL,
-            )
-            analysis_match = re.search(
-                r'"topic_analysis"\s*:\s*"(.*?)"',
-                response,
-                re.DOTALL,
-            )
-            if name_match and summary_match and analysis_match:
-                return (
-                    name_match.group(1),
-                    summary_match.group(1),
-                    analysis_match.group(1),
-                )
-            raise ValueError(
-                f"Failed to extract topic summary from response: {response}"
-            )
+        name, summary, analysis = extract_response(
+            response,
+            lambda value: topic_fields(
+                value, "topic_name", "topic_summary", "topic_analysis"
+            ),
+        )
+        return name, summary, analysis
 
 
-def _json_from_response(response: str, regex: str) -> dict[str, Any]:
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError:
-        matches = re.findall(regex, response, re.DOTALL)
-        if matches:
-            return json.loads(matches[0])
-        raise
+def _object_schema(properties: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
 
 
-def _numeric_mapping_key(key: Any) -> int:
-    match = re.match(r"\s*(\d+)", str(key))
-    if not match:
-        raise ValueError(f"Mapping key does not start with a numeric index: {key}")
-    return int(match.group(1))
+def _name_schema(template: TextTemplate) -> dict[str, Any]:
+    fields = ["topic_name"]
+    if isinstance(template, SummaryTemplate):
+        fields = ["topic_analysis", "topic_summary", "topic_name"]
+    elif isinstance(template, MultilingualENFRTemplate):
+        fields = ["english_topic_name", "nom_du_sujet_en_français"]
+    properties: dict[str, dict[str, str | int]] = {
+        field: {"type": "string"} for field in fields
+    }
+    properties["topic_specificity"] = {"type": "number", "minimum": 0, "maximum": 1}
+    return _object_schema(properties)
+
+
+def _disambiguation_schema(count: int) -> dict[str, Any]:
+    return _object_schema(
+        {
+            "new_topic_name_mapping": _object_schema(
+                {str(index): {"type": "string"} for index in range(1, count + 1)}
+            ),
+            "topic_specificities": {
+                "type": "array",
+                "items": {"type": "number", "minimum": 0, "maximum": 1},
+                "minItems": count,
+                "maxItems": count,
+            },
+        }
+    )
+
+
+def default_extract_topic_names(json_response, old_names, topic_name_info_raw=None):
+    """Compatibility parser for the legacy provider callback signature."""
+    names = topic_name_mapping(json_response)
+    if len(names) != len(old_names):
+        raise ResponseParseError("Response must contain one name per input topic")
+    return names
