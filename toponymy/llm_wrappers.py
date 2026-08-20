@@ -63,6 +63,17 @@ class CallResult(Generic[T]):
         return self.error is None
 
 
+@dataclass
+class TopicNameParseResult:
+    topic_names: str | tuple | None
+    raw_response: str | None
+    error: Exception | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
 class InvalidLLMInputError(ValueError):
     """A custom exception for invalid LLM input. In these cases we do not want to retry, as the input will not change."""
 
@@ -497,7 +508,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         topic_extraction_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int | None = None,
-    ) -> str | tuple:
+    ) -> TopicNameParseResult:
         if max_tokens is None:
             max_tokens = getattr(self, "max_tokens_topic_name", 128)
 
@@ -507,13 +518,19 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             max_tokens=max_tokens,
             routine="generate_topic_name",
         )
-
-        topic_name_info = llm_output_to_result(
-            topic_name_info_raw, get_topic_name_regex
-        )
-        result = topic_extraction_function(topic_name_info)
-        topic_name = result if isinstance(result, tuple) else str(result)
-        return topic_name, topic_name_info_raw
+        try:
+            topic_name_info = llm_output_to_result(
+                topic_name_info_raw, get_topic_name_regex
+            )
+            result = topic_extraction_function(topic_name_info)
+            topic_name = result if isinstance(result, tuple) else str(result)
+            return TopicNameParseResult(
+                topic_names=topic_name, raw_response=topic_name_info_raw, error=None
+            )
+        except Exception as e:
+            return TopicNameParseResult(
+                topic_names=None, raw_response=topic_name_info_raw, error=e
+            )
 
     # @abstractmethod
     @retry(
@@ -530,14 +547,16 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int | None = None,
     ) -> str | tuple:
-        topic_name, _ = self._generate_topic_name_with_raw_response(
+        result = self._generate_topic_name_with_raw_response(
             prompt,
             temperature=temperature,
             topic_extraction_function=topic_extraction_function,
             get_topic_name_regex=get_topic_name_regex,
             max_tokens=max_tokens,
         )
-        return topic_name
+        if result.error is not None:
+            raise result.error
+        return result.topic_names
 
     @staticmethod
     def _topic_cluster_names_error_callback(retry_state):
@@ -752,21 +771,26 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 )
             else:
                 if verbose:
-                    topic_names, raw_response = (
-                        self._generate_topic_name_with_raw_response(
-                            prompt,
-                            temperature=temperature,
-                            max_tokens=max_tokens,
-                        )
+                    response = self._generate_topic_name_with_raw_response(
+                        prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
                     )
-                    result["raw_response"] = raw_response
+                    result["raw_response"] = response.raw_response
+                    result["topic_names"] = response.topic_names
+
+                    if response.error is not None:
+                        result["error_type"] = type(response.error).__name__
+                        result["error_message"] = str(response.error)
+                        result["success"] = False
+                        return result
                 else:
                     topic_names = self.generate_topic_name(
                         prompt,
                         temperature=temperature,
                         max_tokens=max_tokens,
                     )
-            result["topic_names"] = topic_names
+                    result["topic_names"] = topic_names
             result["success"] = True
 
         except Exception as e:
