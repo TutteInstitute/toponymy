@@ -8,6 +8,7 @@ from toponymy.llm_wrappers import (
 )
 
 from toponymy.tests.helpers.llm_test_config import (
+    make_prompt,
     validate_topic_name,
     validate_cluster_names,
 )
@@ -35,9 +36,7 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
     async def _call_single_llm(self, prompt, temperature, max_tokens):
         raise DummyAsyncProviderError("bad config")
 
-    async def _call_single_llm_with_system(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
+    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
         raise DummyAsyncProviderError("bad config")
 
 
@@ -48,9 +47,7 @@ class DummySingleWrapper(AsyncLLMWrapper):
     async def _call_single_llm(self, prompt, temperature, max_tokens):
         return "single-ok"
 
-    async def _call_single_llm_with_system(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
+    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
         return "single-system-ok"
 
 
@@ -61,9 +58,17 @@ class DummyBatchWrapper(AsyncLLMWrapper):
         return ["batch-ok"]
 
     async def _call_llm_with_system_prompt_batch(
-        self, system_prompts, user_prompts, temperature, max_tokens
+        self, prompts, temperature, max_tokens
     ):
         return ["batch-system-ok"]
+
+
+class DummyCombinedOnlyWrapper(DummySingleWrapper):
+    """A wrapper whose provider has no system role, so it takes the combined rendering."""
+
+    @property
+    def supports_system_prompts(self) -> bool:
+        return False
 
 
 class DummyBatchCallResultWrapper(AsyncLLMWrapper):
@@ -254,30 +259,31 @@ async def test_async_generate_topic_cluster_names_length_mismatch_raises():
 
 
 @pytest.mark.asyncio
-async def test_async_generate_topic_names_routes_string_prompts_to_call_llm_batch():
-    wrapper = DummySingleWrapper()
+async def test_async_generate_topic_names_routes_to_batch_without_system_prompts():
+    wrapper = DummyCombinedOnlyWrapper()
     wrapper._call_llm_batch = AsyncMock(return_value=[])
 
-    await wrapper.generate_topic_names(["test prompt"])
+    prompts = [make_prompt(1)]
+    await wrapper.generate_topic_names(prompts)
 
+    # The whole prompt is passed through, not just the rendering that gets used.
     wrapper._call_llm_batch.assert_awaited_once_with(
-        ["test prompt"],
+        prompts,
         0.4,
         max_tokens=128,
     )
 
 
 @pytest.mark.asyncio
-async def test_async_generate_topic_names_routes_dict_prompts_to_call_with_system_prompt_batch():
+async def test_async_generate_topic_names_routes_to_system_prompt_batch():
     wrapper = DummySingleWrapper()
     wrapper._call_llm_with_system_prompt_batch = AsyncMock(return_value=[])
 
-    prompts = [{"system": "system prompt", "user": "test prompt"}]
+    prompts = [make_prompt(1)]
     await wrapper.generate_topic_names(prompts)
 
     wrapper._call_llm_with_system_prompt_batch.assert_awaited_once_with(
-        ["system prompt"],
-        ["test prompt"],
+        prompts,
         0.4,
         max_tokens=128,
     )
@@ -289,7 +295,7 @@ async def test_async_generate_topic_names_partial_success(
     mock_data,
 ):
     wrapper = DummySingleWrapper()
-    wrapper._call_llm_batch = AsyncMock(
+    wrapper._call_llm_with_system_prompt_batch = AsyncMock(
         return_value=[
             MockCallResult.success(mock_data["valid_topic_name"]),
             MockCallResult.failure(),
@@ -297,7 +303,9 @@ async def test_async_generate_topic_names_partial_success(
         ]
     )
 
-    result = await wrapper.generate_topic_names(["prompt 1", "prompt 2", "prompt 3"])
+    result = await wrapper.generate_topic_names(
+        [make_prompt(1), make_prompt(2), make_prompt(3)]
+    )
 
     validate_topic_name(result[0])
     assert result[1] == ""
@@ -310,7 +318,7 @@ async def test_async_generate_topic_cluster_names_partial_success(
     mock_data,
 ):
     wrapper = DummySingleWrapper()
-    wrapper._call_llm_batch = AsyncMock(
+    wrapper._call_llm_with_system_prompt_batch = AsyncMock(
         return_value=[
             MockCallResult.success(mock_data["valid_cluster_names"]),
             MockCallResult.failure(),
@@ -325,7 +333,7 @@ async def test_async_generate_topic_cluster_names_partial_success(
         mock_data["old_names"],
     ]
     result = await wrapper.generate_topic_cluster_names(
-        ["prompt 1", "prompt 2", "prompt 3"],
+        [make_prompt(1), make_prompt(2), make_prompt(3)],
         old_names,
     )
 

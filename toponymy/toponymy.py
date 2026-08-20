@@ -150,12 +150,6 @@ class Toponymy:
 
         return tags
 
-    def _effective_prompt_format(self) -> str:
-        """
-        Determine the effective prompt format based on the llm_wrapper's capabilities.
-        """
-        return "system_user" if self.llm_wrapper.supports_system_prompts else "combined"
-
     def _sync_layer_runtime_config(self) -> None:
         """
         Refresh wrapper-sensitive / run-sensitive settings on all cluster layers.
@@ -164,7 +158,6 @@ class Toponymy:
         llm_wrapper and prompt configuration for this run.
         """
         for layer in self.cluster_layers_:
-            layer.prompt_format = self._effective_prompt_format()
             layer.exemplar_delimiters = self.exemplar_delimiters
             layer.show_progress_bar = self.show_progress_bars
             layer.verbose = self.verbose
@@ -240,7 +233,6 @@ class Toponymy:
                 verbose=self.verbose,
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
-                prompt_format=self._effective_prompt_format(),
                 prompt_template=self.prompt_template,
             )
 

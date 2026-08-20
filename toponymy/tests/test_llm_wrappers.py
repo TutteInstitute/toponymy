@@ -26,6 +26,7 @@ from conftest import ollama_has_model
 from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 
 from toponymy.tests.helpers.llm_test_config import (
+    make_prompt,
     validate_cluster_names,
     validate_topic_name,
     LITELLM_PROVIDER_CASES,
@@ -117,7 +118,7 @@ def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
     response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
     llamacpp_wrapper.llm = Mock(return_value=response)
 
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    result = llamacpp_wrapper.generate_topic_name(make_prompt())
     validate_topic_name(result)
 
 
@@ -126,7 +127,7 @@ def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
     llamacpp_wrapper.llm = Mock(return_value=response)
 
     result = llamacpp_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -138,7 +139,7 @@ def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(
     llamacpp_wrapper.llm = Mock(return_value=response)
 
     result = llamacpp_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -146,7 +147,7 @@ def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    result = llamacpp_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -156,7 +157,7 @@ def test_llamacpp_generate_topic_name_failure_malformed_json(
 ):
     response = MockLLMResponse.create_llama_response(mock_data["malformed_json"])
     llamacpp_wrapper.llm = Mock(return_value=response)
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    result = llamacpp_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -164,7 +165,7 @@ def test_llamacpp_generate_topic_name_failure_malformed_json(
 def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = llamacpp_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     assert result == mock_data["old_names"]
 
@@ -183,7 +184,7 @@ def test_huggingface_generate_topic_name_success(huggingface_wrapper, mock_data)
     )
     huggingface_wrapper.llm = Mock(return_value=response)
 
-    result = huggingface_wrapper.generate_topic_name("test prompt")
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     validate_topic_name(result)
 
 
@@ -195,9 +196,7 @@ def test_huggingface_generate_topic_name_success_system_prompt(
     )
     huggingface_wrapper.llm = Mock(return_value=response)
 
-    result = huggingface_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     validate_topic_name(result)
 
 
@@ -208,7 +207,7 @@ def test_huggingface_generate_cluster_names_success(huggingface_wrapper, mock_da
     huggingface_wrapper.llm = Mock(return_value=response)
 
     result = huggingface_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -222,7 +221,7 @@ def test_huggingface_generate_cluster_names_success_system_prompt(
     huggingface_wrapper.llm = Mock(return_value=response)
 
     result = huggingface_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -236,7 +235,7 @@ def test_huggingface_generate_cluster_names_success_on_malformed_mapping(
     huggingface_wrapper.llm = Mock(return_value=response)
 
     result = huggingface_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -244,7 +243,7 @@ def test_huggingface_generate_cluster_names_success_on_malformed_mapping(
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_huggingface_generate_topic_name_failure(huggingface_wrapper):
     huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
-    result = huggingface_wrapper.generate_topic_name("test prompt")
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -254,7 +253,7 @@ def test_huggingface_generate_topic_name_failure_malformed_json(
 ):
     response = MockLLMResponse.create_huggingface_response(mock_data["malformed_json"])
     huggingface_wrapper.llm = Mock(return_value=response)
-    result = huggingface_wrapper.generate_topic_name("test prompt")
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -262,7 +261,7 @@ def test_huggingface_generate_topic_name_failure_malformed_json(
 def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_data):
     huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = huggingface_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     assert result == mock_data["old_names"]
 
@@ -727,7 +726,7 @@ def test_litellm_generate_topic_name_success(litellm_wrapper, mock_data):
     response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.completion", return_value=response):
-        result = litellm_wrapper.generate_topic_name("test prompt")
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     validate_topic_name(result)
 
@@ -736,9 +735,7 @@ def test_litellm_generate_topic_name_success_system_prompt(litellm_wrapper, mock
     response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.completion", return_value=response):
-        result = litellm_wrapper.generate_topic_name(
-            {"system": "system prompt", "user": "test prompt"}
-        )
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     validate_topic_name(result)
 
@@ -748,7 +745,7 @@ def test_litellm_generate_cluster_names_success(litellm_wrapper, mock_data):
 
     with patch("litellm.completion", return_value=response):
         result = litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -762,7 +759,7 @@ def test_litellm_generate_cluster_names_success_system_prompt(
 
     with patch("litellm.completion", return_value=response):
         result = litellm_wrapper.generate_topic_cluster_names(
-            {"system": "system prompt", "user": "test prompt"},
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -777,7 +774,7 @@ def test_litellm_generate_cluster_names_success_on_malformed_mapping(
 
     with patch("litellm.completion", return_value=response):
         result = litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -788,7 +785,7 @@ def test_litellm_generate_topic_name_failure_malformed_json(litellm_wrapper, moc
     response = MockLLMResponse.create_chat_response(mock_data["malformed_json"])
 
     with patch("litellm.completion", return_value=response):
-        result = litellm_wrapper.generate_topic_name("test prompt")
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     assert result == ""
 
@@ -800,7 +797,7 @@ def test_litellm_topic_name_fail_fast_error(litellm_wrapper, error_class):
         side_effect=make_litellm_error(error_class),
     ):
         with pytest.raises(FailFastLLMError):
-            litellm_wrapper.generate_topic_name("test prompt")
+            litellm_wrapper.generate_topic_name(make_prompt())
 
 
 @pytest.mark.parametrize("error_class", LITELLM_FAIL_FAST)
@@ -815,7 +812,7 @@ def test_litellm_topic_cluster_names_fail_fast_error(
     ):
         with pytest.raises(FailFastLLMError):
             litellm_wrapper.generate_topic_cluster_names(
-                "test prompt",
+                make_prompt(),
                 mock_data["old_names"],
             )
 
@@ -830,7 +827,7 @@ def test_litellm_generate_topic_name_retry_exhausted_returns_empty(
         "litellm.completion",
         side_effect=[make_litellm_error(error_class) for _ in range(3)],
     ) as mock_completion:
-        result = litellm_wrapper.generate_topic_name("test prompt")
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     assert result == ""
     assert mock_completion.call_count == 3
@@ -848,7 +845,7 @@ def test_litellm_generate_cluster_names_retry_exhausted_returns_old_names(
         side_effect=[make_litellm_error(error_class) for _ in range(3)],
     ) as mock_completion:
         result = litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -901,8 +898,7 @@ def test_litellm_system_prompt_probe_falls_back_and_caches(litellm_wrapper, mock
         side_effect=[unsupported_error, good_response],
     ) as mock_completion:
         result = litellm_wrapper._call_llm_with_system_prompt(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -921,8 +917,7 @@ def test_litellm_system_prompt_cached_false_flattens_immediately(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper._call_llm_with_system_prompt(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -941,8 +936,7 @@ def test_litellm_system_prompt_probe_success_caches_true(
 
     with patch("litellm.completion", return_value=good_response):
         result = litellm_wrapper._call_llm_with_system_prompt(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -960,7 +954,7 @@ def test_litellm_namer_temperature_override_is_used(litellm_wrapper, mock_data):
     response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.completion", return_value=response) as mock_completion:
-        result = wrapper.generate_topic_name("test prompt", temperature=0.9)
+        result = wrapper.generate_topic_name(make_prompt(), temperature=0.9)
 
     assert mock_completion.call_args.kwargs["temperature"] == 0.0
     validate_topic_name(result)
@@ -1074,7 +1068,7 @@ def test_litellm_namer_generate_topic_name_uses_instance_default(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_name(
-            "test prompt",
+            make_prompt(),
             # max_tokens not specified, should use instance default
         )
 
@@ -1095,7 +1089,7 @@ def test_litellm_namer_generate_topic_name_override_with_explicit_max_tokens(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_name(
-            "test prompt", max_tokens=100  # explicit override
+            make_prompt(), max_tokens=100  # explicit override
         )
 
     # Check that the explicit value was used, not the instance default
@@ -1117,7 +1111,7 @@ def test_litellm_namer_generate_cluster_names_uses_instance_default(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
             # max_tokens not specified, should use instance default
         )
@@ -1141,7 +1135,7 @@ def test_litellm_namer_generate_cluster_names_override_with_explicit_max_tokens(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"], max_tokens=512  # explicit override
+            make_prompt(), mock_data["old_names"], max_tokens=512  # explicit override
         )
 
     # Check that the explicit value was used, not the instance default

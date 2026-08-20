@@ -78,6 +78,20 @@ def make_mock_data():
     }
 
 
+def make_prompt(label: object = "test") -> dict:
+    """
+    Build a prompt of the shape toponymy.prompt_construction produces.
+
+    Prompts carry every rendering, and the LLM wrapper picks one at call time, so a
+    test prompt needs all of them regardless of which one the wrapper under test uses.
+    """
+    return {
+        "system": f"system prompt {label}",
+        "user": f"user prompt {label}",
+        "combined": f"combined prompt {label}",
+    }
+
+
 # Helper functions for validation
 def validate_topic_name(result: str):
     assert result == "Machine Learning"

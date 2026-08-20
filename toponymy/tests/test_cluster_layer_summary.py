@@ -149,7 +149,6 @@ def test_summary_make_data_alternative_methods1(
         cluster_centroid_vectors,
         1,
         embedder,
-        prompt_format="system_user",
     )
     keyphrase_builder = KeyphraseBuilder()
     matrix, keyphrases, vectors = keyphrase_builder.fit_transform(all_sentences)
@@ -216,7 +215,6 @@ def test_summary_make_data_alternative_methods2(
         cluster_centroid_vectors,
         1,
         embedder,
-        prompt_format="combined",
     )
     keyphrase_builder = KeyphraseBuilder()
     matrix, keyphrases, vectors = keyphrase_builder.fit_transform(all_sentences)

@@ -115,20 +115,14 @@ def test_toponymy_resyncs_runtime_layer_config_for_prefit_clusterer(
     object_vectors,
     clusterable_vectors,
 ):
-    # Ensure this test uses a wrapper that supports system prompts
-    assert llm.supports_system_prompts is True
-
     # Pre-fit clusterer with old settings
     clusterer.fit(
         clusterable_vectors,
         object_vectors,
-        prompt_format="combined",
         exemplar_delimiters=["<<OLD>>", "<</OLD>>"],
         show_progress_bar=False,
         verbose=False,
     )
-
-    assert all(layer.prompt_format == "combined" for layer in clusterer.cluster_layers_)
 
     new_exemplar_delimiters = ["<EXAMPLE>", "</EXAMPLE>"]
 
@@ -147,10 +141,7 @@ def test_toponymy_resyncs_runtime_layer_config_for_prefit_clusterer(
 
     model.fit(all_sentences, object_vectors, clusterable_vectors)
 
-    # prompt_format should now reflect the wrapper capability
-    assert all(layer.prompt_format == "system_user" for layer in model.cluster_layers_)
-
-    # other runtime config should also be updated
+    # runtime config should be updated
     assert all(
         layer.exemplar_delimiters == new_exemplar_delimiters
         for layer in model.cluster_layers_
@@ -178,7 +169,6 @@ def test_toponymy_alternative_options(
     clusterer.fit(
         clusterable_vectors,
         object_vectors,
-        prompt_format="combined",
         object_to_text_function=lambda x: x,
     )
     model = Toponymy(
@@ -230,7 +220,6 @@ def test_toponymy_alternative_options_2(
     clusterer.fit(
         clusterable_vectors,
         object_vectors,
-        prompt_format="system_user",
         object_to_text_function=lambda x: x,
     )
     model = Toponymy(
@@ -377,7 +366,6 @@ def test_toponymy_async_ollama(
     clusterer.fit(
         clusterable_vectors,
         object_vectors,
-        prompt_format="system_user",
         object_to_text_function=lambda x: x,
     )
 
@@ -455,9 +443,7 @@ class MockNamer(LLMWrapper):
     def _call_llm(self, prompt, temperature, max_tokens):
         return self._next(max_tokens)
 
-    def _call_llm_with_system_prompt(
-        self, system_prompt, user_prompt, temperature, max_tokens
-    ):
+    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
         return self._next(max_tokens)
 
 

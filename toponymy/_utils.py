@@ -5,6 +5,30 @@ import warnings
 from typing import Optional, Tuple
 
 
+def handle_deprecated_prompt_format(prompt_format: Optional[str]) -> None:
+    """
+    Warn if a caller still passes the retired ``prompt_format`` argument.
+
+    Prompts used to be rendered as either a combined string or a system/user pair,
+    chosen before the LLM wrapper was reached. Prompts now carry every rendering
+    and the wrapper selects one at call time, so the argument no longer does
+    anything.
+
+    Parameters
+    ----------
+    prompt_format : str, optional
+        The value the caller passed. ``None`` means the caller did not pass one.
+    """
+    if prompt_format is not None:
+        warnings.warn(
+            "prompt_format is deprecated and ignored, and will be removed in v2.0. "
+            "Prompts now carry every rendering and the LLM wrapper selects one at "
+            "call time.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+
 def handle_verbose_params(
     verbose: Optional[bool] = None,
     verbose_legacy: Optional[bool] = None,

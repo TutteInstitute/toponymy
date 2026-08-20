@@ -138,7 +138,6 @@ def test_make_data_alternative_methods1(
         cluster_centroid_vectors,
         1,
         embedder,
-        prompt_format="system_user",
     )
     keyphrase_builder = KeyphraseBuilder()
     matrix, keyphrases, vectors = keyphrase_builder.fit_transform(all_sentences)
@@ -186,7 +185,6 @@ def test_make_data_alternative_methods2(
         cluster_centroid_vectors,
         1,
         embedder,
-        prompt_format="combined",
     )
     keyphrase_builder = KeyphraseBuilder()
     matrix, keyphrases, vectors = keyphrase_builder.fit_transform(all_sentences)
@@ -215,3 +213,60 @@ def test_make_data_alternative_methods2(
         "about specific popular topics",
         cluster_tree,
     )
+
+
+def test_cluster_layer_prompt_format_is_deprecated_and_ignored(
+    embedder,
+    cluster_label_vector,
+    cluster_centroid_vectors,
+):
+    with pytest.warns(DeprecationWarning, match="prompt_format is deprecated"):
+        cluster_layer = ClusterLayerText(
+            cluster_label_vector,
+            cluster_centroid_vectors,
+            1,
+            embedder,
+            prompt_format="system_user",
+        )
+
+    assert not hasattr(cluster_layer, "prompt_format")
+
+
+def test_make_prompts_produces_every_rendering(
+    all_sentences,
+    object_vectors,
+    embedder,
+    all_subtopics,
+    subtopic_label_vector,
+    subtopic_centroid_vectors,
+    cluster_tree,
+    cluster_label_vector,
+    cluster_centroid_vectors,
+):
+    """Prompts reach the LLM wrapper carrying every rendering, whatever it supports."""
+    cluster_layer = ClusterLayerText(
+        cluster_label_vector,
+        cluster_centroid_vectors,
+        1,
+        embedder,
+    )
+    keyphrase_builder = KeyphraseBuilder()
+    matrix, keyphrases, vectors = keyphrase_builder.fit_transform(all_sentences)
+    keyphrase_vectors = embedder.encode(keyphrases)
+    cluster_layer.make_exemplar_texts(all_sentences, object_vectors)
+    cluster_layer.make_keyphrases(keyphrases, matrix, keyphrase_vectors, embedder)
+    cluster_layer.make_subtopics(
+        all_subtopics, subtopic_label_vector, subtopic_centroid_vectors
+    )
+
+    prompts = cluster_layer.make_prompts(
+        1.0,
+        [all_subtopics, []],
+        "sentences",
+        "about specific popular topics",
+        cluster_tree,
+    )
+
+    assert prompts
+    for prompt in prompts:
+        assert set(prompt) == {"system", "user", "combined"}
