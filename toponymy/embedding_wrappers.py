@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from numpy.typing import NDArray
 from tqdm.auto import tqdm
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
@@ -18,7 +19,7 @@ class TextEmbedderProtocol(Protocol):
         show_progress_bar: Optional[bool],
         *args,
         **kwargs,
-    ) -> np.typing.NDArray[np.floating]: ...
+    ) -> NDArray[np.floating]: ...
 
 
 # Cohere
