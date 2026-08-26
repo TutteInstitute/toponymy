@@ -70,10 +70,11 @@ For an overview of Toponymy's internal design and extension points, see the
    :maxdepth: 1
    :caption: Examples:
 
-   ml_papers
-   images
-   long_documents
-   audio_samples
+   citation_network_analysis
+..   ml_papers
+..   images
+..   long_documents
+..   audio_samples
 
 .. toctree::
    :maxdepth: 1
