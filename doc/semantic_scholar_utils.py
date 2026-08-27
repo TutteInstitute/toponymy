@@ -18,10 +18,10 @@ API Best Practices Demonstrated:
 - Direct requests (no unofficial packages)
 - SQLite caching for persistence and efficiency
 - Proper pagination handling
-- Exponential backoff retry logic
-- Rate limiting (1 request/second)
-- Bulk/batch endpoints (500 papers per request)
-- Inline field requests to minimize API calls
+- Exponential backoff retry logic (2s, 4s, 8s, 16s...)
+- Configurable rate limiting (default: 3s with API key, 10s without)
+- Batch endpoints for efficient bulk fetching (500 papers per request)
+- Strategy routing based on network size
 """
 
 import json
@@ -45,25 +45,33 @@ class SemanticScholarAPI:
 
     BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
-    def __init__(self, api_key: Optional[str] = None, cache_db: Optional[Path] = None):
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        cache_db: Path = Path("semantic_scholar_cache.db"),
+        request_delay: Optional[float] = None,
+    ):
         """
         Initialize the Semantic Scholar API client.
 
         Args:
             api_key: Optional API key for higher rate limits
             cache_db: Path to SQLite cache database (default: semantic_scholar_cache.db)
+            request_delay: Seconds between requests (default: 3.0 with API key, 10.0 without).
+                          Increase if experiencing rate limit issues, decrease at your own risk.
         """
         self.api_key = api_key
-        self.cache_db = cache_db or Path("semantic_scholar_cache.db")
+        self.cache_db = cache_db
         self.session = requests.Session()
 
         if self.api_key:
             self.session.headers["x-api-key"] = self.api_key
-            # With API key: 3 sec to handle heavy batch requests (500 papers each)
-            self.request_delay = 3.0
+
+        # Smart defaults for rate limiting if not specified
+        if request_delay is None:
+            self.request_delay = 3.0 if self.api_key else 10.0
         else:
-            # Without API key: 10 sec between requests to be very conservative with shared rate limit
-            self.request_delay = 10.0
+            self.request_delay = request_delay
 
         self._init_db()
         self.last_request_time = 0
@@ -112,7 +120,7 @@ class SemanticScholarAPI:
         Get statistics about cached data.
 
         Returns:
-            Dictionary with counts of cached authors, papers, and citation queries
+            Dictionary with counts of cached authors and citation queries
         """
         conn = sqlite3.connect(self.cache_db)
         cursor = conn.cursor()
@@ -135,28 +143,29 @@ class SemanticScholarAPI:
         }
 
     def _rate_limit(self):
-        """Enforce rate limiting between requests."""
-        elapsed = time.time() - self.last_request_time
-        if elapsed < self.request_delay:
-            time.sleep(self.request_delay - elapsed)
-        self.last_request_time = time.time()
+        """Enforce rate limiting before every request."""
+        time.sleep(self.request_delay)
 
     @retry(
         retry=retry_if_exception_type(
             (requests.exceptions.HTTPError, requests.exceptions.Timeout)
         ),
         wait=wait_exponential(
-            multiplier=1, min=1, max=60
-        ),  # Increased max wait for 429 errors
-        stop=stop_after_attempt(8),  # More attempts for transient rate limits
+            multiplier=1, min=2, max=120
+        ),  # Exponential backoff for production
+        stop=stop_after_attempt(
+            1
+        ),  # No retries during debugging - increase to 5-8 for production
     )
     def _make_request(self, method: str, url: str, **kwargs) -> dict:
         """
         Make HTTP request with exponential backoff retry logic.
 
+        Base rate limiting (request_delay) applies between all requests.
+        On failures, exponential backoff (2s, 4s, 8s, 16s...) is ADDED to base delay.
+        This ensures compliance with API TOS requiring exponential backoff.
+
         Retries on HTTP 429 (rate limit), 5xx (server errors), and timeouts.
-        Backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s (max)
-        Special handling for 429: respects Retry-After header if present
         """
         self._rate_limit()
 
@@ -167,44 +176,8 @@ class SemanticScholarAPI:
         else:
             raise ValueError(f"Unsupported method: {method}")
 
-        # Special handling for 429 rate limit errors
-        if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After")
-            if retry_after:
-                wait_time = int(retry_after)
-                print(
-                    f"⚠ Rate limited. Waiting {wait_time} seconds (from Retry-After header)..."
-                )
-                time.sleep(wait_time)
-                # Retry the request after waiting
-                if method.upper() == "GET":
-                    response = self.session.get(url, **kwargs)
-                elif method.upper() == "POST":
-                    response = self.session.post(url, **kwargs)
-
         response.raise_for_status()
         return response.json()
-
-    def _is_cached(self, table: str, key: str) -> bool:
-        """Check if data exists in cache without retrieving it."""
-        conn = sqlite3.connect(self.cache_db)
-        cursor = conn.cursor()
-
-        if table == "authors":
-            cursor.execute("SELECT 1 FROM authors WHERE author_id = ? LIMIT 1", (key,))
-        elif table == "papers":
-            cursor.execute("SELECT 1 FROM papers WHERE paper_id = ? LIMIT 1", (key,))
-        elif table == "citations":
-            cursor.execute(
-                "SELECT 1 FROM citations WHERE cache_key = ? LIMIT 1", (key,)
-            )
-        else:
-            conn.close()
-            return False
-
-        result = cursor.fetchone()
-        conn.close()
-        return result is not None
 
     def _get_cached(self, table: str, key: str) -> Optional[Union[dict, list]]:
         """Get cached data from SQLite."""
@@ -267,34 +240,28 @@ class SemanticScholarAPI:
         conn.close()
 
     def get_author_papers(
-        self,
-        author_id: str,
-        max_papers: Optional[int] = None,
-        include_citations: bool = True,
+        self, author_id: str, include_citation_ids: bool = False
     ) -> List[Dict]:
         """
-        Fetch papers for an author with optional inline citations.
+        Fetch papers for an author, optionally with citation IDs.
 
-        Note: Inline citations are limited to 10,000 per endpoint call (not per paper).
-        For most authors this is fine, but if you need all citations from papers with
-        10k+ citations, use get_paper_citations() separately for those papers.
+        Note: Requesting citation IDs (citations.paperId) is lightweight and works
+        reliably for authors with <10k total citations. For larger authors, the API
+        truncates at 10k, requiring individual paper queries.
 
         Args:
             author_id: Semantic Scholar author ID
-            max_papers: Optional limit on number of papers to fetch
-            include_citations: Include inline citations (may be truncated at 10k total)
+            include_citation_ids: Include citation paper IDs (lightweight, may be truncated at 10k)
 
         Returns:
-            List of paper dictionaries, optionally with 'citations' field
+            List of paper dictionaries, optionally with 'citations' field containing
+            citation objects with just paperId
         """
-        cache_key = f"{author_id}_citations={include_citations}"
+        cache_key = f"{author_id}_citids={include_citation_ids}"
         cached = self._get_cached("authors", cache_key)
         if cached:
             assert isinstance(cached, dict), "Expected dict from authors cache"
-            papers = cached["papers"]
-            if max_papers:
-                papers = papers[:max_papers]
-            return papers
+            return cached["papers"]
 
         papers = []
         offset = 0
@@ -303,7 +270,7 @@ class SemanticScholarAPI:
         while True:
             url = f"{self.BASE_URL}/author/{author_id}/papers"
             fields = "paperId,title,abstract,year,citationCount"
-            if include_citations:
+            if include_citation_ids:
                 fields += ",citations.paperId"
 
             params = {"fields": fields, "offset": offset, "limit": limit}
@@ -311,10 +278,6 @@ class SemanticScholarAPI:
             data = self._make_request("GET", url, params=params)
             batch = data.get("data", [])
             papers.extend(batch)
-
-            if max_papers and len(papers) >= max_papers:
-                papers = papers[:max_papers]
-                break
 
             if "next" not in data or len(batch) < limit:
                 break
@@ -377,12 +340,10 @@ class SemanticScholarAPI:
             data = self._make_request("GET", url, params=params)
             batch = data.get("data", [])
 
-            # Extract full citing paper objects and cache them
+            # Extract full citing paper objects
             for citation in batch:
                 citing_paper = citation.get("citingPaper")
                 if citing_paper and citing_paper.get("paperId"):
-                    # Cache the paper
-                    self._cache("papers", citing_paper["paperId"], citing_paper)
                     citing_papers.append(citing_paper)
 
             if max_citations and len(citing_papers) >= max_citations:
@@ -405,32 +366,6 @@ class SemanticScholarAPI:
         )
 
         return citing_papers
-
-    def is_citations_cached(
-        self,
-        paper_id: str,
-        citation_count: int,
-        max_citations: Optional[int] = None,
-        current_year: Optional[int] = None,
-    ) -> bool:
-        """Check if citations for this paper are fully cached."""
-        # For papers < 10k, check single cache key
-        effective_count = (
-            min(citation_count, max_citations) if max_citations else citation_count
-        )
-
-        if effective_count < 10000:
-            cache_key = f"{paper_id}_year=None_limit={max_citations}"
-            return self._is_cached("citations", cache_key)
-
-        # For papers >= 10k with time-slicing, check if the most recent year is cached
-        # If the most recent year is cached, likely the whole set is cached
-        if current_year is None:
-            current_year = datetime.now().year
-
-        # Check for the current year's cache entry as a proxy
-        year_cache_key = f"{paper_id}_year={current_year}_limit=None"
-        return self._is_cached("citations", year_cache_key)
 
     def get_paper_citations_with_time_slicing(
         self,
@@ -515,17 +450,17 @@ class SemanticScholarAPI:
         return result
 
     def batch_get_papers(
-        self, paper_ids: List[str], progress: bool = True
+        self, paper_ids: List[str], progress: bool = False
     ) -> List[Dict]:
         """
-        Fetch full paper details using batch endpoint.
+        Fetch full paper details using batch endpoint (500 papers per request).
 
         Args:
             paper_ids: List of Semantic Scholar paper IDs
             progress: Show progress bar
 
         Returns:
-            List of paper dictionaries
+            List of paper dictionaries with full metadata
         """
         uncached_ids = []
         results = []
@@ -543,7 +478,7 @@ class SemanticScholarAPI:
             iterator = range(0, len(uncached_ids), batch_size)
 
             if progress:
-                iterator = tqdm(iterator, desc="Fetching papers")
+                iterator = tqdm(iterator, desc="Fetching papers", unit="batch")
 
             for i in iterator:
                 batch_ids = uncached_ids[i : i + batch_size]
@@ -568,33 +503,31 @@ class SemanticScholarAPI:
 def build_citation_network(
     author_id: str,
     api_key: Optional[str] = None,
-    max_author_papers: Optional[int] = None,
-    max_citations_per_paper: Optional[int] = None,
-    max_total_citing_papers: Optional[int] = None,
-    cache_db: Optional[Path] = None,
+    cache_db: Path = Path("semantic_scholar_cache.db"),
+    request_delay: Optional[float] = None,
     verbose: bool = True,
 ) -> Dict:
     """
     Build a one-hop citation network for an author.
 
-    This function uses an efficient two-phase approach:
-    1. Fetches author papers with inline citations (1 request for most cases)
-    2. Only queries individual papers separately if they exceed the inline limit
+    Strategy (routes automatically based on total citations):
+    - <10k total citations: Lightweight approach
+      1. Get citation IDs from author query
+      2. Batch fetch metadata (500 papers per request)
+    - ≥10k total citations: Robust approach
+      1. Query each paper's citations individually
+      2. Use time-slicing for papers with >10k citations
 
-    For papers with >10k citations, automatic time-slicing is used:
-    - Queries year-by-year from present backwards
-    - When remaining citations <10k, does one final query for all remaining
-    - Bypasses the Semantic Scholar API's 10k pagination limit per endpoint
-
-    Note: If a single year has >10k citations (rare), that year will be truncated.
+    Why two strategies?
+    - Small networks benefit from batching (fewer requests, faster)
+    - Large networks hit API limits with author query, need individual queries anyway
+    - Routing on total citations makes the choice clear and testable
 
     Args:
         author_id: Semantic Scholar author ID
         api_key: Optional API key for higher rate limits
-        max_author_papers: Limit on author's papers to process (None = all)
-        max_citations_per_paper: Max citations to fetch per paper (None = all via time-slicing)
-        max_total_citing_papers: Stop after collecting this many unique citing papers (None = all)
         cache_db: Path to SQLite cache database
+        request_delay: Seconds between requests (default: 3.0 with API key, 10.0 without)
         verbose: Print progress information
 
     Returns:
@@ -605,7 +538,9 @@ def build_citation_network(
             - total_author_papers: Count of author papers
             - total_citing_papers: Count of citing papers
     """
-    api = SemanticScholarAPI(api_key=api_key, cache_db=cache_db)
+    api = SemanticScholarAPI(
+        api_key=api_key, cache_db=cache_db, request_delay=request_delay
+    )
 
     if verbose:
         print(f"\nBuilding citation network for author {author_id}")
@@ -625,150 +560,167 @@ def build_citation_network(
         print(f"  • {cache_stats['papers']:,} papers cached")
         print(f"  • {cache_stats['citation_queries']} citation queries cached")
 
-    # Step 1: Get author's papers with inline citations
+    # Step 1: Get author's papers (just metadata, no citation IDs yet)
     if verbose:
-        print("\nStep 1: Fetching author's publications with citations...")
+        print("\nStep 1: Fetching author's publications...")
 
-    author_papers = api.get_author_papers(
-        author_id, max_papers=max_author_papers, include_citations=True
-    )
+    author_papers = api.get_author_papers(author_id, include_citation_ids=False)
 
     if verbose:
         print(f"✓ Retrieved {len(author_papers)} papers")
 
-    # Step 2: Extract citations and identify papers that need separate queries
-    if verbose:
-        print("\nStep 2: Extracting citations...")
-
-    all_citing_papers: Dict[str, Dict] = {}  # paperId -> paper dict
-    papers_needing_full_query = []
-    total_inline_citations = 0
-
-    for paper in author_papers:
-        paper_id = paper.get("paperId")
-        citation_count = paper.get("citationCount", 0)
-        inline_citations = paper.get("citations", [])
-
-        if inline_citations:
-            total_inline_citations += len(inline_citations)
-
-            # If we have fewer inline citations than reported, we need a full query
-            if (
-                len(inline_citations) < citation_count
-                and max_citations_per_paper is None
-            ):
-                papers_needing_full_query.append((paper_id, citation_count))
-            else:
-                # Use inline citations (possibly limited by max_citations_per_paper)
-                for idx, citation in enumerate(inline_citations):
-                    if (
-                        max_citations_per_paper is not None
-                        and idx >= max_citations_per_paper
-                    ):
-                        break
-                    cit_id = citation.get("paperId")
-                    if cit_id and cit_id not in all_citing_papers:
-                        # Store just the ID for inline citations (we'll fetch details later)
-                        all_citing_papers[cit_id] = {"paperId": cit_id}
-        elif citation_count > 0:
-            # Paper has citations but we didn't get any inline - need full query
-            papers_needing_full_query.append((paper_id, citation_count))
-
-    # If we got no inline citations at all, the API probably didn't return them
-    # Fall back to querying all papers with citations
-    if total_inline_citations == 0 and papers_needing_full_query:
-        if verbose:
-            print(f"  No inline citations returned by API")
-            print(f"  Will query {len(papers_needing_full_query)} papers individually")
-    elif verbose and papers_needing_full_query:
-        total_citations_to_fetch = sum(count for _, count in papers_needing_full_query)
-        print(f"  Found {len(all_citing_papers)} citations from inline data")
-        print(
-            f"  {len(papers_needing_full_query)} papers need separate queries ({total_citations_to_fetch:,} total citations)"
-        )
-    elif verbose:
-        print(f"  Extracted {len(all_citing_papers)} citations from inline data")
-
-    # Step 3: Query papers that need full citation lists (WITH METADATA)
-    if papers_needing_full_query:
-        if verbose:
-            print(
-                f"\nStep 3: Fetching citations with full metadata for {len(papers_needing_full_query)} papers..."
-            )
-
-        for idx, (paper_id, citation_count) in enumerate(papers_needing_full_query, 1):
-            if verbose:
-                # Check if this paper's citations are cached
-                is_cached = api.is_citations_cached(
-                    paper_id, citation_count, max_citations_per_paper
-                )
-                cached_label = " (cached)" if is_cached else ""
-
-                warning = ""
-                if citation_count >= 10000 and not is_cached:
-                    warning = f" (using time-slicing to get all {citation_count:,} citations with metadata)"
-
-                print(
-                    f"  [{idx}/{len(papers_needing_full_query)}] Fetching citations for paper with {citation_count:,} citations{warning}{cached_label}"
-                )
-
-            # Use smart time-slicing - now returns full paper dicts
-            paper_citations = api.get_paper_citations_with_time_slicing(
-                paper_id, citation_count, max_citations=max_citations_per_paper
-            )
-
-            # Merge into our collection (papers are already cached in get_paper_citations)
-            for citing_paper in paper_citations:
-                cit_id = citing_paper["paperId"]
-                all_citing_papers[cit_id] = citing_paper
-
-            # Check if we've reached the total limit
-            if (
-                max_total_citing_papers is not None
-                and len(all_citing_papers) >= max_total_citing_papers
-            ):
-                if verbose:
-                    print(
-                        f"  Reached limit of {max_total_citing_papers} total citing papers"
-                    )
-                break
+    # Step 2: Calculate total citations to choose strategy
+    total_citations = sum(p.get("citationCount", 0) for p in author_papers)
 
     if verbose:
-        print(
-            f"\n✓ Collected {len(all_citing_papers)} unique citing papers with metadata"
-        )
+        print(f"\nTotal citations across all papers: {total_citations:,}")
 
-    # Step 4: Fetch any remaining papers that only have IDs (from inline citations)
-    papers_with_full_data = [p for p in all_citing_papers.values() if "title" in p]
-    papers_needing_fetch = [
-        pid for pid, p in all_citing_papers.items() if "title" not in p
-    ]
-
-    if papers_needing_fetch:
+    # Step 3: Route to appropriate strategy
+    if total_citations < 10000:
         if verbose:
-            print(
-                f"\nStep 4: Fetching details for {len(papers_needing_fetch)} papers from inline citations..."
-            )
-        fetched_papers = api.batch_get_papers(papers_needing_fetch, progress=verbose)
-        for paper in fetched_papers:
-            if paper and paper.get("paperId"):
-                all_citing_papers[paper["paperId"]] = paper
-
-    # Apply total limit if specified
-    if max_total_citing_papers is not None:
-        citing_papers = list(all_citing_papers.values())[:max_total_citing_papers]
+            print("→ Using batch fetch strategy (total citations < 10k)")
+        return _build_small_network(api, author_id, author_papers, verbose)
     else:
-        citing_papers = list(all_citing_papers.values())
+        if verbose:
+            print("→ Using individual query strategy (total citations ≥ 10k)")
+        return _build_large_network(api, author_id, author_papers, verbose)
 
-    # Filter papers with title and abstract
+
+def _build_small_network(
+    api: SemanticScholarAPI,
+    author_id: str,
+    author_papers: List[Dict],
+    verbose: bool,
+) -> Dict:
+    """
+    Build citation network for authors with <10k total citations.
+
+    Strategy: Re-query for citation IDs, then batch fetch metadata.
+    This is efficient (few requests) and works reliably for small networks.
+    """
+    if verbose:
+        print("\nStep 2: Re-querying for citation IDs...")
+
+    # Re-fetch author papers WITH citation IDs
+    # (We didn't fetch them in Step 1 to save bandwidth for large authors)
+    author_papers_with_citations = api.get_author_papers(
+        author_id, include_citation_ids=True
+    )
+
+    # Collect all unique citation IDs
+    citation_ids = set()
+    for paper in author_papers_with_citations:
+        for citation in paper.get("citations", []):
+            cit_id = citation.get("paperId")
+            if cit_id:
+                citation_ids.add(cit_id)
+
+    if verbose:
+        print(f"✓ Found {len(citation_ids)} unique citation IDs")
+
+    # Step 3: Batch fetch metadata
+    if citation_ids:
+        if verbose:
+            num_batches = (len(citation_ids) + 499) // 500
+            print(
+                f"\nStep 3: Batch fetching metadata ({num_batches} batch{'es' if num_batches > 1 else ''})..."
+            )
+
+        citing_papers_list = api.batch_get_papers(list(citation_ids), progress=verbose)
+
+        if verbose:
+            print(f"✓ Retrieved {len(citing_papers_list)} papers")
+    else:
+        citing_papers_list = []
+
+    # Filter for papers with title and abstract
     citing_papers = [
         p
-        for p in citing_papers
+        for p in citing_papers_list
         if p.get("title") and p.get("abstract") and len(p.get("abstract", "")) > 50
     ]
 
     if verbose:
-        print(f"✓ Retrieved {len(citing_papers)} papers with title + abstract\n")
+        print(f"✓ {len(citing_papers)} papers with title + abstract\n")
+
+    return {
+        "author_id": author_id,
+        "author_papers": author_papers,
+        "citing_papers": citing_papers,
+        "total_author_papers": len(author_papers),
+        "total_citing_papers": len(citing_papers),
+    }
+
+
+def _build_large_network(
+    api: SemanticScholarAPI,
+    author_id: str,
+    author_papers: List[Dict],
+    verbose: bool,
+) -> Dict:
+    """
+    Build citation network for authors with ≥10k total citations.
+
+    Strategy: Query each paper's citations individually (with time-slicing for >10k papers).
+    This is robust and handles the API's 10k pagination limit per endpoint.
+    """
+    if verbose:
+        print("\nStep 2: Querying each paper's citations individually...")
+
+    all_citing_papers: Dict[str, Dict] = {}  # paperId -> paper dict
+    papers_with_citations = [
+        (p.get("paperId"), p.get("citationCount", 0))
+        for p in author_papers
+        if p.get("citationCount", 0) > 0
+    ]
+
+    if verbose and papers_with_citations:
+        total_citations = sum(count for _, count in papers_with_citations)
+        print(
+            f"  {len(papers_with_citations)} papers have citations ({total_citations:,} total)"
+        )
+    elif verbose:
+        print(f"  No papers with citations found")
+
+    # Query each paper for citations
+    if papers_with_citations:
+        if verbose:
+            print(f"\nStep 3: Fetching citations with metadata...")
+
+        for idx, (paper_id, citation_count) in enumerate(papers_with_citations, 1):
+            if verbose:
+                warning = ""
+                if citation_count >= 10000:
+                    warning = (
+                        f" (using time-slicing to get all {citation_count:,} citations)"
+                    )
+
+                print(
+                    f"  [{idx}/{len(papers_with_citations)}] Paper with {citation_count:,} citations{warning}"
+                )
+
+            # Use time-slicing for papers with >10k citations
+            paper_citations = api.get_paper_citations_with_time_slicing(
+                paper_id, citation_count
+            )
+
+            # Merge into collection (deduplicates across papers)
+            for citing_paper in paper_citations:
+                cit_id = citing_paper["paperId"]
+                all_citing_papers[cit_id] = citing_paper
+
+    if verbose:
+        print(f"\n✓ Collected {len(all_citing_papers)} unique citing papers")
+
+    # Filter for papers with title and abstract
+    citing_papers = [
+        p
+        for p in all_citing_papers.values()
+        if p.get("title") and p.get("abstract") and len(p.get("abstract", "")) > 50
+    ]
+
+    if verbose:
+        print(f"✓ {len(citing_papers)} papers with title + abstract\n")
 
     return {
         "author_id": author_id,

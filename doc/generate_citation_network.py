@@ -40,20 +40,6 @@ SCRIPT_DIR = Path(__file__).parent
 OUTPUT_FILE = SCRIPT_DIR / "citation_network_data.json"
 CACHE_DB = SCRIPT_DIR / "semantic_scholar_cache.db"
 
-# Optional limits for testing/development
-# For initial testing with large citation networks, you may want to set:
-#   MAX_AUTHOR_PAPERS = 5 (process only first 5 papers)
-#   MAX_TOTAL_CITING_PAPERS = 500 (stop after 500 citing papers)
-#
-# By default, all data is collected using an efficient approach:
-# - Fetches inline citations with author papers (1 API request)
-# - Only queries individual papers if they exceed the 10k inline limit
-# - Uses automatic time-slicing for papers with >10k citations
-# - Each paper can retrieve ALL citations (bypasses 10k/endpoint limit via year filtering)
-MAX_AUTHOR_PAPERS = None  # None = all papers
-MAX_CITATIONS_PER_PAPER = None  # None = all citations (via time-slicing for >10k)
-MAX_TOTAL_CITING_PAPERS = None  # None = all citing papers
-
 
 def main():
     """Main execution."""
@@ -72,18 +58,12 @@ def main():
 
     print(f"\nConfiguration:")
     print(f"  AUTHOR_ID: {AUTHOR_ID}")
-    print(f"  MAX_AUTHOR_PAPERS: {MAX_AUTHOR_PAPERS or 'None (all)'}")
-    print(f"  MAX_CITATIONS_PER_PAPER: {MAX_CITATIONS_PER_PAPER}")
-    print(f"  MAX_TOTAL_CITING_PAPERS: {MAX_TOTAL_CITING_PAPERS}")
     print(f"  Cache database: {CACHE_DB}")
 
     # Build citation network
     network_data = build_citation_network(
         author_id=AUTHOR_ID,
         api_key=api_key,
-        max_author_papers=MAX_AUTHOR_PAPERS,
-        max_citations_per_paper=MAX_CITATIONS_PER_PAPER,
-        max_total_citing_papers=MAX_TOTAL_CITING_PAPERS,
         cache_db=CACHE_DB,
         verbose=True,
     )
