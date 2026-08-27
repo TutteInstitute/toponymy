@@ -19,8 +19,8 @@ Usage:
     python generate_citation_network.py
 
 API Key (optional but recommended):
-  Place your Semantic Scholar API key in this directory (doc/):
-    api_key_semantic_scholar.txt
+  Set the SEMANTIC_SCHOLAR_API_KEY environment variable:
+    export SEMANTIC_SCHOLAR_API_KEY="your-key-here"
   Get a free API key at: https://www.semanticscholar.org/product/api
   Without an API key, queries are much slower (10 sec between requests vs 3 sec).
 
@@ -30,13 +30,13 @@ Output (all files created in the same directory):
 """
 
 import json
+import os
 from pathlib import Path
 from semantic_scholar_utils import build_citation_network
 
 # Configuration - all files in the same directory as this script
-AUTHOR_ID = "2062756303"  # John Healy  
+AUTHOR_ID = "2062756303"  # John Healy
 SCRIPT_DIR = Path(__file__).parent
-API_KEY_FILE = SCRIPT_DIR / "api_key_semantic_scholar.txt"
 OUTPUT_FILE = SCRIPT_DIR / "citation_network_data.json"
 CACHE_DB = SCRIPT_DIR / "semantic_scholar_cache.db"
 
@@ -57,24 +57,26 @@ MAX_TOTAL_CITING_PAPERS = None  # None = all citing papers
 
 def main():
     """Main execution."""
-    # Load API key if available
-    api_key = None
-    if API_KEY_FILE.exists():
-        api_key = API_KEY_FILE.read_text().strip()
-        print(f"✓ Loaded API key from {API_KEY_FILE}")
+    # Load API key from environment variable
+    api_key = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
+    if api_key:
+        print(f"✓ Loaded API key from SEMANTIC_SCHOLAR_API_KEY environment variable")
     else:
         print(f"⚠ No API key found")
-        print(f"  Expected location: {API_KEY_FILE.resolve()}")
-        print(f"  Running without API key (much slower: 1 req/10 sec instead of 1 req/3 sec)")
+        print(f"  Set SEMANTIC_SCHOLAR_API_KEY environment variable:")
+        print(f"    export SEMANTIC_SCHOLAR_API_KEY='your-key-here'")
+        print(
+            f"  Running without API key (much slower: 1 req/10 sec instead of 1 req/3 sec)"
+        )
         print(f"  Get a free key at: https://www.semanticscholar.org/product/api")
-    
+
     print(f"\nConfiguration:")
     print(f"  AUTHOR_ID: {AUTHOR_ID}")
     print(f"  MAX_AUTHOR_PAPERS: {MAX_AUTHOR_PAPERS or 'None (all)'}")
     print(f"  MAX_CITATIONS_PER_PAPER: {MAX_CITATIONS_PER_PAPER}")
     print(f"  MAX_TOTAL_CITING_PAPERS: {MAX_TOTAL_CITING_PAPERS}")
     print(f"  Cache database: {CACHE_DB}")
-    
+
     # Build citation network
     network_data = build_citation_network(
         author_id=AUTHOR_ID,
@@ -83,13 +85,13 @@ def main():
         max_citations_per_paper=MAX_CITATIONS_PER_PAPER,
         max_total_citing_papers=MAX_TOTAL_CITING_PAPERS,
         cache_db=CACHE_DB,
-        verbose=True
+        verbose=True,
     )
-    
+
     # Save results
-    with open(OUTPUT_FILE, 'w') as f:
+    with open(OUTPUT_FILE, "w") as f:
         json.dump(network_data, f, indent=2)
-    
+
     print(f"\n{'='*60}")
     print(f"Summary")
     print(f"{'='*60}")

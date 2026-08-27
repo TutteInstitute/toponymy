@@ -42,6 +42,3 @@ test-output.xml
 # Semantic Scholar example data (not committed - users generate their own)
 doc/semantic_scholar_cache.db
 doc/citation_network_data.json
-
-# API keys (never commit)
-doc/api_key_semantic_scholar.txt
