@@ -753,11 +753,25 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         prompt = render_prompt(prompt_templates[template_kind], prompt_params)
 
+        result = {
+            "success": False,
+            "prompt_kind": prompt_kind,
+            "prompt": None,
+            "response": None,
+            "topic_names": None,
+            "error_type": None,
+            "error_message": None,
+            "original_exception": None,
+        }
+
         connection_result = self.connectivity_status()
         if not connection_result["success"]:
-            return connection_result
+            warn(f"Connectivity check failed.")
+            result["error_message"] = connection_result["error_message"]
+            result["error_type"] = connection_result["error_type"]
+            result["original_exception"] = connection_result["original_exception"]
+            return result
 
-        result = {}
         if verbose:
             result["prompt"] = prompt
 
@@ -776,13 +790,13 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         temperature=temperature,
                         max_tokens=max_tokens,
                     )
-                    result["raw_response"] = response.raw_response
+                    result["response"] = response.raw_response
                     result["topic_names"] = response.topic_names
 
                     if response.error is not None:
                         result["error_type"] = type(response.error).__name__
                         result["error_message"] = str(response.error)
-                        result["success"] = False
+                        result["original_exception"] = response.error
                         return result
                 else:
                     topic_names = self.generate_topic_name(
@@ -3625,6 +3639,7 @@ except:
 
         def __init__(self, *args, **kwds):
             super().__init__(*args, **kwds)
+
 
 # Ollama
 def OllamaNamer(
