@@ -19,11 +19,13 @@ from toponymy.llm_wrappers import (
     CallResult,
 )
 from toponymy.tests.helpers.llm_test_config import (
+    make_prompt,
     validate_topic_name,
     validate_cluster_names,
     LITELLM_PROVIDER_CASES,
     SUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
     UNSUPPORTED_ASYNC_DEBUG_CALLBACK_NAMERS,
+    ASYNC_LITELLM_NAMERS,
 )
 from toponymy.tests.helpers.errors import (
     LITELLM_FAIL_FAST,
@@ -31,7 +33,8 @@ from toponymy.tests.helpers.errors import (
     make_litellm_error,
 )
 
-from conftest import is_ollama_model_available
+from conftest import ollama_has_model
+from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 
 LITELLM_ASYNC_LOGGING_WARNING_FILTER = (
     "ignore:.*Logging\\.async_success_handler.*was never awaited.*:RuntimeWarning"
@@ -116,13 +119,13 @@ async def test_anthropic_connectivity_async_system_canary():
 
 
 def test_async_anthropic_namer_returns_litellm_namer():
-    namer = AsyncAnthropicNamer()
+    namer = AsyncAnthropicNamer(api_key="dummy")
 
     assert isinstance(namer, AsyncLiteLLMNamer)
 
 
 def test_async_anthropic_namer_default():
-    namer = AsyncAnthropicNamer()
+    namer = AsyncAnthropicNamer(api_key="dummy")
 
     assert namer.model == "anthropic/claude-haiku-4-5-20251001"
     assert namer.use_json_object is True
@@ -130,7 +133,7 @@ def test_async_anthropic_namer_default():
 
 
 def test_async_anthropic_namer_provider_kwargs_passthrough():
-    namer = AsyncAnthropicNamer(provider_kwargs={"timeout": 123})
+    namer = AsyncAnthropicNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -224,7 +227,7 @@ async def test_openai_connectivity_async_system_canary():
 
 
 def test_async_openai_namer_default():
-    namer = AsyncOpenAINamer()
+    namer = AsyncOpenAINamer(api_key="dummy")
 
     assert namer.model == "openai/gpt-4o-mini"
     assert namer.use_json_object is True
@@ -232,7 +235,7 @@ def test_async_openai_namer_default():
 
 
 def test_async_openai_namer_provider_kwargs_passthrough():
-    namer = AsyncOpenAINamer(provider_kwargs={"timeout": 123})
+    namer = AsyncOpenAINamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -240,7 +243,7 @@ def test_async_openai_namer_provider_kwargs_passthrough():
 def test_async_openai_namer_base_url_maps_to_api_base():
     """Remove once deprecation of base_url complete"""
     with pytest.warns(FutureWarning):
-        namer = AsyncOpenAINamer(base_url="http://localhost")
+        namer = AsyncOpenAINamer(api_key="dummy", base_url="http://localhost")
 
     assert namer.api_base == "http://localhost"
 
@@ -248,7 +251,7 @@ def test_async_openai_namer_base_url_maps_to_api_base():
 def test_async_openai_namer_organization_maps_to_provider_kwargs():
     """Remove once deprecation of organization complete"""
     with pytest.warns(FutureWarning):
-        namer = AsyncOpenAINamer(organization="org-123")
+        namer = AsyncOpenAINamer(api_key="dummy", organization="org-123")
 
     assert namer.provider_kwargs["organization"] == "org-123"
 
@@ -276,7 +279,7 @@ async def test_cohere_connectivity_async_system_canary():
 
 
 def test_async_cohere_namer_default():
-    namer = AsyncCohereNamer()
+    namer = AsyncCohereNamer(api_key="dummy")
 
     assert namer.model == "cohere/command-r-08-2024"
     assert namer.use_json_object is False  # until prompting is stricter
@@ -284,7 +287,7 @@ def test_async_cohere_namer_default():
 
 
 def test_async_cohere_namer_provider_kwargs_passthrough():
-    namer = AsyncCohereNamer(provider_kwargs={"timeout": 123})
+    namer = AsyncCohereNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -292,7 +295,7 @@ def test_async_cohere_namer_provider_kwargs_passthrough():
 def test_async_cohere_namer_base_url_maps_to_api_base():
     """Remove once deprecation of base_url complete"""
     with pytest.warns(FutureWarning):
-        namer = AsyncCohereNamer(base_url="http://localhost")
+        namer = AsyncCohereNamer(api_key="dummy", base_url="http://localhost")
 
     assert namer.api_base == "http://localhost"
 
@@ -300,7 +303,9 @@ def test_async_cohere_namer_base_url_maps_to_api_base():
 def test_async_cohere_namer_httpx_client_maps_to_provider_kwargs():
     """Remove once deprecation of http_client complete"""
     with pytest.warns(FutureWarning):
-        namer = AsyncCohereNamer(httpx_client="httpx.Client(timeout=123)")
+        namer = AsyncCohereNamer(
+            api_key="dummy", httpx_client="httpx.Client(timeout=123)"
+        )
 
     assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
 
@@ -316,6 +321,7 @@ def test_async_cohere_namer_env_co_api_key_maps_to_api_key(monkeypatch):
 
 def test_async_cohere_namer_env_co_api_url_maps_to_api_base(monkeypatch):
     monkeypatch.delenv("COHERE_API_BASE", raising=False)
+    monkeypatch.setenv("COHERE_API_KEY", "dummy")
     monkeypatch.setenv("CO_API_URL", "dummy")
     with pytest.warns(FutureWarning):
         namer = AsyncCohereNamer()
@@ -345,19 +351,23 @@ async def test_azureai_connectivity_async_plain_canary():
 
 
 def test_async_azureai_namer_default():
-    namer = AsyncAzureAINamer(model="dummy")
+    namer = AsyncAzureAINamer(api_key="dummy", model="dummy")
 
     assert namer.model == "azure_ai/dummy"
 
 
 def test_async_azureai_namer_provider_kwargs_passthrough():
-    namer = AsyncAzureAINamer(model="dummy", provider_kwargs={"timeout": 123})
+    namer = AsyncAzureAINamer(
+        api_key="dummy", model="dummy", provider_kwargs={"timeout": 123}
+    )
 
     assert namer.provider_kwargs["timeout"] == 123
 
 
 def test_async_azureai_namer_endpoint_maps_to_api_base():
-    namer = AsyncAzureAINamer(model="dummy", endpoint="http://localhost")
+    namer = AsyncAzureAINamer(
+        api_key="dummy", model="dummy", endpoint="http://localhost"
+    )
 
     assert namer.api_base == "http://localhost"
 
@@ -372,15 +382,16 @@ def test_async_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
 
 
 # AsyncOllama Tests
-@pytest.mark.external
 @pytest.mark.asyncio
-async def test_ollama_connectivity_async_plain_canary():
+async def test_ollama_connectivity_async_plain_canary(ollama_running):
     """
-    Canary test verifying live async connectivity to the Azure AI API
+    Canary test verifying live async connectivity to the Ollama API
     using the plain prompt path.
     """
-    model = "llama3.2"
-    if not is_ollama_model_available(model):
+    model = get_test_ollama_model()
+    if not ollama_running:
+        pytest.skip("Ollama service is not available or failed to start")
+    if not ollama_has_model(model):
         pytest.skip(f"{model} not available in local Ollama")
     namer = AsyncOllamaNamer(model=model)
 
@@ -434,14 +445,14 @@ async def test_gemini_connectivity_async_system_canary():
 
 def test_async_gemini_namer_returns_litellm_namer():
     with pytest.warns(FutureWarning):
-        namer = AsyncGoogleGeminiNamer()
+        namer = AsyncGoogleGeminiNamer(api_key="dummy")
 
     assert isinstance(namer, AsyncLiteLLMNamer)
 
 
 @pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
 def test_async_gemini_namer_default():
-    namer = AsyncGoogleGeminiNamer()
+    namer = AsyncGoogleGeminiNamer(api_key="dummy")
 
     assert namer.model == "gemini/gemini-2.5-flash-lite"
     assert namer.use_json_object is True
@@ -450,7 +461,7 @@ def test_async_gemini_namer_default():
 
 @pytest.mark.filterwarnings("ignore:AsyncGoogleGeminiNamer is deprecated")
 def test_async_gemini_namer_provider_kwargs_passthrough():
-    namer = AsyncGoogleGeminiNamer(provider_kwargs={"timeout": 123})
+    namer = AsyncGoogleGeminiNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -491,14 +502,14 @@ def test_async_together_namer_returns_litellm_namer():
 
 @pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 def test_async_together_namer_default():
-    namer = AsyncTogether()
+    namer = AsyncTogether(api_key="dummy")
 
-    assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
+    assert namer.model == "together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo"
 
 
 @pytest.mark.filterwarnings("ignore:AsyncTogether is deprecated")
 def test_async_together_namer_provider_kwargs_passthrough():
-    namer = AsyncTogether(provider_kwargs={"timeout": 123})
+    namer = AsyncTogether(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -571,7 +582,7 @@ async def test_async_litellm_generate_topic_names_success(
     response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+        result = await async_litellm_wrapper.generate_topic_names([make_prompt()])
 
     assert len(result) == 1
     validate_topic_name(result[0])
@@ -585,9 +596,7 @@ async def test_async_litellm_generate_topic_names_system_prompt(
     response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
-        result = await async_litellm_wrapper.generate_topic_names(
-            [{"system": "system prompt", "user": "test prompt"}]
-        )
+        result = await async_litellm_wrapper.generate_topic_names([make_prompt()])
 
     assert len(result) == 1
     validate_topic_name(result[0])
@@ -602,7 +611,7 @@ async def test_async_litellm_generate_topic_cluster_names_success(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            ["test prompt"],
+            [make_prompt()],
             [mock_data["old_names"]],
         )
 
@@ -619,7 +628,7 @@ async def test_async_litellm_generate_topic_cluster_names_system_prompt(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            [{"system": "system prompt", "user": "test prompt"}],
+            [make_prompt()],
             [mock_data["old_names"]],
         )
 
@@ -635,7 +644,7 @@ async def test_async_litellm_generate_topic_names_prompt_list(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_names(
-            ["prompt1", "prompt2", "prompt3"]
+            [make_prompt(1), make_prompt(2), make_prompt(3)]
         )
     assert len(result) == 3
     assert all(name == "Machine Learning" for name in result)
@@ -649,7 +658,7 @@ async def test_async_litellm_generate_topic_cluster_names_prompt_list(
     response = MockAsyncResponse.create_chat_response(mock_data["valid_cluster_names"])
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         old_names_list = [["data", "ml", "ai"], ["x", "y", "z"]]
-        prompts = ["prompt1", "prompt2"]
+        prompts = [make_prompt(1), make_prompt(2)]
 
         result = await async_litellm_wrapper.generate_topic_cluster_names(
             prompts, old_names_list
@@ -667,7 +676,7 @@ async def test_async_litellm_generate_topic_cluster_names_malformed_mapping(
 
     with patch("litellm.acompletion", new=AsyncMock(return_value=response)):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            ["test prompt"],
+            [make_prompt()],
             [mock_data["old_names"]],
         )
 
@@ -686,7 +695,7 @@ async def test_async_litellm_generate_topic_names_fail_fast_raises(
         new=AsyncMock(side_effect=make_litellm_error(error_class)),
     ):
         with pytest.raises(FailFastLLMError):
-            await async_litellm_wrapper.generate_topic_names(["test prompt"])
+            await async_litellm_wrapper.generate_topic_names([make_prompt()])
 
 
 @pytest.mark.asyncio
@@ -700,7 +709,7 @@ async def test_async_litellm_generate_topic_names_retryable_returns_empty(
         "litellm.acompletion",
         new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
     ) as mock_acompletion:
-        result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+        result = await async_litellm_wrapper.generate_topic_names([make_prompt()])
 
     assert result == [""]
     assert mock_acompletion.await_count == 3
@@ -719,7 +728,7 @@ async def test_async_litellm_generate_topic_cluster_names_retryable_returns_old_
         new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
     ):
         result = await async_litellm_wrapper.generate_topic_cluster_names(
-            ["test prompt"],
+            [make_prompt()],
             [mock_data["old_names"]],
         )
 
@@ -736,29 +745,30 @@ async def test_async_litellm_retries_per_item_not_whole_batch(
         mock_data["valid_topic_name"]
     )
     error_class = LITELLM_RETRYABLE[0]
-    call_counts = {"prompt1": 0, "prompt2": 0}
+    call_counts = {"user prompt 1": 0, "user prompt 2": 0}
 
     async def mock_acompletion(**kwargs):
-        prompt_text = kwargs["messages"][0]["content"]
+        # messages[0] is the system prompt, messages[1] the user prompt
+        prompt_text = kwargs["messages"][1]["content"]
         call_counts[prompt_text] += 1
 
-        if prompt_text == "prompt1":
+        if prompt_text == "user prompt 1":
             return good_response
-        if prompt_text == "prompt2":
+        if prompt_text == "user prompt 2":
             raise make_litellm_error(error_class)
 
         raise AssertionError(f"Unexpected prompt: {prompt_text}")
 
     with patch("litellm.acompletion", new=AsyncMock(side_effect=mock_acompletion)):
         result = await async_litellm_wrapper.generate_topic_names(
-            ["prompt1", "prompt2"]
+            [make_prompt(1), make_prompt(2)]
         )
 
     assert len(result) == 2
     validate_topic_name(result[0])
     assert result[1] == ""
-    assert call_counts["prompt1"] == 1
-    assert call_counts["prompt2"] == 3
+    assert call_counts["user prompt 1"] == 1
+    assert call_counts["user prompt 2"] == 3
 
 
 @pytest.mark.asyncio
@@ -772,7 +782,7 @@ async def test_async_litellm_generate_topic_names_retry_exhausted_warns(
         new=AsyncMock(side_effect=[make_litellm_error(error_class) for _ in range(3)]),
     ):
         with pytest.warns(UserWarning, match="Failed to generate topic name"):
-            result = await async_litellm_wrapper.generate_topic_names(["test prompt"])
+            result = await async_litellm_wrapper.generate_topic_names([make_prompt()])
 
     assert result == [""]
 
@@ -790,7 +800,7 @@ async def test_async_litellm_generate_topic_cluster_names_retry_exhausted_warns(
     ):
         with pytest.warns(UserWarning):
             result = await async_litellm_wrapper.generate_topic_cluster_names(
-                ["test prompt"],
+                [make_prompt()],
                 [mock_data["old_names"]],
             )
 
@@ -846,8 +856,7 @@ async def test_async_litellm_system_prompt_probe_falls_back_and_caches(
         new=AsyncMock(side_effect=[unsupported_error, good_response]),
     ) as mock_acompletion:
         result = await async_litellm_wrapper._call_single_llm_with_system(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -869,8 +878,7 @@ async def test_async_litellm_system_prompt_cached_false_flattens_immediately(
         new=AsyncMock(return_value=good_response),
     ) as mock_acompletion:
         await async_litellm_wrapper._call_single_llm_with_system(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -895,14 +903,57 @@ async def test_async_litellm_system_prompt_probe_success_caches_true(
         new=AsyncMock(return_value=good_response),
     ):
         result = await async_litellm_wrapper._call_single_llm_with_system(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
 
     assert result == mock_data["valid_topic_name"]
     assert async_litellm_wrapper._system_prompt_capability is True
+
+
+@pytest.mark.asyncio
+async def test_async_litellm_namer_temperature_override_is_used(mock_data):
+    wrapper = AsyncLiteLLMNamer(
+        api_key="dummy",
+        model="openai/gpt-4o-mini",
+        temperature_override=0.0,
+    )
+    response = MockAsyncResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(return_value=response),
+    ) as mock_acompletion:
+        result = await wrapper.generate_topic_names([make_prompt()], temperature=0.9)
+
+    assert mock_acompletion.await_args.kwargs["temperature"] == 0.0
+    assert len(result) == 1
+    validate_topic_name(result[0])
+
+
+@pytest.mark.parametrize("namer_cls, kwargs", ASYNC_LITELLM_NAMERS)
+def test_async_namer_temperature_override_passthrough(namer_cls, kwargs):
+    """Parametrized smoke test: temperature_override is forwarded to all async factory namers."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        namer = namer_cls(temperature_override=0.25, **kwargs)
+
+    assert isinstance(namer, AsyncLiteLLMNamer)
+    assert namer.temperature_override == 0.25
+
+
+@pytest.mark.parametrize("namer_cls, kwargs", ASYNC_LITELLM_NAMERS)
+def test_async_namer_custom_max_tokens_passthrough(namer_cls, kwargs):
+    """Parametrized test: custom max_tokens values are respected by async factory namers."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        namer = namer_cls(
+            max_tokens_topic_name=300, max_tokens_cluster_names=1200, **kwargs
+        )
+
+    assert namer.max_tokens_topic_name == 300
+    assert namer.max_tokens_cluster_names == 1200
 
 
 # Test for AsyncLLMWrapper base class error cases
@@ -914,5 +965,5 @@ async def test_async_wrapper_invalid_input(async_litellm_wrapper):
 
     with pytest.raises(ValueError):
         await async_litellm_wrapper.generate_topic_cluster_names(
-            ["prompt1", "prompt2"], [["name1", "name2"]]
+            [make_prompt(1), make_prompt(2)], [["name1", "name2"]]
         )  # Mismatched lengths

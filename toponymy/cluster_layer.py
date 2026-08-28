@@ -39,7 +39,7 @@ from toponymy.prompt_construction import (
 )
 from tqdm.auto import tqdm
 import asyncio
-from toponymy._utils import handle_verbose_params
+from toponymy._utils import handle_deprecated_prompt_format, handle_verbose_params
 import warnings
 
 
@@ -94,11 +94,13 @@ class ClusterLayer(ABC):
         n_keyphrases: int = 24,
         n_subtopics: int = 24,
         exemplar_delimiters: List[str] = None,
-        prompt_format: str = "combined",
+        prompt_format: Optional[str] = None,
         prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
     ):
+        handle_deprecated_prompt_format(prompt_format)
+
         self.cluster_labels = cluster_labels
         self.centroid_vectors = centroid_vectors
         self.layer_id = layer_id
@@ -108,7 +110,6 @@ class ClusterLayer(ABC):
         self.n_keyphrases = n_keyphrases
         self.n_subtopics = n_subtopics
         self.exemplar_delimiters = exemplar_delimiters
-        self.prompt_format = prompt_format
         self.prompt_template = prompt_template
         if exemplar_delimiters is None:
             self.exemplar_delimiters = ['    *"', '"\n']
@@ -146,7 +147,7 @@ class ClusterLayer(ABC):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        prompt_format: str = None,
+        prompt_format: Optional[str] = None,
         prompt_template: Optional[str] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
@@ -249,7 +250,6 @@ class ClusterLayer(ABC):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
-                prompt_format=self.prompt_format,
                 prompt_template=self.prompt_template,
             )
             for topic_indices in tqdm(
@@ -400,7 +400,7 @@ class ClusterLayerText(ClusterLayer):
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
         exemplar_delimiters: List[str] = None,
-        prompt_format: str = "combined",
+        prompt_format: Optional[str] = None,
         prompt_template: Optional[Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
@@ -439,6 +439,8 @@ class ClusterLayerText(ClusterLayer):
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
     ) -> List[str | Dict[str, str]]:
+        handle_deprecated_prompt_format(prompt_format)
+
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
@@ -459,9 +461,6 @@ class ClusterLayerText(ClusterLayer):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
-                prompt_format=(
-                    self.prompt_format if prompt_format is None else prompt_format
-                ),
                 prompt_template=(
                     self.prompt_template if prompt_template is None else prompt_template
                 ),
@@ -838,7 +837,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
         n_subtopics: int = 16,
         subtopic_diversify_alpha: float = 1.0,
         exemplar_delimiters: List[str] = None,
-        prompt_format: str = "combined",
+        prompt_format: Optional[str] = None,
         prompt_template: Optional[str | Dict[str, Any]] = None,
         verbose: Optional[bool] = None,
         show_progress_bar: Optional[bool] = None,
@@ -872,11 +871,13 @@ class ClusterLayerSummaryText(ClusterLayerText):
         object_description: str,
         corpus_description: str,
         cluster_tree: Optional[dict] = None,
-        prompt_format: str = None,
+        prompt_format: Optional[str] = None,
         prompt_template: Optional[str] = None,
         all_topic_summaries: Optional[List[List[str]]] = None,
         all_topic_explanations: Optional[List[List[str]]] = None,
     ) -> List[str | Dict[str, str]]:
+        handle_deprecated_prompt_format(prompt_format)
+
         summary_level = int(round(detail_level * (len(SUMMARY_KINDS) - 1)))
         summary_kind = SUMMARY_KINDS[summary_level]
 
@@ -906,9 +907,6 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 max_num_subtopics=self.n_subtopics,
                 exemplar_start_delimiter=self.exemplar_delimiters[0],
                 exemplar_end_delimiter=self.exemplar_delimiters[1],
-                prompt_format=(
-                    self.prompt_format if prompt_format is None else prompt_format
-                ),
                 prompt_template=(
                     self.prompt_template if prompt_template is None else prompt_template
                 ),

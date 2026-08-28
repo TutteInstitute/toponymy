@@ -22,14 +22,17 @@ from toponymy.llm_wrappers import (
     ReplicateNamer,
     GoogleGeminiNamer,
 )
-from conftest import is_ollama_model_available
+from conftest import ollama_has_model
+from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 
 from toponymy.tests.helpers.llm_test_config import (
+    make_prompt,
     validate_cluster_names,
     validate_topic_name,
     LITELLM_PROVIDER_CASES,
     SUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
     UNSUPPORTED_SYNC_DEBUG_CALLBACK_NAMERS,
+    SYNC_LITELLM_NAMERS,
 )
 from toponymy.tests.helpers.errors import (
     LITELLM_FAIL_FAST,
@@ -115,7 +118,7 @@ def test_llamacpp_generate_topic_name_success(llamacpp_wrapper, mock_data):
     response = MockLLMResponse.create_llama_response(mock_data["valid_topic_name"])
     llamacpp_wrapper.llm = Mock(return_value=response)
 
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    result = llamacpp_wrapper.generate_topic_name(make_prompt())
     validate_topic_name(result)
 
 
@@ -124,7 +127,7 @@ def test_llamacpp_generate_cluster_names_success(llamacpp_wrapper, mock_data):
     llamacpp_wrapper.llm = Mock(return_value=response)
 
     result = llamacpp_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -136,7 +139,7 @@ def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(
     llamacpp_wrapper.llm = Mock(return_value=response)
 
     result = llamacpp_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -144,7 +147,7 @@ def test_llamacpp_generate_cluster_names_success_on_malformed_mapping(
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_llamacpp_generate_topic_name_failure(llamacpp_wrapper):
     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    result = llamacpp_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -154,7 +157,7 @@ def test_llamacpp_generate_topic_name_failure_malformed_json(
 ):
     response = MockLLMResponse.create_llama_response(mock_data["malformed_json"])
     llamacpp_wrapper.llm = Mock(return_value=response)
-    result = llamacpp_wrapper.generate_topic_name("test prompt")
+    result = llamacpp_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -162,7 +165,7 @@ def test_llamacpp_generate_topic_name_failure_malformed_json(
 def test_llamacpp_generate_cluster_names_failure(llamacpp_wrapper, mock_data):
     llamacpp_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = llamacpp_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     assert result == mock_data["old_names"]
 
@@ -181,7 +184,7 @@ def test_huggingface_generate_topic_name_success(huggingface_wrapper, mock_data)
     )
     huggingface_wrapper.llm = Mock(return_value=response)
 
-    result = huggingface_wrapper.generate_topic_name("test prompt")
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     validate_topic_name(result)
 
 
@@ -193,9 +196,7 @@ def test_huggingface_generate_topic_name_success_system_prompt(
     )
     huggingface_wrapper.llm = Mock(return_value=response)
 
-    result = huggingface_wrapper.generate_topic_name(
-        {"system": "system prompt", "user": "test prompt"}
-    )
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     validate_topic_name(result)
 
 
@@ -206,7 +207,7 @@ def test_huggingface_generate_cluster_names_success(huggingface_wrapper, mock_da
     huggingface_wrapper.llm = Mock(return_value=response)
 
     result = huggingface_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -220,7 +221,7 @@ def test_huggingface_generate_cluster_names_success_system_prompt(
     huggingface_wrapper.llm = Mock(return_value=response)
 
     result = huggingface_wrapper.generate_topic_cluster_names(
-        {"system": "system prompt", "user": "test prompt"}, mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -234,7 +235,7 @@ def test_huggingface_generate_cluster_names_success_on_malformed_mapping(
     huggingface_wrapper.llm = Mock(return_value=response)
 
     result = huggingface_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     validate_cluster_names(result)
 
@@ -242,7 +243,7 @@ def test_huggingface_generate_cluster_names_success_on_malformed_mapping(
 @pytest.mark.filterwarnings("ignore:All retries exhausted")
 def test_huggingface_generate_topic_name_failure(huggingface_wrapper):
     huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
-    result = huggingface_wrapper.generate_topic_name("test prompt")
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -252,7 +253,7 @@ def test_huggingface_generate_topic_name_failure_malformed_json(
 ):
     response = MockLLMResponse.create_huggingface_response(mock_data["malformed_json"])
     huggingface_wrapper.llm = Mock(return_value=response)
-    result = huggingface_wrapper.generate_topic_name("test prompt")
+    result = huggingface_wrapper.generate_topic_name(make_prompt())
     assert result == ""
 
 
@@ -260,7 +261,7 @@ def test_huggingface_generate_topic_name_failure_malformed_json(
 def test_huggingface_generate_cluster_names_failure(huggingface_wrapper, mock_data):
     huggingface_wrapper.llm = Mock(side_effect=Exception("API Error"))
     result = huggingface_wrapper.generate_topic_cluster_names(
-        "test prompt", mock_data["old_names"]
+        make_prompt(), mock_data["old_names"]
     )
     assert result == mock_data["old_names"]
 
@@ -285,13 +286,13 @@ def test_anthropic_connectivity_sync_system_canary():
 
 
 def test_anthropic_namer_returns_litellm_namer():
-    namer = AnthropicNamer()
+    namer = AnthropicNamer(api_key="dummy")
 
     assert isinstance(namer, LiteLLMNamer)
 
 
 def test_anthropic_namer_default():
-    namer = AnthropicNamer()
+    namer = AnthropicNamer(api_key="dummy")
 
     assert namer.model == "anthropic/claude-haiku-4-5-20251001"
     assert namer.use_json_object is True
@@ -299,7 +300,7 @@ def test_anthropic_namer_default():
 
 
 def test_anthropic_namer_provider_kwargs_passthrough():
-    namer = AnthropicNamer(provider_kwargs={"timeout": 123})
+    namer = AnthropicNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -326,13 +327,13 @@ def test_openai_connectivity_sync_system_canary():
 
 
 def test_openai_namer_returns_litellm_namer():
-    namer = OpenAINamer()
+    namer = OpenAINamer(api_key="dummy")
 
     assert isinstance(namer, LiteLLMNamer)
 
 
 def test_openai_namer_default():
-    namer = OpenAINamer()
+    namer = OpenAINamer(api_key="dummy")
 
     assert namer.model == "openai/gpt-4o-mini"
     assert namer.use_json_object is True
@@ -340,7 +341,7 @@ def test_openai_namer_default():
 
 
 def test_openai_namer_provider_kwargs_passthrough():
-    namer = OpenAINamer(provider_kwargs={"timeout": 123})
+    namer = OpenAINamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -348,7 +349,7 @@ def test_openai_namer_provider_kwargs_passthrough():
 def test_openai_namer_base_url_maps_to_api_base():
     """Remove once deprecation of base_url complete"""
     with pytest.warns(FutureWarning):
-        namer = OpenAINamer(base_url="http://localhost")
+        namer = OpenAINamer(api_key="dummy", base_url="http://localhost")
 
     assert namer.api_base == "http://localhost"
 
@@ -356,7 +357,7 @@ def test_openai_namer_base_url_maps_to_api_base():
 def test_openai_namer_http_client_maps_to_provider_kwargs():
     """Remove once deprecation of http_client complete"""
     with pytest.warns(FutureWarning):
-        namer = OpenAINamer(http_client="httpx.Client(timeout=123)")
+        namer = OpenAINamer(api_key="dummy", http_client="httpx.Client(timeout=123)")
 
     assert namer.provider_kwargs["http_client"] == "httpx.Client(timeout=123)"
 
@@ -382,13 +383,13 @@ def test_cohere_connectivity_sync_system_canary():
 
 
 def test_cohere_namer_returns_litellm_namer():
-    namer = CohereNamer()
+    namer = CohereNamer(api_key="dummy")
 
     assert isinstance(namer, LiteLLMNamer)
 
 
 def test_cohere_namer_default():
-    namer = CohereNamer()
+    namer = CohereNamer(api_key="dummy")
 
     assert namer.model == "cohere/command-r-08-2024"
     assert namer.use_json_object is False  # until prompting is stricter
@@ -396,7 +397,7 @@ def test_cohere_namer_default():
 
 
 def test_cohere_namer_provider_kwargs_passthrough():
-    namer = CohereNamer(provider_kwargs={"timeout": 123})
+    namer = CohereNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -404,13 +405,14 @@ def test_cohere_namer_provider_kwargs_passthrough():
 def test_cohere_namer_base_url_maps_to_api_base():
     """Remove once deprecation of base_url complete"""
     with pytest.warns(FutureWarning):
-        namer = CohereNamer(base_url="http://localhost")
+        namer = CohereNamer(api_key="dummy", base_url="http://localhost")
 
     assert namer.api_base == "http://localhost"
 
 
 def test_cohere_namer_env_co_api_base_maps_to_api_base(monkeypatch):
     monkeypatch.delenv("COHERE_API_BASE", raising=False)
+    monkeypatch.setenv("COHERE_API_KEY", "dummy")
     monkeypatch.setenv("CO_API_URL", "dummy")
     with pytest.warns(FutureWarning):
         namer = CohereNamer()
@@ -421,7 +423,7 @@ def test_cohere_namer_env_co_api_base_maps_to_api_base(monkeypatch):
 def test_cohere_namer_httpx_client_maps_to_provider_kwargs():
     """Remove once deprecation of http_client complete"""
     with pytest.warns(FutureWarning):
-        namer = CohereNamer(httpx_client="httpx.Client(timeout=123)")
+        namer = CohereNamer(api_key="dummy", httpx_client="httpx.Client(timeout=123)")
 
     assert namer.provider_kwargs["httpx_client"] == "httpx.Client(timeout=123)"
 
@@ -456,19 +458,21 @@ def test_azureai_connectivity_sync_plain_canary():
 
 
 def test_azureai_namer_default():
-    namer = AzureAINamer(model="dummy")
+    namer = AzureAINamer(api_key="dummy", model="dummy")
 
     assert namer.model == "azure_ai/dummy"
 
 
 def test_azureai_namer_provider_kwargs_passthrough():
-    namer = AzureAINamer(model="dummy", provider_kwargs={"timeout": 123})
+    namer = AzureAINamer(
+        api_key="dummy", model="dummy", provider_kwargs={"timeout": 123}
+    )
 
     assert namer.provider_kwargs["timeout"] == 123
 
 
 def test_azureai_namer_endpoint_maps_to_api_base():
-    namer = AzureAINamer(model="dummy", endpoint="http://localhost")
+    namer = AzureAINamer(api_key="dummy", model="dummy", endpoint="http://localhost")
 
     assert namer.api_base == "http://localhost"
 
@@ -483,9 +487,11 @@ def test_azureai_namer_old_env_var_maps_to_api_key(monkeypatch):
 
 
 # Ollama Tests
-def test_ollama_connectivity_plain_sync_canary():
-    model = "llama3.2"
-    if not is_ollama_model_available(model):
+def test_ollama_connectivity_plain_sync_canary(ollama_running):
+    model = get_test_ollama_model()
+    if not ollama_running:
+        pytest.skip("Ollama service is not available or failed to start")
+    if not ollama_has_model(model):
         pytest.skip(f"{model} not available in local Ollama")
     namer = OllamaNamer(model=model)
     result = namer.connectivity_status()
@@ -542,14 +548,14 @@ def test_gemini_connectivity_sync_system_canary():
 
 def test_gemini_namer_returns_litellm_namer():
     with pytest.warns(FutureWarning):
-        namer = GoogleGeminiNamer()
+        namer = GoogleGeminiNamer(api_key="dummy")
 
     assert isinstance(namer, LiteLLMNamer)
 
 
 @pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
 def test_gemini_namer_default():
-    namer = GoogleGeminiNamer()
+    namer = GoogleGeminiNamer(api_key="dummy")
 
     assert namer.model == "gemini/gemini-2.5-flash-lite"
     assert namer.use_json_object is True
@@ -558,7 +564,7 @@ def test_gemini_namer_default():
 
 @pytest.mark.filterwarnings("ignore:GoogleGeminiNamer is deprecated")
 def test_gemini_namer_provider_kwargs_passthrough():
-    namer = GoogleGeminiNamer(provider_kwargs={"timeout": 123})
+    namer = GoogleGeminiNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -590,21 +596,21 @@ def test_together_connectivity_plain_sync_canary():
 
 def test_together_namer_returns_litellm_namer():
     with pytest.warns(FutureWarning):
-        namer = TogetherNamer()
+        namer = TogetherNamer(api_key="dummy")
 
     assert isinstance(namer, LiteLLMNamer)
 
 
 @pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_namer_default():
-    namer = TogetherNamer()
+    namer = TogetherNamer(api_key="dummy")
 
-    assert namer.model == "together_ai/meta-llama/Meta-Llama-3-8B-Instruct-Lite"
+    assert namer.model == "together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo"
 
 
 @pytest.mark.filterwarnings("ignore:TogetherNamer is deprecated")
 def test_together_namer_provider_kwargs_passthrough():
-    namer = TogetherNamer(provider_kwargs={"timeout": 123})
+    namer = TogetherNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -627,14 +633,14 @@ def test_replicate_connectivity_plain_sync_canary():
 
 def test_replicate_namer_returns_litellm_namer():
     with pytest.warns(FutureWarning):
-        namer = ReplicateNamer()
+        namer = ReplicateNamer(api_key="dummy")
 
     assert isinstance(namer, LiteLLMNamer)
 
 
 @pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
 def test_replicate_namer_default():
-    namer = ReplicateNamer()
+    namer = ReplicateNamer(api_key="dummy")
 
     assert namer.model == "replicate/meta/llama-2-70b-chat"
     assert namer.use_json_object is False
@@ -642,7 +648,7 @@ def test_replicate_namer_default():
 
 @pytest.mark.filterwarnings("ignore:ReplicateNamer is deprecated")
 def test_replicate_namer_provider_kwargs_passthrough():
-    namer = ReplicateNamer(provider_kwargs={"timeout": 123})
+    namer = ReplicateNamer(api_key="dummy", provider_kwargs={"timeout": 123})
 
     assert namer.provider_kwargs["timeout"] == 123
 
@@ -720,7 +726,7 @@ def test_litellm_generate_topic_name_success(litellm_wrapper, mock_data):
     response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.completion", return_value=response):
-        result = litellm_wrapper.generate_topic_name("test prompt")
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     validate_topic_name(result)
 
@@ -729,9 +735,7 @@ def test_litellm_generate_topic_name_success_system_prompt(litellm_wrapper, mock
     response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
 
     with patch("litellm.completion", return_value=response):
-        result = litellm_wrapper.generate_topic_name(
-            {"system": "system prompt", "user": "test prompt"}
-        )
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     validate_topic_name(result)
 
@@ -741,7 +745,7 @@ def test_litellm_generate_cluster_names_success(litellm_wrapper, mock_data):
 
     with patch("litellm.completion", return_value=response):
         result = litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -755,7 +759,7 @@ def test_litellm_generate_cluster_names_success_system_prompt(
 
     with patch("litellm.completion", return_value=response):
         result = litellm_wrapper.generate_topic_cluster_names(
-            {"system": "system prompt", "user": "test prompt"},
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -770,7 +774,7 @@ def test_litellm_generate_cluster_names_success_on_malformed_mapping(
 
     with patch("litellm.completion", return_value=response):
         result = litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -781,7 +785,7 @@ def test_litellm_generate_topic_name_failure_malformed_json(litellm_wrapper, moc
     response = MockLLMResponse.create_chat_response(mock_data["malformed_json"])
 
     with patch("litellm.completion", return_value=response):
-        result = litellm_wrapper.generate_topic_name("test prompt")
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     assert result == ""
 
@@ -793,7 +797,7 @@ def test_litellm_topic_name_fail_fast_error(litellm_wrapper, error_class):
         side_effect=make_litellm_error(error_class),
     ):
         with pytest.raises(FailFastLLMError):
-            litellm_wrapper.generate_topic_name("test prompt")
+            litellm_wrapper.generate_topic_name(make_prompt())
 
 
 @pytest.mark.parametrize("error_class", LITELLM_FAIL_FAST)
@@ -808,7 +812,7 @@ def test_litellm_topic_cluster_names_fail_fast_error(
     ):
         with pytest.raises(FailFastLLMError):
             litellm_wrapper.generate_topic_cluster_names(
-                "test prompt",
+                make_prompt(),
                 mock_data["old_names"],
             )
 
@@ -823,7 +827,7 @@ def test_litellm_generate_topic_name_retry_exhausted_returns_empty(
         "litellm.completion",
         side_effect=[make_litellm_error(error_class) for _ in range(3)],
     ) as mock_completion:
-        result = litellm_wrapper.generate_topic_name("test prompt")
+        result = litellm_wrapper.generate_topic_name(make_prompt())
 
     assert result == ""
     assert mock_completion.call_count == 3
@@ -841,7 +845,7 @@ def test_litellm_generate_cluster_names_retry_exhausted_returns_old_names(
         side_effect=[make_litellm_error(error_class) for _ in range(3)],
     ) as mock_completion:
         result = litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
         )
 
@@ -894,8 +898,7 @@ def test_litellm_system_prompt_probe_falls_back_and_caches(litellm_wrapper, mock
         side_effect=[unsupported_error, good_response],
     ) as mock_completion:
         result = litellm_wrapper._call_llm_with_system_prompt(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -914,8 +917,7 @@ def test_litellm_system_prompt_cached_false_flattens_immediately(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper._call_llm_with_system_prompt(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -934,8 +936,7 @@ def test_litellm_system_prompt_probe_success_caches_true(
 
     with patch("litellm.completion", return_value=good_response):
         result = litellm_wrapper._call_llm_with_system_prompt(
-            system_prompt="system",
-            user_prompt="user",
+            {"system": "system", "user": "user"},
             temperature=0.4,
             max_tokens=20,
         )
@@ -944,7 +945,44 @@ def test_litellm_system_prompt_probe_success_caches_true(
     assert litellm_wrapper._system_prompt_capability is True
 
 
-# Test max_tokens configuration
+def test_litellm_namer_temperature_override_is_used(litellm_wrapper, mock_data):
+    wrapper = LiteLLMNamer(
+        api_key="dummy",
+        model="openai/gpt-4o-mini",
+        temperature_override=0.0,
+    )
+    response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=response) as mock_completion:
+        result = wrapper.generate_topic_name(make_prompt(), temperature=0.9)
+
+    assert mock_completion.call_args.kwargs["temperature"] == 0.0
+    validate_topic_name(result)
+
+
+@pytest.mark.parametrize("namer_cls, kwargs", SYNC_LITELLM_NAMERS)
+def test_namer_temperature_override_passthrough(namer_cls, kwargs):
+    """Parametrized smoke test: temperature_override is forwarded to all factory namers."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        namer = namer_cls(temperature_override=0.25, **kwargs)
+
+    assert isinstance(namer, LiteLLMNamer)
+    assert namer.temperature_override == 0.25
+
+
+# Test max_tokens
+@pytest.mark.parametrize("namer_cls, kwargs", SYNC_LITELLM_NAMERS)
+def test_namer_custom_max_tokens_passthrough(namer_cls, kwargs):
+    """Parametrized test: custom max_tokens values are respected by factory namers."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FutureWarning)
+        namer = namer_cls(
+            max_tokens_topic_name=300, max_tokens_cluster_names=1200, **kwargs
+        )
+
+    assert namer.max_tokens_topic_name == 300
+    assert namer.max_tokens_cluster_names == 1200
 
 
 def test_litellm_namer_default_max_tokens():
@@ -967,28 +1005,34 @@ def test_litellm_namer_custom_max_tokens():
 
 def test_openai_namer_default_max_tokens():
     """Test that OpenAINamer has correct default max_tokens values"""
-    namer = OpenAINamer()
+    namer = OpenAINamer(api_key="dummy")
     assert namer.max_tokens_topic_name == 128
     assert namer.max_tokens_cluster_names == 1024
 
 
 def test_openai_namer_custom_max_tokens():
     """Test that OpenAINamer accepts and passes through custom max_tokens values"""
-    namer = OpenAINamer(max_tokens_topic_name=512, max_tokens_cluster_names=2048)
+    namer = OpenAINamer(
+        api_key="dummy", max_tokens_topic_name=512, max_tokens_cluster_names=2048
+    )
     assert namer.max_tokens_topic_name == 512
     assert namer.max_tokens_cluster_names == 2048
 
 
 def test_anthropic_namer_custom_max_tokens():
     """Test that AnthropicNamer accepts and passes through custom max_tokens values"""
-    namer = AnthropicNamer(max_tokens_topic_name=200, max_tokens_cluster_names=1500)
+    namer = AnthropicNamer(
+        api_key="dummy", max_tokens_topic_name=200, max_tokens_cluster_names=1500
+    )
     assert namer.max_tokens_topic_name == 200
     assert namer.max_tokens_cluster_names == 1500
 
 
 def test_cohere_namer_custom_max_tokens():
     """Test that CohereNamer accepts and passes through custom max_tokens values"""
-    namer = CohereNamer(max_tokens_topic_name=300, max_tokens_cluster_names=1200)
+    namer = CohereNamer(
+        api_key="dummy", max_tokens_topic_name=300, max_tokens_cluster_names=1200
+    )
     assert namer.max_tokens_topic_name == 300
     assert namer.max_tokens_cluster_names == 1200
 
@@ -996,6 +1040,7 @@ def test_cohere_namer_custom_max_tokens():
 def test_azure_namer_custom_max_tokens():
     """Test that AzureAINamer accepts and passes through custom max_tokens values"""
     namer = AzureAINamer(
+        api_key="dummy",
         model="gpt-4o",
         max_tokens_topic_name=150,
         max_tokens_cluster_names=1100,
@@ -1023,7 +1068,7 @@ def test_litellm_namer_generate_topic_name_uses_instance_default(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_name(
-            "test prompt",
+            make_prompt(),
             # max_tokens not specified, should use instance default
         )
 
@@ -1044,7 +1089,7 @@ def test_litellm_namer_generate_topic_name_override_with_explicit_max_tokens(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_name(
-            "test prompt", max_tokens=100  # explicit override
+            make_prompt(), max_tokens=100  # explicit override
         )
 
     # Check that the explicit value was used, not the instance default
@@ -1066,7 +1111,7 @@ def test_litellm_namer_generate_cluster_names_uses_instance_default(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_cluster_names(
-            "test prompt",
+            make_prompt(),
             mock_data["old_names"],
             # max_tokens not specified, should use instance default
         )
@@ -1090,7 +1135,7 @@ def test_litellm_namer_generate_cluster_names_override_with_explicit_max_tokens(
 
     with patch("litellm.completion", return_value=good_response) as mock_completion:
         litellm_wrapper.generate_topic_cluster_names(
-            "test prompt", mock_data["old_names"], max_tokens=512  # explicit override
+            make_prompt(), mock_data["old_names"], max_tokens=512  # explicit override
         )
 
     # Check that the explicit value was used, not the instance default

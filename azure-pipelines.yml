@@ -1,16 +1,5 @@
 # Note that external tests will run on manual triggers.
-#
-# Ollama Integration Testing:
-# To enable Ollama integration tests, create a pipeline variable named 'INSTALL_OLLAMA'
-# and set its value to 'true'. This will:
-#   1. Install Ollama on Linux agents
-#   2. Download a small model (qwen2.5:0.5b preferred, ~400MB)
-#   3. Run real LLM integration tests instead of mocks
-#   4. Add ~2-5 minutes to build time
-# If INSTALL_OLLAMA is not set or is 'false', tests use mock-based coverage.
-#
 
-# Trigger a build when there is a push to the main branch or a tag starts with release-
 trigger:
   branches:
     include:
@@ -20,23 +9,34 @@ trigger:
     - release-*
 
 # Trigger a build when there is a pull request to the main branch
-# Ignore PRs that are just updating the docs
+# Ignore PRs that are just updating the docs, but still run when
+# a notebook under doc/ changes since those are executed as tests.
 pr:
+  autoCancel: true
   branches:
     include:
     - main
+  paths:
     exclude:
-    - doc/*
+    - doc
     - README.rst
+    include:
+    - doc/*.ipynb
+    - "*"
 
-# Trigger nightly external tests at 4am UTC every day
 schedules:
-- cron: "0 4 * * *"  # 11pm EST/12am EDT
-  displayName: Nightly external tests to LLMs
+- cron: "0 3 * * *"  # 10pm EST/11pm EDT
+  displayName: NightlyTests
   branches:
     include:
     - main
-  always: true  # run even if no code changes
+  always: true
+- cron: "0 4 * * 6"  # 11pm EST/12am EDT
+  displayName: WeeklyTests
+  branches:
+    include:
+    - main
+  always: true
 
 parameters:
   - name: includeReleaseCandidates
@@ -46,26 +46,51 @@ parameters:
 
 variables:
   triggeredByPullRequest: $[eq(variables['Build.Reason'], 'PullRequest')]
-  # Ollama Integration Testing Configuration:
-  # Set INSTALL_OLLAMA to 'true' to enable Ollama integration tests in CI.
-  # If not set or 'false', tests will use mock-based testing for LLM wrappers.
-  # Ollama setup includes:
-  #   - Installation of Ollama service (Linux only)
-  #   - Download of smallest available model (qwen2.5:0.5b preferred)
-  #   - Fallback to mock tests if installation/download fails
-  # Note: This adds ~2-5 minutes to build time and requires ~1-2GB disk space
-  # INSTALL_OLLAMA: 'true'  # Uncomment and set as pipeline variable to enable
 
 stages:
   - stage: RunAllTests
     displayName: Run test suite
     jobs:
-    - job: Tests
-      timeoutInMinutes: 90   # default is usually 60
+    - job: DetectChangedNotebooks
+      condition: and(eq(variables['Build.Reason'], 'PullRequest'), not(canceled()))
+      pool:
+        vmImage: 'ubuntu-latest'
+      steps:
+        - checkout: none
+        - bash: |
+            set -e
+            if [ "$(Build.Reason)" != "PullRequest" ]; then
+              echo "##vso[task.setvariable variable=CHANGED_NOTEBOOKS;isOutput=true]"
+              exit 0
+            fi
+
+            PR_NUMBER=$(System.PullRequest.PullRequestNumber)
+            echo "PR_NUMBER=$PR_NUMBER"
+
+            RESPONSE=$(curl -s \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/TutteInstitute/toponymy/pulls/$PR_NUMBER/files?per_page=100")
+
+            CHANGED=$(echo "$RESPONSE" \
+            | jq -r '.[].filename' \
+            | grep '\.ipynb$' \
+            | xargs -n1 basename \
+            | paste -sd, -)
+
+            echo "Changed notebooks: $CHANGED"
+            echo "##vso[task.setvariable variable=CHANGED_NOTEBOOKS;isOutput=true]$CHANGED"
+          displayName: 'Detect changed notebooks in PR'
+          name: detect
+
+    - job: PRTests
+      timeoutInMinutes: 150   # default is usually 60
+      dependsOn: DetectChangedNotebooks
       pool:
         vmImage: $(imageName)
       workspace:
-        clean: all  # Clean workspace before build to free disk space
+        clean: all
+      variables:
+        CHANGED_NOTEBOOKS: $[ dependencies.DetectChangedNotebooks.outputs['detect.CHANGED_NOTEBOOKS'] ]
       strategy:
         matrix:
           linux_py310:
@@ -101,36 +126,55 @@ stages:
           # mac_py313:
           #   imageName: 'macOS-latest'
           #   python.version: '3.13'
-      condition: ne(variables['Build.Reason'], 'Schedule')
+      condition: and(or(eq(variables['Build.Reason'], 'PullRequest'), eq(variables['Build.Reason'], 'Manual')), not(canceled()))
       steps:
-      - template: .azure/templates/run-tests.yml
+      - template: .azure/templates/pr-test-job.yml
         parameters:
-          pytestMarker: 'not external'
-          includeOllama: true
+          installOllama: true
+          includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
+
+    - job: NotebookTests
+      timeoutInMinutes: 150   # default is usually 60
+      pool:
+        vmImage: 'ubuntu-latest'
+      workspace:
+        clean: all
+      strategy:
+        matrix:
+          linux_py310:
+            imageName: 'ubuntu-latest'
+            python.version: '3.10'
+          linux_py313:
+            imageName: 'ubuntu-latest'
+            python.version: '3.13'
+      condition: or(and(eq(variables['Build.Reason'], 'Schedule'), eq(variables['Build.CronSchedule.DisplayName'], 'WeeklyTests')), eq(variables['Build.Reason'], 'Manual'))
+      steps:
+      - template: .azure/templates/notebook-test-job.yml
+        parameters:
+          installOllama: true
           includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
 
     - job: ExternalTests
-      timeoutInMinutes: 90
+      timeoutInMinutes: 30
       pool:
-        vmImage: $(imageName)
+        vmImage: 'ubuntu-latest'
       workspace:
-        clean: all  # Clean workspace before build to free disk space
+        clean: all
       strategy:
         matrix:
           linux_py311:
             imageName: 'ubuntu-latest'
             python.version: '3.11'
-      condition: or(eq(variables['Build.Reason'], 'Schedule'), eq(variables['Build.Reason'], 'Manual'))
+      condition: and(or(and(eq(variables['Build.Reason'], 'Schedule'), eq(variables['Build.CronSchedule.DisplayName'], 'NightlyTests')), eq(variables['Build.Reason'], 'Manual')), not(canceled()))
       steps:
-      - template: .azure/templates/run-tests.yml
+      - template: .azure/templates/external-test-job.yml
         parameters:
-          pytestMarker: external
           includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
           showCapture: 'stdout'
 
   - stage: BuildPublishArtifact
     dependsOn: RunAllTests
-    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/release-'), eq(variables.triggeredByPullRequest, false))
+    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/release-'), eq(variables.triggeredByPullRequest, false), not(canceled()))
     jobs:
       - job: BuildArtifacts
         timeoutInMinutes: 90

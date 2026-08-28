@@ -4,11 +4,15 @@ import zipfile
 from pathlib import Path
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import cached_property
 import base64
 
 import scipy.sparse as sp
 import pandas as pd
 import numpy as np
+import shutil
+
+from toponymy.topic_tree import TopicTree
 
 _SERIAL_VERSION = "0.1"
 
@@ -62,6 +66,51 @@ class TopicModel:
         s += f" n_topics={n_topics})"
         return s
 
+    @cached_property
+    def topic_sizes(self):
+        """
+        Reconstruct topic_sizes from the topic_df.
+
+        Returns
+        -------
+        List[List[int]]
+            A list of lists where topic_sizes[i][j] is the size of cluster j in layer i.
+        """
+        if "size" not in self.topic_df.columns:
+            # Fallback: compute from cluster_layers if size column doesn't exist
+            topic_sizes = []
+            for layer_matrix in self.cluster_layers:
+                # Each column represents a cluster, sum to get cluster sizes
+                # Divide by 255 since we use 255 as the indicator value
+                if sp.issparse(layer_matrix):
+                    sizes = np.asarray(layer_matrix.sum(axis=0)).ravel().tolist()
+                else:
+                    sizes = layer_matrix.sum(axis=0).tolist()
+                topic_sizes.append([int(s // 255) for s in sizes])
+            return topic_sizes
+
+        # Reconstruct from topic_df
+        # Only include layers that exist in cluster_layers (excluding root/parent layers)
+        num_layers = len(self.cluster_layers)
+        topic_sizes = [[] for _ in range(num_layers)]
+
+        for layer_idx in range(num_layers):
+            layer_topics = self.topic_df[
+                self.topic_df["layer"] == layer_idx
+            ].sort_values("cluster")
+            if len(layer_topics) > 0:
+                topic_sizes[layer_idx] = layer_topics["size"].tolist()
+            else:
+                # Fallback to computing from cluster_layers for this layer
+                layer_matrix = self.cluster_layers[layer_idx]
+                if sp.issparse(layer_matrix):
+                    sizes = np.asarray(layer_matrix.sum(axis=0)).ravel().tolist()
+                else:
+                    sizes = layer_matrix.sum(axis=0).tolist()
+                topic_sizes[layer_idx] = [int(s // 255) for s in sizes]
+
+        return topic_sizes
+
     @classmethod
     def from_toponymy(cls, toponymy, document_df=None):
         cluster_layers = []
@@ -88,6 +137,7 @@ class TopicModel:
                         "layer": layer_idx,
                         "cluster": cluster,
                         "name": toponymy.topic_names_[layer_idx][cluster],
+                        "size": toponymy.topic_sizes_[layer_idx][cluster],
                         "keyphrases": toponymy.cluster_layers_[layer_idx].keyphrases[
                             cluster
                         ],
@@ -270,16 +320,20 @@ class TopicModel:
             cluster_layers=matrices,
         )
 
-    def to_lance(self, path: str):
+    def to_lance(self, path: str, overwrite: bool = False):
 
         import lance
         import pyarrow as pa
 
         path = Path(path)
+
         if path.exists():
-            raise FileExistsError(
-                f"{path} already exists. Remove it first or choose a different path."
-            )
+            if not overwrite:
+                raise FileExistsError(
+                    f"{path} already exists. Remove it first or choose a different path."
+                )
+            shutil.rmtree(path)
+
         path.mkdir(parents=True)
 
         # --- documents.lance ---
@@ -387,3 +441,28 @@ class TopicModel:
                 layer_names.append(cluster_name)
             all_names.append(layer_names)
         return all_names
+
+    def topic_tree(self, prune_duplicates=True, **kwargs):
+        """
+        Returns the topic tree with configurable options.
+
+        Parameters
+        ----------
+        prune_duplicates : bool, optional (default=True)
+            If True, prune duplicate children from the tree.
+        **kwargs
+            Additional keyword arguments to pass to TopicTree constructor.
+
+        Returns
+        -------
+        TopicTree
+            A representation of the topic tree (either html or string).
+        """
+        return TopicTree(
+            self.cluster_tree,
+            self.topic_names,
+            self.topic_sizes,
+            self.embedding_vectors.shape[0],
+            prune_duplicates=prune_duplicates,
+            **kwargs,
+        )

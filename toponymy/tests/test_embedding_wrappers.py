@@ -38,6 +38,20 @@ class TestCohereEmbedder:
             embedding_types=["float"],
         )
 
+    @patch("cohere.ClientV2")
+    def test_legacy_co_api_key(self, mock_client_v2, monkeypatch):
+        # Verify that CO_API_KEY works with deprecation warning
+        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+        monkeypatch.setenv("CO_API_KEY", "dummy")
+
+        with pytest.warns(
+            FutureWarning, match="CO_API_KEY.*deprecated.*COHERE_API_KEY"
+        ):
+            embedder = embedders.CohereEmbedder()
+
+        # Verify the embedder was created (mock client was called)
+        mock_client_v2.assert_called_once_with(api_key="dummy")
+
 
 class TestOpenAIEmbedder:
     @patch("openai.OpenAI")
@@ -138,6 +152,19 @@ class TestAzureAIEmbedder:
         assert kwargs["model"] == "text-embedding"
         # Check that BatchInput was created with correct number of items
         assert len(kwargs["input"]) == 2
+
+    @patch("azure.ai.inference.EmbeddingsClient")
+    def test_model_required(self, mock_ai_client):
+        # Verify that model parameter is required
+        with pytest.raises(
+            ValueError,
+            match="No Azure AI model specified.*model='text-embedding-3-small'",
+        ):
+            embedders.AzureAIEmbedder(
+                api_key="fake_key",
+                endpoint="https://fake-endpoint.azure.com/",
+                model=None,
+            )
 
 
 class TestMistralEmbedder:

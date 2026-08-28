@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toponymy"
-version = "0.5.2"
+version = "0.5.3"
 authors = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 maintainers = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 description = "A library for using large language models to name topics"
@@ -51,6 +51,7 @@ addopts = "-m 'not external'"
 filterwarnings = [
     "ignore:coroutine '.*' was never awaited:RuntimeWarning:litellm",
 ]
+log_level = "INFO"
 
 [tool.setuptools]
 zip-safe = false
@@ -71,15 +72,15 @@ dev = [
     "black",
     "bm25s",
     "cohere",
+    "datamapplot>=0.7",
     "evoc",
-    "google-generativeai",
     "huggingface-hub<1.0",
+    "ipykernel",
     "isort",
     "matplotlib",
     "mistralai",
     "numpy>=2.0",
-    "ollama",
-    "openai",
+    "nbclient",
     "pandas>=1.0",
     "psutil",
     "pylint",
@@ -87,10 +88,9 @@ dev = [
     "pytest-asyncio",
     "pytest-azurepipelines",
     "pytest-cov",
-    "replicate",
     "requests",
+    "seaborn",
     "sentence-transformers<=5.1.2",
-    "together",
     "traitlets",
     "umap-learn",
     "pylance",
@@ -104,11 +104,4 @@ doc = [
 ]
 llama = [
     "llama-cpp-python",
-]
-example-notebooks = [
-    "datamapplot>=0.7",
-    "ipykernel>=7.2.0",
-    "jupyter>=1.1.1",
-    "sentence-transformers>=5.1.2",
-    "tqdm>=4.67.3",
 ]

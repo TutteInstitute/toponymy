@@ -3,9 +3,11 @@ import numpy as np
 from toponymy.prompt_construction import topic_name_prompt
 from toponymy.templates import MULTILINGUAL_EN_FR_PROMPT_TEMPLATES, PROMPT_TEMPLATES
 from toponymy.prompt_construction import (
+    PROMPT_RENDERINGS,
     cluster_topic_names_for_renaming,
     find_threshold_for_max_cluster_size,
     distinguish_topic_names_prompt,
+    render_prompt,
 )
 from sentence_transformers import SentenceTransformer
 
@@ -50,7 +52,7 @@ def test_topic_name_prompt_no_subtopics():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_topic_name_prompt_with_subtopics():
@@ -97,7 +99,7 @@ def test_topic_name_prompt_with_subtopics():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_topic_name_prompt_with_subtopics_singleton_major_topic():
@@ -149,7 +151,7 @@ def test_topic_name_prompt_with_subtopics_singleton_major_topic():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_topic_name_prompt_with_empty_subtopics():
@@ -196,7 +198,7 @@ def test_topic_name_prompt_with_empty_subtopics():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_find_threshold_for_max_cluster_size():
@@ -379,7 +381,7 @@ def test_distinguish_topic_names_prompt_no_subtopics():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_distinguish_topic_names_prompt_with_subtopics():
@@ -438,7 +440,7 @@ def test_distinguish_topic_names_prompt_with_subtopics():
     print(prompt)
     print(expected_prompt)
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_distinguish_topic_names_prompt_with_single_topic():
@@ -483,7 +485,7 @@ def test_distinguish_topic_names_prompt_with_single_topic():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_distinguish_topic_names_prompt_with_empty_subtopics():
@@ -531,10 +533,10 @@ def test_distinguish_topic_names_prompt_with_empty_subtopics():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
-def test_topic_name_prompt_system_user_format():
+def test_topic_name_prompt_system_user_rendering():
     topic_index = 0
     layer_id = 1
     all_topic_names = [["Topic A"], ["Topic B"]]
@@ -587,7 +589,6 @@ def test_topic_name_prompt_system_user_format():
         object_description,
         corpus_description,
         summary_kind,
-        prompt_format="system_user",
     )
 
     assert prompts["system"] == expected_system_prompt
@@ -639,10 +640,10 @@ def test_topic_name_prompt_custom_template():
         exemplar_end_delimiter='"\n',
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
-def test_distinguish_topic_names_prompt_system_user_format():
+def test_distinguish_topic_names_prompt_system_user_rendering():
     topic_indices = np.array([0, 1])
     layer_id = 1
     all_topic_names = [["Topic A", "Topic B"], ["Topic C", "Topic D"]]
@@ -699,7 +700,6 @@ def test_distinguish_topic_names_prompt_system_user_format():
         object_description,
         corpus_description,
         summary_kind,
-        prompt_format="system_user",
     )
 
     assert prompts["system"] == expected_system_prompt
@@ -751,7 +751,7 @@ def test_distinguish_topic_names_prompt_custom_template():
         exemplar_end_delimiter='"\n',
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_distinguish_topic_names_prompt_very_specific_summary():
@@ -799,7 +799,7 @@ def test_distinguish_topic_names_prompt_very_specific_summary():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
 def test_topic_name_prompt_general_summary():
@@ -845,60 +845,73 @@ def test_topic_name_prompt_general_summary():
         summary_kind,
     )
 
-    assert prompt == expected_prompt
+    assert prompt["combined"] == expected_prompt
 
 
-def test_topic_name_prompt_invalid_format():
-    topic_index = 0
-    layer_id = 1
-    all_topic_names = [["Topic A"], ["Topic B"]]
-    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
-    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = None
-    cluster_tree = None
-    object_description = "document"
-    corpus_description = "corpus"
-    summary_kind = "summary"
-
-    with pytest.raises(ValueError, match="Unsupported prompt_format"):
-        topic_name_prompt(
-            topic_index,
-            layer_id,
-            all_topic_names,
-            exemplar_texts,
-            keyphrases,
-            subtopics,
-            cluster_tree,
-            object_description,
-            corpus_description,
-            summary_kind,
-            prompt_format="invalid_format",
-        )
+def _simple_topic_name_prompt(**kwargs):
+    return topic_name_prompt(
+        0,
+        1,
+        [["Topic A"], ["Topic B"]],
+        [["Example text for Topic A"], ["Example text for Topic B"]],
+        [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
+        None,
+        None,
+        "document",
+        "corpus",
+        "summary",
+        **kwargs,
+    )
 
 
-def test_distinguish_topic_names_prompt_invalid_format():
-    topic_indices = np.array([0, 1])
-    layer_id = 1
-    all_topic_names = [["Topic A", "Topic B"], ["Topic C", "Topic D"]]
-    exemplar_texts = [["Example text for Topic A"], ["Example text for Topic B"]]
-    keyphrases = [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]]
-    subtopics = None
-    cluster_tree = None
-    object_description = "document"
-    corpus_description = "corpus"
-    summary_kind = "summary"
+def _simple_distinguish_topic_names_prompt(**kwargs):
+    return distinguish_topic_names_prompt(
+        np.array([0, 1]),
+        1,
+        [["Topic A", "Topic B"], ["Topic C", "Topic D"]],
+        [["Example text for Topic A"], ["Example text for Topic B"]],
+        [["keyphrase1", "keyphrase2"], ["keyphrase3", "keyphrase4"]],
+        None,
+        None,
+        "document",
+        "corpus",
+        "summary",
+        **kwargs,
+    )
 
-    with pytest.raises(ValueError, match="Unsupported prompt_format"):
-        distinguish_topic_names_prompt(
-            topic_indices,
-            layer_id,
-            all_topic_names,
-            exemplar_texts,
-            keyphrases,
-            subtopics,
-            cluster_tree,
-            object_description,
-            corpus_description,
-            summary_kind,
-            prompt_format="invalid_format",
-        )
+
+@pytest.mark.parametrize(
+    "make_prompt",
+    [_simple_topic_name_prompt, _simple_distinguish_topic_names_prompt],
+    ids=["topic_name", "distinguish_topic_names"],
+)
+def test_prompt_carries_every_rendering(make_prompt):
+    """A prompt carries every rendering, so the LLM wrapper can pick one."""
+    prompt = make_prompt()
+
+    assert set(prompt) == set(PROMPT_RENDERINGS)
+    assert all(isinstance(rendering, str) for rendering in prompt.values())
+    assert all(rendering for rendering in prompt.values())
+
+
+@pytest.mark.parametrize(
+    "make_prompt",
+    [_simple_topic_name_prompt, _simple_distinguish_topic_names_prompt],
+    ids=["topic_name", "distinguish_topic_names"],
+)
+def test_prompt_format_is_deprecated_and_ignored(make_prompt):
+    with pytest.warns(DeprecationWarning, match="prompt_format is deprecated"):
+        prompt = make_prompt(prompt_format="system_user")
+
+    assert prompt == make_prompt()
+
+
+def test_render_prompt_reports_a_missing_rendering():
+    partial_template_set = {
+        rendering: template
+        for rendering, template in PROMPT_TEMPLATES["layer"].items()
+        if rendering != "combined"
+    }
+
+    with pytest.raises(KeyError, match="missing the combined template"):
+        render_prompt(partial_template_set, {})

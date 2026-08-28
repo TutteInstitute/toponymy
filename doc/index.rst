@@ -63,6 +63,9 @@ and a tour of some of the richer functionality and uses cases.
    embedding_wrappers
    cluster_layers
 
+For an overview of Toponymy's internal design and extension points, see the
+`Toponymy Architecture <https://github.com/TutteInstitute/toponymy/wiki/Toponymy-Architecture>`_ wiki page.
+
 .. toctree::
    :maxdepth: 1
    :caption: Examples:

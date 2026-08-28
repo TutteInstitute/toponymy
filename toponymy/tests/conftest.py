@@ -1,18 +1,28 @@
 # conftest.py
-from pathlib import Path
 
-import numpy as np
-import pandas as pd
-import json
-import umap
-import pytest
+from pathlib import Path
 import httpx
+import json
+import litellm
+import logging
+import numpy as np
+import os
+import pandas as pd
+import psutil
+import pytest
+import requests
+import shutil
+import subprocess
+import time
+import umap
 
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
+from toponymy.tools.notebook_test_helpers import OLLAMA_CI_MODELS
 from toponymy.tests.helpers.llm_test_config import make_mock_data
-import litellm
+
+logger = logging.getLogger(__name__)
 
 # fallback to httpx transport for testing to avoid aiohttp issues in test environments
 litellm.disable_aiohttp_transport = True
@@ -46,13 +56,101 @@ def async_llm():
     # )
 
 
-def is_ollama_model_available(model_name):
+def ollama_has_model(model_or_family: str, family=False) -> bool:
+    """Check if the specified Ollama model or family is available locally."""
     try:
-        response = httpx.get("http://localhost:11434/api/tags")
-        models = [m["name"] for m in response.json()["models"]]
-        return any(model_name in m for m in models)
+        response = httpx.get("http://localhost:11434/api/tags", timeout=2.0)
+        response.raise_for_status()
+
+        models = [m["name"] for m in response.json().get("models", [])]
+
+        if family:
+            return any(m.startswith(model_or_family + ":") for m in models)
+        return any(m == model_or_family for m in models)
+
     except Exception:
         return False
+
+
+def _ollama_service_up() -> bool:
+    try:
+        response = httpx.get("http://localhost:11434/api/version", timeout=2)
+        response.raise_for_status()
+        return True
+    except Exception:
+        return False
+
+
+@pytest.fixture(scope="session")
+def _ollama_sufficient_resources():
+    """Skip tests if the machine doesn't have enough free memory/disk for Ollama.
+
+    Requirements are relaxed in CI environments.
+    """
+
+    is_ci = (
+        os.getenv("CI", "").lower() == "true"
+        or os.getenv("AZURE_PIPELINES", "").lower() == "true"
+    )
+
+    min_memory_gb = 3.0 if is_ci else 4.0
+    min_disk_gb = 1.5 if is_ci else 2.0
+
+    available_memory = psutil.virtual_memory().available / (1024**3)
+    available_disk = shutil.disk_usage("/tmp").free / (1024**3)
+
+    if available_memory < min_memory_gb:
+        pytest.skip(
+            f"Insufficient memory for Ollama test: {available_memory:.1f}GB < {min_memory_gb}GB required"
+        )
+    if available_disk < min_disk_gb:
+        pytest.skip(
+            f"Insufficient disk space for Ollama test: {available_disk:.1f}GB < {min_disk_gb}GB required"
+        )
+
+
+@pytest.fixture(scope="session")
+def ollama_running(_ollama_sufficient_resources) -> bool:
+    """Check if Ollama is installed and if the service is available. Try
+    to start `ollama serve` if it isn't already running, and tear it
+    down afterward -- but only if this fixture is what started it.
+    """
+    try:
+        subprocess.run(["ollama", "--version"], capture_output=True, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        logger.warning("Ollama not installed")
+        yield False
+        return
+
+    started_process: subprocess.Popen | None = None
+
+    if not _ollama_service_up():
+        try:
+            started_process = subprocess.Popen(
+                ["ollama", "serve"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            time.sleep(3)
+
+            if not _ollama_service_up():
+                started_process.terminate()
+                started_process.wait(timeout=5)
+                logger.warning("Could not start Ollama service for testing")
+                yield False
+                return
+        except Exception:
+            logger.warning("Could not start Ollama service for testing")
+            yield False
+            return
+    yield True
+
+    if started_process is not None:
+        logger.info("Stopping Ollama service that was started for testing")
+        started_process.terminate()
+        try:
+            started_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            started_process.kill()
+            started_process.wait()
 
 
 @pytest.fixture
@@ -216,3 +314,40 @@ def centroid_vectors(cluster_label_vector, topic_vectors):
 def premade_topic_model_path():
     file_path = Path(__file__).parent / "mock-20ng.tm.zip"
     return file_path
+
+
+@pytest.fixture(scope="session")
+def notebook_output_dir(tmp_path_factory):
+    return tmp_path_factory.mktemp("nb_outputs")
+
+
+@pytest.fixture(scope="function")
+def notebook_testing_env(notebook_output_dir):
+    """
+    Sets/unsets the NOTEBOOK_TESTING environment variable to signal
+    notebook_test_replacement decorator, and sets/unsets the OPENAI_API_KEY
+    to a non-existing key make sure live calls aren't made by accident.
+    """
+    old = os.environ.get("NOTEBOOK_TESTING")
+    old_openai = os.environ.get("OPENAI_API_KEY")
+    old_output_dir = os.environ.get("NB_TEST_OUTPUT_DIR")
+
+    os.environ["NOTEBOOK_TESTING"] = "true"
+    os.environ["OPENAI_API_KEY"] = "notarealkey"
+    os.environ["NB_TEST_OUTPUT_DIR"] = str(notebook_output_dir)
+
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("NOTEBOOK_TESTING", None)
+        else:
+            os.environ["NOTEBOOK_TESTING"] = old
+        if old_openai is None:
+            os.environ.pop("OPENAI_API_KEY", None)
+        else:
+            os.environ["OPENAI_API_KEY"] = old_openai
+        if old_output_dir is None:
+            os.environ.pop("NB_TEST_OUTPUT_DIR", None)
+        else:
+            os.environ["NB_TEST_OUTPUT_DIR"] = old_output_dir

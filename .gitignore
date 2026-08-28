@@ -1,6 +1,6 @@
-doc/.ipynb_checkpoints/arxiv_topic_labelling-checkpoint.ipynb
-topicnaming/.ipynb_checkpoints/llm_wrappers-checkpoint.py
-topicnaming/.ipynb_checkpoints/topic_naming-checkpoint.py
+# Jupyter checkpoints
+**/.ipynb_checkpoints/
+
 topicnaming.egg-info/dependency_links.txt
 topicnaming.egg-info/not-zip-safe
 topicnaming.egg-info/PKG-INFO
@@ -37,3 +37,4 @@ __pycache__/
 *.pyc
 *.pyo
 test-output.xml
+.env

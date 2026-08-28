@@ -6,10 +6,49 @@ from collections import defaultdict
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import pairwise_distances
 from toponymy.embedding_wrappers import TextEmbedderProtocol
+from toponymy._utils import handle_deprecated_prompt_format
 
 from typing import List, Optional, Any, Tuple, Union, Dict
 
 COSINE_DISTANCE_EPSILON = 1e-6
+
+# Every rendering of a prompt that an LLM wrapper might ask for. Prompts carry all
+# of them; the wrapper selects one at call time based on what its provider supports.
+PROMPT_RENDERINGS = ("system", "user", "combined")
+
+
+def render_prompt(
+    template_set: Dict[str, Any], render_params: Dict[str, Any]
+) -> Dict[str, str]:
+    """
+    Render every variant of a prompt that an LLM wrapper might need.
+
+    Parameters
+    ----------
+    template_set : Dict[str, Any]
+        A section of a prompt template set (for example ``PROMPT_TEMPLATES["layer"]``),
+        providing a jinja2 template for each entry of ``PROMPT_RENDERINGS``.
+    render_params : Dict[str, Any]
+        The parameters to render the templates with.
+
+    Returns
+    -------
+    prompt: Dict[str, str]
+        The rendered prompt, keyed by rendering.
+    """
+    missing = [key for key in PROMPT_RENDERINGS if key not in template_set]
+    if missing:
+        raise KeyError(
+            f"Prompt template set is missing the {', '.join(missing)} "
+            f"template(s). Prompt templates must provide all of "
+            f"{', '.join(PROMPT_RENDERINGS)} so that an LLM wrapper can select "
+            f"the rendering its provider supports."
+        )
+
+    return {
+        rendering: template_set[rendering].render(**render_params)
+        for rendering in PROMPT_RENDERINGS
+    }
 
 
 def find_threshold_for_max_cluster_size(
@@ -124,9 +163,9 @@ def distinguish_topic_names_prompt(
     max_num_exemplars: int = 128,
     exemplar_start_delimiter: str = '    * "',
     exemplar_end_delimiter: str = '"\n',
-    prompt_format: str = "combined",
+    prompt_format: Optional[str] = None,
     prompt_template: Optional[Dict[str, Any]] = None,
-) -> Union[str, Dict[str, str]]:
+) -> Dict[str, str]:
     """
     Construct a prompt for distinguishing between multiple topics.
 
@@ -163,17 +202,21 @@ def distinguish_topic_names_prompt(
     exemplar_end_delimiter : str, optional
         End delimiter for exemplar texts, by default "\"\n"
     prompt_format : str, optional
-        Format of the prompt, either "combined" or "system_user" to use a separate
-        system prompt, by default "combined".
+        Deprecated and ignored. Prompts now carry every rendering and the LLM
+        wrapper selects one at call time.
     prompt_template : Optional[str], optional
         Custom prompt template to use, by default None. If provided, this will override
-        the default prompt template.
+        the default prompt template. Custom templates must provide a template for each
+        of "system", "user" and "combined".
 
     Returns
     -------
-    prompt: str or dict
-        LLM Prompt for distinguishing between the topics.
+    prompt: dict
+        LLM Prompt for distinguishing between the topics, keyed by rendering
+        ("system", "user" and "combined").
     """
+    handle_deprecated_prompt_format(prompt_format)
+
     attempted_topic_names = [all_topic_names[layer_id][x] for x in topic_indices]
     unique_topic_names = list(dict.fromkeys(attempted_topic_names))
     if len(unique_topic_names) == 1:
@@ -254,16 +297,7 @@ def distinguish_topic_names_prompt(
     else:
         template_set = PROMPT_TEMPLATES["disambiguate_topics"]
 
-    if prompt_format == "system_user":
-        system_prompt = template_set["system"].render(**render_params)
-        user_prompt = template_set["user"].render(**render_params)
-        return {"system": system_prompt, "user": user_prompt}
-    elif prompt_format == "combined":
-        return template_set["combined"].render(**render_params)
-    else:
-        raise ValueError(
-            f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'."
-        )
+    return render_prompt(template_set, render_params)
 
 
 def topic_name_prompt(
@@ -282,7 +316,7 @@ def topic_name_prompt(
     max_num_exemplars: int = 128,
     exemplar_start_delimiter: str = '    * "',
     exemplar_end_delimiter: str = '"\n',
-    prompt_format: str = "combined",
+    prompt_format: Optional[str] = None,
     prompt_template: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, str]]:
     """
@@ -321,17 +355,22 @@ def topic_name_prompt(
     exemplar_end_delimiter : str, optional
         End delimiter for exemplar texts, by default "\"\n"
     prompt_format : str, optional
-        Format of the prompt, either "combined" or "system_user" to use a separate
-        system prompt, by default "combined".
+        Deprecated and ignored. Prompts now carry every rendering and the LLM
+        wrapper selects one at call time.
     prompt_template : Optional[str], optional
         Custom prompt template to use, by default None. If provided, this will override
-        the default prompt template.
+        the default prompt template. Custom templates must provide a template for each
+        of "system", "user" and "combined".
 
     Returns
     -------
-    prompt: str or dict
-        LLM Prompt for naming the topic.
+    prompt: dict or str
+        LLM Prompt for naming the topic, keyed by rendering ("system", "user" and
+        "combined"). A topic with a single already-named subtopic needs no LLM call,
+        and is returned instead as a "[!SKIP!]: <name>" string.
     """
+    handle_deprecated_prompt_format(prompt_format)
+
     if subtopics and cluster_tree is not None:
         tree_subtopics = (
             cluster_tree[(layer_id, topic_index)]
@@ -407,16 +446,7 @@ def topic_name_prompt(
     else:
         template_set = PROMPT_TEMPLATES["layer"]
 
-    if prompt_format == "system_user":
-        system_prompt = template_set["system"].render(**render_params)
-        user_prompt = template_set["user"].render(**render_params)
-        return {"system": system_prompt, "user": user_prompt}
-    elif prompt_format == "combined":
-        return template_set["combined"].render(**render_params)
-    else:
-        raise ValueError(
-            f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'."
-        )
+    return render_prompt(template_set, render_params)
 
 
 def topic_summary_prompt(
@@ -437,11 +467,11 @@ def topic_summary_prompt(
     max_num_exemplars: int = 128,
     exemplar_start_delimiter: str = '    * "',
     exemplar_end_delimiter: str = '"\n',
-    prompt_format: str = "combined",
+    prompt_format: Optional[str] = None,
     prompt_template: Optional[Dict[str, Any]] = None,
 ) -> Union[str, Dict[str, str]]:
     """
-    Construct a prompt for naming a topic.
+    Construct a prompt for naming and summarizing a topic.
 
     Parameters
     ----------
@@ -476,17 +506,23 @@ def topic_summary_prompt(
     exemplar_end_delimiter : str, optional
         End delimiter for exemplar texts, by default "\"\n"
     prompt_format : str, optional
-        Format of the prompt, either "combined" or "system_user" to use a separate
-        system prompt, by default "combined".
+        Deprecated and ignored. Prompts now carry every rendering and the LLM
+        wrapper selects one at call time.
     prompt_template : Optional[str], optional
         Custom prompt template to use, by default None. If provided, this will override
-        the default prompt template.
+        the default prompt template. Custom templates must provide a template for each
+        of "system", "user" and "combined".
 
     Returns
     -------
-    prompt: str or dict
-        LLM Prompt for naming the topic.
+    prompt: dict or str
+        LLM Prompt for naming and summarizing the topic, keyed by rendering
+        ("system", "user" and "combined"). A topic with a single already-named
+        subtopic needs no LLM call, and is returned instead as a "[!SKIP!]: ..."
+        string carrying its name, summary and explanation.
     """
+    handle_deprecated_prompt_format(prompt_format)
+
     if subtopics and cluster_tree is not None:
         tree_subtopics = (
             cluster_tree[(layer_id, topic_index)]
@@ -584,13 +620,4 @@ def topic_summary_prompt(
     else:
         template_set = SUMMARY_PROMPT_TEMPLATES["layer"]
 
-    if prompt_format == "system_user":
-        system_prompt = template_set["system"].render(**render_params)
-        user_prompt = template_set["user"].render(**render_params)
-        return {"system": system_prompt, "user": user_prompt}
-    elif prompt_format == "combined":
-        return template_set["combined"].render(**render_params)
-    else:
-        raise ValueError(
-            f"Unsupported prompt_format: {prompt_format}. Choose 'combined' or 'system_user'."
-        )
+    return render_prompt(template_set, render_params)
