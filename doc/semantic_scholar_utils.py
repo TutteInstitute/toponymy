@@ -69,7 +69,7 @@ class SemanticScholarAPI:
 
         # Smart defaults for rate limiting if not specified
         if request_delay is None:
-            self.request_delay = 3.0 if self.api_key else 10.0
+            self.request_delay = 10.0 if self.api_key else 10.0
         else:
             self.request_delay = request_delay
 
@@ -144,6 +144,12 @@ class SemanticScholarAPI:
 
     def _rate_limit(self):
         """Enforce rate limiting before every request."""
+        current_time = time.time()
+        if self.last_request_time > 0:
+            elapsed = current_time - self.last_request_time
+            print(f"    ⏱️  Elapsed since last request: {elapsed:.3f}s (sleeping {self.request_delay:.1f}s)")
+        else:
+            print(f"    ⏱️  First request (sleeping {self.request_delay:.1f}s)")
         time.sleep(self.request_delay)
 
     @retry(
@@ -167,15 +173,32 @@ class SemanticScholarAPI:
 
         Retries on HTTP 429 (rate limit), 5xx (server errors), and timeouts.
         """
+        # Truncate URL for cleaner output
+        display_url = url.replace(self.BASE_URL, "...") if url.startswith(self.BASE_URL) else url
+        print(f"\n  📡 {method} {display_url}")
+        
         self._rate_limit()
-
+        
+        request_start = time.time()
         if method.upper() == "GET":
             response = self.session.get(url, **kwargs)
         elif method.upper() == "POST":
             response = self.session.post(url, **kwargs)
         else:
             raise ValueError(f"Unsupported method: {method}")
-
+        
+        request_duration = time.time() - request_start
+        print(f"    ✓ {response.status_code} {response.reason} ({request_duration:.3f}s)")
+        
+        # Print interesting headers
+        if 'x-ratelimit-remaining' in response.headers:
+            print(f"    Rate limit remaining: {response.headers['x-ratelimit-remaining']}")
+        if 'x-ratelimit-reset' in response.headers:
+            print(f"    Rate limit resets: {response.headers['x-ratelimit-reset']}")
+        
+        # Update last_request_time AFTER the request completes for accurate inter-request timing
+        self.last_request_time = time.time()
+        
         response.raise_for_status()
         return response.json()
 
@@ -546,9 +569,9 @@ def build_citation_network(
         print(f"\nBuilding citation network for author {author_id}")
         print("=" * 60)
         if api_key:
-            print(f"✓ Using API key (rate limit: 1 request/3 sec)")
+            print(f"✓ Using API key (delay: {api.request_delay:.1f}s between requests)")
         else:
-            print(f"⚠ No API key - using conservative rate limit (1 request/10 sec)")
+            print(f"⚠ No API key (delay: {api.request_delay:.1f}s between requests)")
             print(
                 f"  Get an API key at https://www.semanticscholar.org/product/api for faster queries"
             )
