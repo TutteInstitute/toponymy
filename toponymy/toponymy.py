@@ -18,6 +18,8 @@ import numpy as np
 from tqdm.auto import tqdm
 
 from typing import List, Any, Optional, Type, Dict, Tuple
+from functools import partial
+import inspect
 
 
 class Toponymy:
@@ -134,8 +136,14 @@ class Toponymy:
 
         # If the default prompt template is used, but the layer class is ClusterLayerSummaryText, it is
         # reasonable to switch to the summary prompt templates, if not, the user may be passing their own.
+        # layer_class may also be a functools.partial wrapping the class (to preset per-layer keyword
+        # arguments), so look through the partial before checking the class itself.
+        base_layer_class = (
+            layer_class.func if isinstance(layer_class, partial) else layer_class
+        )
         if (
-            issubclass(layer_class, ClusterLayerSummaryText)
+            inspect.isclass(base_layer_class)
+            and issubclass(base_layer_class, ClusterLayerSummaryText)
             and prompt_template == PROMPT_TEMPLATES
         ):
             self.prompt_template = SUMMARY_PROMPT_TEMPLATES
