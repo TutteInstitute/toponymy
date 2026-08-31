@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import scipy.sparse as sp
 
-from toponymy.new_feature_extractor import TreeSHAPKeyphraseExtractor
+from toponymy.feature_extraction import TreeSHAPKeyphraseExtractor
 
 
 @pytest.mark.skipif(

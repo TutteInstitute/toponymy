@@ -9,7 +9,7 @@ from toponymy.response_parsing import ResponseParseError, extract_response, stri
 
 
 def _template_module():
-    import toponymy.new_templates as templates
+    import toponymy.templates as templates
 
     return templates
 

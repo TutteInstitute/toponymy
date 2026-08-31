@@ -1,17 +1,18 @@
 import pytest
 import numpy as np
 from unittest.mock import MagicMock, patch
-import sys
 
-# Import your module (assuming it's called embedders.py)
-# If your module has a different name, adjust this import
-sys.path.append(".")
-import toponymy.embedding_wrappers as embedders
+
+@pytest.fixture
+def embedders():
+    import toponymy.embedding_wrappers
+
+    return toponymy.embedding_wrappers
 
 
 class TestCohereEmbedder:
     @patch("cohere.ClientV2")
-    def test_encode(self, mock_client_v2):
+    def test_encode(self, mock_client_v2, embedders):
         # Set up mock response
         mock_client = MagicMock()
         mock_client_v2.return_value = mock_client
@@ -39,7 +40,7 @@ class TestCohereEmbedder:
         )
 
     @patch("cohere.ClientV2")
-    def test_legacy_co_api_key(self, mock_client_v2, monkeypatch):
+    def test_legacy_co_api_key(self, mock_client_v2, monkeypatch, embedders):
         # Verify that CO_API_KEY works with deprecation warning
         monkeypatch.delenv("COHERE_API_KEY", raising=False)
         monkeypatch.setenv("CO_API_KEY", "dummy")
@@ -55,7 +56,7 @@ class TestCohereEmbedder:
 
 class TestOpenAIEmbedder:
     @patch("openai.OpenAI")
-    def test_encode(self, mock_openai):
+    def test_encode(self, mock_openai, embedders):
         # Set up mock response
         mock_client = MagicMock()
         mock_openai.return_value = mock_client
@@ -85,7 +86,7 @@ class TestOpenAIEmbedder:
 
 class TestAnthropicEmbedder:
     @patch("anthropic.Anthropic")
-    def test_encode(self, mock_anthropic):
+    def test_encode(self, mock_anthropic, embedders):
         # Set up mock response
         mock_client = MagicMock()
         mock_anthropic.return_value = mock_client
@@ -113,7 +114,7 @@ class TestAnthropicEmbedder:
 
 class TestAzureAIEmbedder:
     @patch("azure.ai.inference.EmbeddingsClient")
-    def test_encode(self, mock_ai_client):
+    def test_encode(self, mock_ai_client, embedders):
         # Set up mock response
         mock_client = MagicMock()
         mock_ai_client.return_value = mock_client
@@ -154,7 +155,7 @@ class TestAzureAIEmbedder:
         assert len(kwargs["input"]) == 2
 
     @patch("azure.ai.inference.EmbeddingsClient")
-    def test_model_required(self, mock_ai_client):
+    def test_model_required(self, mock_ai_client, embedders):
         # Verify that model parameter is required
         with pytest.raises(
             ValueError,
@@ -169,7 +170,7 @@ class TestAzureAIEmbedder:
 
 class TestMistralEmbedder:
     @patch("toponymy.embedding_wrappers.mistralai.client.Mistral")
-    def test_encode(self, mock_mistral_client):
+    def test_encode(self, mock_mistral_client, embedders):
         # Set up mock response
         mock_client = MagicMock()
         mock_mistral_client.return_value = mock_client
@@ -201,7 +202,7 @@ class TestMistralEmbedder:
 
 class TestVoyageAIEmbedder:
     @patch("requests.post")
-    def test_encode(self, mock_post):
+    def test_encode(self, mock_post, embedders):
         # Set up mock response
         mock_response = MagicMock()
         mock_response.json.return_value = {

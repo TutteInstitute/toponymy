@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from toponymy.new_clustering import build_cluster_layers, build_cluster_tree
+from toponymy.clustering import build_cluster_layers, build_cluster_tree
 
 
 def test_grouping_preserves_original_ids_and_member_order():

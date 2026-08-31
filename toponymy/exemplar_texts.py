@@ -1,20 +1,14 @@
-from toponymy.new_feature_extractor import FeatureExtractorBase
-from toponymy.new_clustering import Clusterer
-import random
 import numpy as np
 import numba
-from typing import List, Tuple, FrozenSet, Dict, Callable, Any
-from sklearn.exceptions import NotFittedError
+from typing import List, Tuple, Callable, Any
 from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
-from sklearn.utils.validation import check_is_fitted
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
 from toponymy.utility_functions import centroids_from_labels
 
 
 from tqdm.auto import tqdm
-import math
 
 from apricot import SaturatedCoverageSelection
 
@@ -24,9 +18,6 @@ from apricot import SaturatedCoverageSelection
 # Author: Jacob Schreiber <jmschreiber91@gmail.com>
 
 from apricot.functions.base import BaseGraphSelection
-from apricot.optimizers import LazyGreedy
-from apricot.optimizers import ApproximateLazyGreedy
-from apricot.optimizers import SieveGreedy
 
 dtypes = [
     "void(float64[:,:], float64[:], float64[:], int64[:])",
@@ -269,7 +260,7 @@ class FacilityLocationSelection(BaseGraphSelection):
         self : FacilityLocationSelection
                 The fit step returns this selector object.
         """
-        if X.shape[0] > 4096:
+        if X.shape[0] > 4096 and self.metric != "precomputed":
             X_pairwise = KNeighborsTransformer(
                 n_neighbors=512, metric=self.metric
             ).fit_transform(X)
@@ -280,7 +271,10 @@ class FacilityLocationSelection(BaseGraphSelection):
             self.metric = "precomputed"
             try:
                 return super(FacilityLocationSelection, self).fit(
-                    X_pairwise, y=y, sample_weight=sample_weight, sample_cost=sample_cost
+                    X_pairwise,
+                    y=y,
+                    sample_weight=sample_weight,
+                    sample_cost=sample_cost,
                 )
             finally:
                 self.metric = original_metric
@@ -678,119 +672,3 @@ def diverse_exemplars(
         indices.append(chosen_original_indices)
 
     return results, indices
-
-
-class ExemplarTextExtractor(FeatureExtractorBase):
-    """
-    Selects exemplar texts from a collection of objects to represent clusters.
-
-    Notes
-    -----
-    The feature extractor should be first called with `.fit()`.
-
-    At each layer, exemplars can be extracted using `.predict()`.
-    """
-
-    def __init__(
-        self,
-    ):
-        super(ExemplarTextExtractor, self).__init__()
-
-    def can_fit_from_objects(self):
-        return True
-
-    def fit(
-        self,
-        objects: List[Any],
-        object_vectors: np.ndarray | None,
-    ):
-        self.is_fitted_ = True
-
-    def get_cluster_features(
-        self,
-        clusterer: Clusterer,
-        layer_id: int,
-        selection_method: str,
-        objects: List[Any],
-        object_vectors: np.ndarray | None,
-        **kwargs,
-    ) -> List[List[str]]:
-        """
-        Extracts exemplars for each cluster within a given cluster layer.
-
-        Parameters
-        ----------
-        clusterer: Clusterer
-            A fitted Clusterer with cluster layers.
-        layer_id: int
-            The ID of the current layer to get cluster features from.
-        selection_method: str
-            The method used to extract exemplars.
-            Choose from 'facility_location', 'saturated_coverage', 'random' or 'central'.
-        objects: List[Any]
-            A list of the objects within the clusters.
-        object_vectors: np.ndarray or None
-            High-dimensional vectors representing each of the objects.
-        **kwargs
-            Additional parameters relevant to the particular selection method.
-
-        Returns
-        -------
-        List[List[str]]
-            A list of exemplars for each cluster in the dataset.
-
-        Raises
-        ------
-        NotFittedError
-            If this function is called before fitting the model.
-
-        See Also
-        --------
-        diverse_exemplars
-        random_exemplars
-        submodular_selection_exemplars
-        """
-        try:
-            check_is_fitted(self)
-        except NotFittedError as exc:
-            raise NotFittedError(
-                f"Model not fitted. Please fit the model before trying to get cluster features."
-            )
-
-        cluster_layer = clusterer.layers[layer_id]
-        cluster_label_vector = cluster_layer.labels
-
-        if selection_method == "facility_location":
-            exemplars, indices = submodular_selection_exemplars(
-                cluster_label_vector,
-                objects,
-                object_vectors,
-                submodular_function=selection_method,
-                **kwargs,
-            )
-        elif selection_method == "saturated_coverage":
-            exemplars, indices = submodular_selection_exemplars(
-                cluster_label_vector,
-                objects,
-                object_vectors,
-                submodular_function=selection_method,
-                **kwargs,
-            )
-        elif selection_method == "random":
-            exemplars, indices = random_exemplars(
-                cluster_label_vector, objects, object_vectors, **kwargs
-            )
-        elif selection_method == "central":
-            exemplars, indices = diverse_exemplars(
-                cluster_label_vector, objects, object_vectors, **kwargs
-            )
-        else:
-            raise ValueError(
-                f"Unsupported selection method: {selection_method}. Please use one of the currently supported selection methods: {SUPPORTED_SELECTION_METHODS}"
-            )
-
-        for cluster in cluster_layer:
-            cluster.features = exemplars
-
-        return exemplars
-

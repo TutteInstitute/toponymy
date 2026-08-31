@@ -1,7 +1,7 @@
 import pytest
 
 from toponymy.response_parsing import ResponseParseError
-from toponymy.new_templates import (
+from toponymy.templates import (
     MultilingualENFRTemplate,
     TextTemplate,
     default_extract_topic_names,

@@ -456,6 +456,11 @@ class KeyphraseBuilder:
         else:
             object_texts = [self.object_to_text(obj) for obj in objects]
 
+        if not all(isinstance(text, str) for text in object_texts):
+            raise TypeError(
+                "Keyphrase extraction requires text or object_to_text returning strings"
+            )
+
         if self.verbose:
             print("Building keyphrase matrix ... ")
 
@@ -780,9 +785,7 @@ def central_keyphrases(
     ):
         # Sum over the cluster; get the non-zero indices
         base_candidate_indices = np.where(
-            np.ravel(
-                np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-            )
+            np.ravel(np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0)))
             > 0
         )[0]
 

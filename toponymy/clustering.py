@@ -1,859 +1,584 @@
+"""Validated clustering output and small adapters to maintained algorithms."""
+
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, NewType, Optional, Tuple, Type
+from collections.abc import Mapping, Sequence
+from typing import Iterator, Optional, Tuple
+import warnings
 
-import numba
 import numpy as np
-from fast_hdbscan import PLSCAN
-from fast_hdbscan.boruvka import parallel_boruvka
-from fast_hdbscan.cluster_trees import condense_tree, extract_leaves
-from fast_hdbscan.numba_kdtree import build_kdtree
-from sklearn.cluster import KMeans
-from sklearn.neighbors import KDTree
+from scipy import sparse
+from sklearn.base import BaseEstimator
+from sklearn.exceptions import NotFittedError
 
-from toponymy._utils import handle_verbose_params
-from toponymy.cluster_layer import ClusterLayer, ClusterLayerText
+from toponymy.utility_functions import centroids_from_labels as centroids_from_labels
 
-ClusterTree = NewType("ClusterTree", Dict[Tuple[int, int], List[Tuple[int, int]]])
-
-from fast_hdbscan.cluster_trees import get_cluster_label_vector
-
-
-@numba.njit(cache=True)
-def binary_search_for_n_clusters(
-    uncondensed_tree, approx_n_clusters, n_samples
-):  # pragma: no cover
-    lower_bound_min_cluster_size = 2
-    upper_bound_min_cluster_size = n_samples // 2
-    mid_min_cluster_size = int(
-        round((lower_bound_min_cluster_size + upper_bound_min_cluster_size) / 2.0)
-    )
-    min_n_clusters = 0
-
-    upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
-    leaves = extract_leaves(upper_tree)
-    upper_n_clusters = len(leaves)
-
-    lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
-    leaves = extract_leaves(lower_tree)
-    lower_n_clusters = len(leaves)
-
-    while upper_bound_min_cluster_size - lower_bound_min_cluster_size > 1:
-        mid_min_cluster_size = int(
-            round((lower_bound_min_cluster_size + upper_bound_min_cluster_size) / 2.0)
-        )
-        if (
-            mid_min_cluster_size == lower_bound_min_cluster_size
-            or mid_min_cluster_size == upper_bound_min_cluster_size
-        ):
-            break
-        mid_tree = condense_tree(uncondensed_tree, mid_min_cluster_size)
-        leaves = extract_leaves(mid_tree)
-        mid_n_clusters = len(leaves)
-
-        if mid_n_clusters < approx_n_clusters:
-            upper_bound_min_cluster_size = mid_min_cluster_size
-            upper_n_clusters = mid_n_clusters
-        elif mid_n_clusters >= approx_n_clusters:
-            lower_bound_min_cluster_size = mid_min_cluster_size
-            lower_n_clusters = mid_n_clusters
-
-    if abs(lower_n_clusters - approx_n_clusters) < abs(
-        upper_n_clusters - approx_n_clusters
-    ):
-        lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
-        leaves = extract_leaves(lower_tree)
-        clusters = get_cluster_label_vector(lower_tree, leaves, 0.0, n_samples)
-        return leaves, clusters
-    elif abs(lower_n_clusters - approx_n_clusters) > abs(
-        upper_n_clusters - approx_n_clusters
-    ):
-        upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
-        leaves = extract_leaves(upper_tree)
-        clusters = get_cluster_label_vector(upper_tree, leaves, 0.0, n_samples)
-        return leaves, clusters
-    else:
-        lower_tree = condense_tree(uncondensed_tree, lower_bound_min_cluster_size)
-        lower_leaves = extract_leaves(lower_tree)
-        lower_clusters = get_cluster_label_vector(
-            lower_tree, lower_leaves, 0.0, n_samples
-        )
-        upper_tree = condense_tree(uncondensed_tree, upper_bound_min_cluster_size)
-        upper_leaves = extract_leaves(upper_tree)
-        upper_clusters = get_cluster_label_vector(
-            upper_tree, upper_leaves, 0.0, n_samples
-        )
-
-        if np.sum(lower_clusters >= 0) > np.sum(upper_clusters >= 0):
-            return lower_leaves, lower_clusters
-        else:
-            return upper_leaves, upper_clusters
+from toponymy.types import (
+    Cluster,
+    ClusterLayer,
+    ClusterTree,
+    _integer_vector,
+    _nonnegative_integer,
+)
 
 
-def build_raw_cluster_layers(
-    data: np.ndarray,
-    *,
-    min_clusters: int = 3,
-    min_samples: int = 5,
-    base_min_cluster_size: int = 10,
-    base_n_clusters: Optional[int] = None,
-    next_cluster_size_quantile: float = 0.8,
-    max_layers: Optional[int] = None,
-    verbose: Optional[bool] = None,
-    n_threads: int = -1,
-) -> List[np.ndarray]:
-    """
-    Build hierarchical cluster layers from raw data using a KDTree and Boruvka's algorithm.
-
-    Parameters
-    ----------
-    data : np.ndarray
-        The input data array of shape (n_samples, n_features).
-    min_clusters : int, optional
-        The minimum number of clusters to form in each layer, by default 3.
-    min_samples : int, optional
-        The minimum number of samples in a cluster, by default 5.
-    base_min_cluster_size : int, optional
-        The initial minimum cluster size, by default 10.
-    base_n_clusters : Optional[int], optional
-        The initial number of clusters, by default None. If None, base_min_cluster_size is used.
-        If not None, this value will override base_min_cluster_size.
-    next_cluster_size_quantile : float, optional
-        The quantile to determine the next minimum cluster size, by default 0.8.
-    max_layers : Optional[int], optional
-        The maximum number of layers to create, by default None. If None, no limit is imposed.
-    verbose : Optional[bool], optional
-        Whether to print verbose output, by default None.
-    n_threads : int, optional
-        The number of threads to use for parallel computation, by default -1 (use all available cores).
-
-    Returns
-    -------
-    List[np.ndarray]
-        A list of numpy arrays, each representing cluster labels for a layer.
-    """
-    from fast_hdbscan.cluster_trees import mst_to_linkage_tree
-
-    n_samples = data.shape[0]
-    cluster_layers: List[np.ndarray] = []
-    min_cluster_size: np.signedinteger = np.intp(base_min_cluster_size)
-
-    numba_tree = build_kdtree(data.astype(np.float32))
-    edges, _, _ = parallel_boruvka(
-        numba_tree,
-        n_threads,
-        min_samples=min_cluster_size if min_samples is None else min_samples,
-        sample_weights=np.zeros(1, dtype=np.float32),
-        reproducible=False,
-    )
-    sorted_mst = edges[np.argsort(edges.T[2])]
-    uncondensed_tree = mst_to_linkage_tree(sorted_mst)
-    if base_n_clusters is not None:
-        leaves, clusters = binary_search_for_n_clusters(
-            uncondensed_tree, base_n_clusters, n_samples=n_samples
-        )
-        cluster_sizes = np.bincount(clusters[clusters >= 0])
-        min_cluster_size = np.min(cluster_sizes)
-    else:
-        new_tree = condense_tree(uncondensed_tree, base_min_cluster_size)
-        leaves = extract_leaves(new_tree)
-        clusters = get_cluster_label_vector(new_tree, leaves, 0.0, n_samples)
-
-    n_clusters_in_layer = clusters.max() + 1
-
-    if n_clusters_in_layer < min_clusters:
-        raise ValueError(
-            f"Not enough clusters found in the first layer: n_clusters_in_layer: {n_clusters_in_layer} < min_clusters: {min_clusters}. "
-            "Try reducing base_min_cluster_size."
-        )
-
-    # Handle verbose parameters
-    _, verbose_output = handle_verbose_params(verbose=verbose, default_verbose=False)
-
-    while n_clusters_in_layer >= min_clusters:
-        if max_layers is not None and len(cluster_layers) >= max_layers:
-            break
-        if verbose_output:
-            print(f"Layer {len(cluster_layers)} found {n_clusters_in_layer} clusters")
-        cluster_layers.append(clusters)
-        cluster_sizes = np.bincount(clusters[clusters >= 0])
-        next_min_cluster_size = np.intp(
-            np.quantile(cluster_sizes, next_cluster_size_quantile)
-        )
-        if next_min_cluster_size <= min_cluster_size + 1:
-            break
-        else:
-            min_cluster_size = next_min_cluster_size
-        new_tree = condense_tree(uncondensed_tree, min_cluster_size)
-        leaves = extract_leaves(new_tree)
-        clusters = get_cluster_label_vector(new_tree, leaves, 0.0, n_samples)
-        n_clusters_in_layer = clusters.max() + 1
-
-    return cluster_layers
-
-
-@numba.njit(cache=True)
-def _build_cluster_tree(labels: np.ndarray) -> List[Tuple[int, int, int, int]]:
-
-    mapping = [(-1, -1, -1, -1) for _ in range(0)]
-    found = [set([-1]) for _ in range(len(labels))]
-    for upper_layer in range(1, labels.shape[0]):
-        upper_layer_unique_labels = np.unique(labels[upper_layer])
-        for lower_layer in range(upper_layer - 1, -1, -1):
-            upper_cluster_order = np.argsort(labels[upper_layer])
-            cluster_groups = np.split(
-                labels[lower_layer][upper_cluster_order],
-                np.cumsum(np.bincount(labels[upper_layer] + 1))[:-1],
-            )
-            # If there is no noise we are off by one, and need to drop the first cluster group
-            if len(cluster_groups) > upper_layer_unique_labels.shape[0]:
-                cluster_groups = cluster_groups[1:]
-            for i, label in enumerate(upper_layer_unique_labels):
-                if label >= 0:
-                    for child in cluster_groups[i]:
-                        if child >= 0 and child not in found[lower_layer]:
-                            mapping.append((upper_layer, label, lower_layer, child))
-                            found[lower_layer].add(child)
-
-    for lower_layer in range(labels.shape[0] - 1, -1, -1):
-        for child in range(labels[lower_layer].max() + 1):
-            if child >= 0 and child not in found[lower_layer]:
-                mapping.append((labels.shape[0], 0, lower_layer, child))
-
-    return mapping
-
-
-def build_cluster_tree(
-    labels: List[np.ndarray],
-) -> Dict[Tuple[int, int], List[Tuple[int, int]]]:
-    """
-    Builds a cluster tree from the given labels.
-
-    Parameters
-    ----------
-    labels : List[np.ndarray]
-        A list of numpy arrays where each array represents the labels of clusters at a specific layer.
-
-    Returns
-    -------
-    ClusterTree
-        A dictionary where the keys are tuples representing the parent cluster (layer, cluster index)
-        and the values are lists of tuples representing the child clusters (layer, cluster index).
-    """
-    result: Dict[Tuple[int, int], List[Tuple[int, int]]] = {}
-    raw_mapping = _build_cluster_tree(np.vstack(labels))
-    for parent_layer, parent_cluster, child_layer, child_cluster in raw_mapping:
-        parent_name = (parent_layer, parent_cluster)
-        if parent_name in result:
-            result[parent_name].append((child_layer, child_cluster))
-        else:
-            result[parent_name] = [(child_layer, child_cluster)]
+def _validate_label_layers(labels: Sequence[np.ndarray]) -> list[np.ndarray]:
+    if isinstance(labels, np.ndarray) and labels.ndim != 2:
+        raise ValueError("labels must be a sequence of one-dimensional label layers")
+    result = [_integer_vector(layer, "labels", -1) for layer in labels]
+    if result and any(layer.size != result[0].size for layer in result[1:]):
+        raise ValueError("all label layers must have the same observation count")
     return result
 
 
-@numba.njit()
-def centroids_from_labels(
-    cluster_labels: np.ndarray, vector_data: np.ndarray
-) -> np.ndarray:  # pragma: no cover
-    result = np.zeros((cluster_labels.max() + 1, vector_data.shape[1]))
-    counts = np.zeros(cluster_labels.max() + 1)
-    for i in range(cluster_labels.shape[0]):
-        cluster_num = cluster_labels[i]
-        if cluster_num >= 0:
-            result[cluster_num] += vector_data[i]
-            counts[cluster_num] += 1
-
-    for i in range(result.shape[0]):
-        if counts[i] > 0:
-            result[i] /= counts[i]
-
-    return result
+def _group_labels(labels: np.ndarray):
+    indices = np.flatnonzero(labels >= 0)
+    order = indices[np.argsort(labels[indices], kind="stable")]
+    ids, starts = np.unique(labels[order], return_index=True)
+    return ids, starts, order
 
 
-def create_cluster_layers(
-    layer_class: Type[Any],
-    clusterable_vectors: np.ndarray,
-    embedding_vectors: np.ndarray,
-    min_clusters: int = 6,
-    min_samples: int = 5,
-    base_min_cluster_size: int = 10,
-    base_n_clusters: Optional[int] = None,
-    next_cluster_size_quantile: float = 0.8,
-    max_layers: Optional[int] = None,
-    verbose: Optional[bool] = None,
-    show_progress_bar: Optional[bool] = None,
-    n_threads: int = -1,
-    **layer_kwargs,
-) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
+def build_cluster_layers(labels: Sequence[np.ndarray]) -> list[ClusterLayer]:
+    """Group observations by original nonnegative IDs, excluding noise (-1).
+
+    Layers have equal observation counts. IDs must have integer dtype, need
+    not be contiguous, and are never used as allocation sizes. Empty layers
+    and all-noise layers are valid. Returned arrays are owned and read-only.
     """
-    Create cluster layers from given vectors and parameters.
-
-    Parameters
-    ----------
-    layer_class : Type[Any]
-        The class to be used for creating layers.
-    clusterable_vectors : np.ndarray
-        The vectors that can be clustered.
-    embedding_vectors : np.ndarray
-        The embedding vectors corresponding to the clusterable vectors.
-    min_clusters : int, optional
-        The minimum number of clusters to form in a layer (default is 6).
-    min_samples : int, optional
-        The minimum number of samples for hdbscan style clustering (default is 5).
-    base_min_cluster_size : int, optional
-        The base minimum size of clusters for the most fine-grained cluster layer (default is 10).
-    base_n_clusters : Optional[int], optional
-        The base number of clusters for the most fine-grained cluster layer (default is None).
-        If None then base_min_cluster_size is used; otherwise this value will override base_min_cluster_size.
-    next_cluster_size_quantile : float, optional
-        The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
-    max_layers : Optional[int], optional
-        The maximum number of layers to create (default is None). If None, no limit is imposed.
-    verbose : bool, optional
-        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
-    show_progress_bar : bool, optional, deprecated
-        Deprecated. Use verbose instead.
-    n_threads : int, optional
-        The number of threads to use for parallel computation (default is -1, use all available cores).
-    **layer_kwargs : Any
-        Any additional keyword arguments to be passed to the layer class.
-
-    Returns
-    -------
-    Tuple[List[Any], Dict[Tuple[int, int], List[Tuple[int, int]]]]
-        A tuple containing a list of created layers and a dictionary representing the cluster tree.
-    """
-    # Handle verbose parameters
-    show_progress_bar_val, verbose_val = handle_verbose_params(
-        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-    )
-
-    cluster_labels = build_raw_cluster_layers(
-        clusterable_vectors,
-        min_clusters=min_clusters,
-        min_samples=min_samples,
-        base_min_cluster_size=base_min_cluster_size,
-        base_n_clusters=base_n_clusters,
-        next_cluster_size_quantile=next_cluster_size_quantile,
-        max_layers=max_layers,
-        verbose=verbose_val,
-        n_threads=n_threads,
-    )
-    cluster_tree = build_cluster_tree(cluster_labels)
-    layers = [
-        layer_class(
-            labels,
-            centroids_from_labels(labels, embedding_vectors),
-            layer_id=i,
-            verbose=show_progress_bar_val,
-            show_progress_bar=show_progress_bar_val,
-            **layer_kwargs,
+    layers = []
+    for layer_index, layer_labels in enumerate(_validate_label_layers(labels)):
+        ids, starts, order = _group_labels(layer_labels)
+        members = np.split(order, starts[1:])
+        clusters = tuple(
+            Cluster(int(label), group) for label, group in zip(ids, members)
         )
-        for i, labels in enumerate(cluster_labels)
-    ]
-    return layers, cluster_tree
+        layers.append(ClusterLayer(clusters, layer_index, layer_labels))
+    return layers
 
 
-class Clusterer(ABC):
+def build_cluster_tree(labels: Sequence[np.ndarray]) -> ClusterTree:
+    """Attach each cluster to its nearest fully containing upper cluster.
 
-    def __init__(self):
-        pass
+    Crossing clusters and clusters covered partly by upper-layer noise skip
+    that layer. Clusters without a containing ancestor attach to the synthetic
+    root ``(number_of_layers, 0)``. No nodes are invented for absent IDs.
+    """
+    labels = _validate_label_layers(labels)
+    tree: ClusterTree = {}
+    root = (len(labels), 0)
+    for lower_index, lower in enumerate(labels):
+        ids, starts, order = _group_labels(lower)
+        if not ids.size:
+            continue
+        unresolved = np.ones(ids.size, dtype=bool)
+        for upper_index in range(lower_index + 1, len(labels)):
+            upper = labels[upper_index][order]
+            minimum = np.minimum.reduceat(upper, starts)
+            maximum = np.maximum.reduceat(upper, starts)
+            contained = unresolved & (minimum >= 0) & (minimum == maximum)
+            for child_id, parent_id in zip(ids[contained], minimum[contained]):
+                parent = (upper_index, int(parent_id))
+                tree.setdefault(parent, []).append((lower_index, int(child_id)))
+            unresolved[contained] = False
+            if not unresolved.any():
+                break
+        for child_id in ids[unresolved]:
+            tree.setdefault(root, []).append((lower_index, int(child_id)))
+    return tree
+
+
+def validate_cluster_tree(tree: ClusterTree, layers: Sequence[ClusterLayer]) -> None:
+    """Reject unknown nodes, duplicate parents, missing nodes and false edges.
+
+    Strictly increasing parent layer indices also rule out cycles. A supplied
+    tree may skip a containing layer, but every edge must be true containment.
+    """
+    if not isinstance(tree, Mapping):
+        raise TypeError("cluster_tree must be a mapping")
+    if any(
+        not isinstance(layer, ClusterLayer) or layer.layer_index != i
+        for i, layer in enumerate(layers)
+    ):
+        raise ValueError("layers must be ClusterLayers in consecutive index order")
+    if layers and any(len(layer.labels) != len(layers[0].labels) for layer in layers):
+        raise ValueError("all label layers must have the same observation count")
+    clusters = {
+        (layer.layer_index, cluster.label): cluster
+        for layer in layers
+        for cluster in layer
+    }
+    root = (len(layers), 0)
+
+    def check_key(key):
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise ValueError("tree nodes must be (layer, cluster ID) tuples")
+        for value in key:
+            _nonnegative_integer(value, "tree node index")
+
+    children_seen = set()
+    for parent, children in tree.items():
+        check_key(parent)
+        if parent != root and parent not in clusters:
+            raise ValueError(f"unknown parent cluster {parent}")
+        if not isinstance(children, (list, tuple)):
+            raise ValueError("tree children must be a list or tuple")
+        for child in children:
+            check_key(child)
+            if child not in clusters:
+                raise ValueError(f"unknown child cluster {child}")
+            if parent[0] <= child[0]:
+                raise ValueError("parent layer must be strictly above its child")
+            if child in children_seen:
+                raise ValueError(f"cluster {child} must have exactly one parent")
+            children_seen.add(child)
+            if parent != root and not np.all(
+                layers[parent[0]].labels[clusters[child].members] == parent[1]
+            ):
+                raise ValueError(f"parent {parent} does not contain child {child}")
+    if children_seen != clusters.keys():
+        raise ValueError("every cluster must occur exactly once as a child")
+
+
+def _validate_vectors(vectors, *, precomputed: bool = False):
+    """Validate without copying large matrices; estimators own their work arrays."""
+    if sparse.issparse(vectors):
+        if not precomputed:
+            raise ValueError("sparse vectors require metric='precomputed'")
+        array = vectors.tocsr(copy=False)
+        values = array.data
+    else:
+        if precomputed:
+            raise ValueError("metric='precomputed' requires a sparse distance graph")
+        array = np.asarray(vectors)
+        values = array
+    if array.ndim != 2 or (array.shape[1] == 0 and array.shape[0] != 0):
+        raise ValueError("vectors must have shape (observations, nonzero dimensions)")
+    if values.dtype.kind not in "iuf" or not np.isfinite(values).all():
+        raise ValueError("vectors must contain finite real numbers")
+    if precomputed and (array.shape[0] != array.shape[1] or np.any(values < 0)):
+        raise ValueError("a precomputed distance graph must be square and nonnegative")
+    return array
+
+
+class Clusterer(ABC, BaseEstimator):
+    """Estimator whose fitted state consists of cluster layers and their tree."""
 
     @abstractmethod
-    def fit(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer],
-        **layer_kwargs,
-    ):
-        pass
+    def fit(self, data, **kwargs):
+        """Fit this estimator and return it."""
 
-    @abstractmethod
-    def fit_predict(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer],
-        **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
-        pass
+    def fit_predict(self, data=None, **kwargs):
+        self.fit(data, **kwargs)
+        return self.cluster_layers_, self.cluster_tree_
 
+    def __iter__(self) -> Iterator[ClusterLayer]:
+        if not self.__sklearn_is_fitted__():
+            raise NotFittedError("fit the clusterer before iterating its layers")
+        return iter(self.cluster_layers_)
 
-class ToponymyClusterer(Clusterer):
-    """
-    A class for clustering data using a layered version of HDBSCAN.
+    def __sklearn_is_fitted__(self):
+        return hasattr(self, "cluster_layers_") and hasattr(self, "cluster_tree_")
 
-    Parameters
-    ----------
-    min_clusters : int, optional
-        The minimum number of clusters to form in a layer (default is 6).
-    min_samples : int, optional
-        The minimum number of samples for hdbscan style clustering (default is 5).
-    base_min_cluster_size : int, optional
-        The base minimum size of clusters for the most fine-grained cluster layer (default is 10).
-    base_n_clusters : Optional[int], optional
-        The base number of clusters for the most fine-grained cluster layer (default is None).
-        If None then base_min_cluster_size is used; otherwise this value will override base_min_cluster_size.
-    next_cluster_size_quantile : float, optional
-        The quantile value to determine the size of the minimum cluster size for the next layer (default is 0.8).
-    max_layers : Optional[int], optional
-        The maximum number of layers to create (default is None). If None, no limit is imposed.
-    verbose : bool, optional
-        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
-    show_progress_bar : bool, optional, deprecated
-        Deprecated. Use verbose instead.
-    n_threads : int, optional
-        The number of threads to use for parallel computation (default is -1, use all available cores).
-
-    Attributes
-    ----------
-    cluster_layers_ : List[ClusterLayer]
-        A list of the created cluster layers.
-    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
-        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of
-        tuples representing child clusters.
-    """
-
-    def __init__(
-        self,
-        min_clusters: int = 6,
-        min_samples: int = 5,
-        base_min_cluster_size: Optional[int] = 10,
-        base_n_clusters: Optional[int] = None,
-        next_cluster_size_quantile: float = 0.85,
-        max_layers: Optional[int] = None,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        n_threads: int = -1,
-    ):
-        super().__init__()
-        self.min_clusters = min_clusters
-        self.min_samples = min_samples
-        self.base_min_cluster_size = base_min_cluster_size
-        self.base_n_clusters = base_n_clusters
-        self.next_cluster_size_quantile = next_cluster_size_quantile
-        self.n_threads = n_threads
-        self.max_layers = max_layers
-
-        # Handle verbose parameters
-        _, self.verbose = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
-
-        if self.base_min_cluster_size is None and self.base_n_clusters is None:
-            raise ValueError(
-                "Either base_min_cluster_size or base_n_clusters must be provided."
-            )
-
-    def fit(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        **layer_kwargs,
-    ) -> Clusterer:
-        self.cluster_layers_, self.cluster_tree_ = create_cluster_layers(
-            layer_class,
-            clusterable_vectors=clusterable_vectors,
-            embedding_vectors=embedding_vectors,
-            min_clusters=self.min_clusters,
-            min_samples=self.min_samples,
-            base_min_cluster_size=(
-                self.base_min_cluster_size
-                if self.base_min_cluster_size is not None
-                else 10
-            ),
-            base_n_clusters=self.base_n_clusters,
-            next_cluster_size_quantile=self.next_cluster_size_quantile,
-            max_layers=self.max_layers,
-            verbose=verbose if verbose is not None else self.verbose,
-            show_progress_bar=show_progress_bar,
-            n_threads=self.n_threads,
-            **layer_kwargs,
-        )
+    def _set_labels(self, labels, *, tree=None):
+        layers = build_cluster_layers(labels)
+        if tree is None:
+            tree = build_cluster_tree([layer.labels for layer in layers])
+        validate_cluster_tree(tree, layers)
+        self.cluster_layers_ = layers
+        self.cluster_tree_ = {parent: list(children) for parent, children in tree.items()}
         return self
 
-    def fit_predict(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
-        self.fit(
-            clusterable_vectors,
-            embedding_vectors,
-            layer_class=layer_class,
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            **layer_kwargs,
+
+class PrecomputedClusterer(Clusterer):
+    """Use precomputed label layers, preserving their IDs and observation order.
+
+    Supply labels at construction for use in a pipeline: ``fit(vectors)`` then
+    validates the observation count without interpreting vectors as labels.
+    Without configured labels, ``fit(label_layers)`` retains the earlier API.
+    Explicit ``fit(vectors, labels=label_layers)`` is also supported.
+    """
+
+    def __init__(self, labels=None, cluster_tree=None):
+        self.labels = None if labels is None else _validate_label_layers(labels)
+        if self.labels is not None:
+            for layer in self.labels:
+                layer.flags.writeable = False
+        self.cluster_tree = (
+            None
+            if cluster_tree is None
+            else {parent: list(children) for parent, children in cluster_tree.items()}
         )
-        return self.cluster_layers_, self.cluster_tree_
+
+    def __sklearn_clone__(self):
+        return type(self)(labels=self.labels, cluster_tree=self.cluster_tree)
+
+    def fit(self, data=None, *, labels=None):
+        configured = labels if labels is not None else self.labels
+        if configured is None:
+            if data is None:
+                raise ValueError("supply precomputed labels at construction or fit")
+            configured = _validate_label_layers(data)
+        else:
+            configured = _validate_label_layers(configured)
+            if data is not None:
+                vectors = _validate_vectors(data, precomputed=sparse.issparse(data))
+                if configured and vectors.shape[0] != configured[0].size:
+                    raise ValueError("vectors and labels must have the same observation count")
+        return self._set_labels(configured, tree=self.cluster_tree)
 
 
 class KMeansClusterer(Clusterer):
-    """
-    A class for clustering data in layers using KMeans. This class is mostly to demonstrate how one might write
-    an alternative Clusterer to the ToponymyClusterer (which uses a variation of HDBCSCAN). We recommend using the
-    ToponymyClusterer in practice.
+    """Fit independent KMeans resolutions, reducing cluster counts by four.
 
-    Parameters
-    ----------
-    min_clusters : int, optional
-        The minimum number of clusters to form in a layer (default is 6).
-    base_n_clusters : int, optional
-        The initial number of clusters for the most fine-grained cluster layer (default is 1024).
-
-    Attributes
-    ----------
-    cluster_layers_ : List[ClusterLayer]
-        A list of the created cluster layers.
-    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
-        A dictionary representing the cluster tree. Keys are a tuple of (layer, cluster index) and values are lists of
-        tuples representing child clusters.
+    The tree uses containment, since independently fitted resolutions need not
+    nest. The finest layer is capped at the observation count.
     """
 
     def __init__(
-        self,
-        min_clusters: int = 6,
-        base_n_clusters: int = 1024,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
+        self, min_clusters=6, base_n_clusters=1024, random_state=None, verbose=None
     ):
-        super().__init__()
         self.min_clusters = min_clusters
         self.base_n_clusters = base_n_clusters
+        self.random_state = random_state
+        self.verbose = verbose
 
-        # Handle verbose parameters
-        _, self.verbose = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
+    def fit(self, vectors, verbose=None):
+        from sklearn.cluster import KMeans
 
-    def fit(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        **layer_kwargs,
-    ) -> Clusterer:
-        # Handle verbose parameters
-        _, verbose_output = handle_verbose_params(
-            verbose=verbose if verbose is not None else self.verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False,
-        )
-
-        n_clusters = self.base_n_clusters
-        cluster_label_layers: List[np.ndarray] = []
-
-        while n_clusters >= self.min_clusters:
-            if verbose_output:
-                print(f"Layer {len(cluster_label_layers)} found {n_clusters} clusters")
-            kmeans = KMeans(n_clusters=n_clusters)
-            cluster_labels = kmeans.fit_predict(clusterable_vectors)
-            cluster_label_layers.append(cluster_labels)
-            n_clusters //= 4
-
-        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
-        self.cluster_layers_ = [
-            layer_class(
-                labels,
-                centroids_from_labels(labels, embedding_vectors),
-                layer_id=i,
-                verbose=verbose if verbose is not None else False,
-                show_progress_bar=(
-                    show_progress_bar if show_progress_bar is not None else False
-                ),
-                **layer_kwargs,
+        vectors = _validate_vectors(vectors)
+        for name in ("min_clusters", "base_n_clusters"):
+            value = _nonnegative_integer(getattr(self, name), name)
+            if value == 0:
+                raise ValueError(f"{name} must be positive")
+        if self.base_n_clusters < self.min_clusters:
+            raise ValueError("base_n_clusters must be at least min_clusters")
+        if not vectors.shape[0]:
+            return self._set_labels([])
+        n_clusters = min(self.base_n_clusters, vectors.shape[0])
+        labels = []
+        while not labels or n_clusters >= self.min_clusters:
+            estimator = KMeans(
+                n_clusters=n_clusters,
+                random_state=self.random_state,
+                verbose=bool(self.verbose if verbose is None else verbose),
             )
-            for i, labels in enumerate(cluster_label_layers)
-        ]
-        return self
+            labels.append(estimator.fit_predict(vectors))
+            n_clusters //= 4
+            if n_clusters == 0:
+                break
+        return self._set_labels(labels)
 
-    def fit_predict(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
-        self.fit(
-            clusterable_vectors,
-            embedding_vectors,
-            layer_class=layer_class,
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            **layer_kwargs,
-        )
-        return self.cluster_layers_, self.cluster_tree_
+
+def _validate_density_parameters(estimator):
+    for name in ("min_samples", "base_min_cluster_size", "max_layers"):
+        value = _nonnegative_integer(getattr(estimator, name), name)
+        if value < (2 if name == "base_min_cluster_size" else 1):
+            raise ValueError(f"{name} is too small")
+
 
 
 class PLSCANClusterer(Clusterer):
     """
-    A class for clustering dense vector data in layers using fast_hdbscan.PLSCAN.
+    A wrapper class for using fast_hdbscan.PLSCAN.
 
     Parameters
     ----------
-    min_clusters : int, optional
-        The minimum number of non-noise clusters to keep in a layer (default is 6).
-    min_samples : int, optional
-        The minimum number of samples used by PLSCAN (default is 5).
-    base_min_cluster_size : int, optional
-        The base minimum cluster size passed to PLSCAN (default is 10).
-    max_layers : Optional[int], optional
-        The maximum number of hierarchy layers to keep (default is 10).
-    verbose : bool, optional
-        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
-    show_progress_bar : bool, optional, deprecated
-        Deprecated. Use verbose instead.
+    min_samples : int, default=5
+        The number of samples in a neighbourhood for a point to be considered
+        a core point.  This controls the level of smoothing applied to the
+        density estimate.
+
+    max_layers : int, default=10
+        Maximum number of cluster resolution layers to return (including the
+        base layer).
+
+    base_min_cluster_size : int, default=5
+        The minimum cluster size used when constructing the initial condensed
+        tree.  Clusters smaller than this are treated as noise.
+
+    base_n_clusters : int or None, default=None
+        If set, the base layer is constructed by binary-searching for a
+        ``min_cluster_size`` that yields approximately this many clusters.
+        When ``None``, ``base_min_cluster_size`` is used directly.
+
+    layer_similarity_threshold : float, default=0.2
+        Minimum dissimilarity between selected resolution layers.  Lower
+        values produce more diverse layers; higher values allow more similar
+        layers to coexist.
+
+    reproducible : bool, default=False
+        If ``True``, use a slower but deterministic algorithm for the
+        minimum spanning tree computation so that results are reproducible
+        across runs.
+
+    metric : str, default='euclidean'
+        The distance metric to use.  ``'euclidean'`` uses a fast KD-tree
+        implementation.  ``'precomputed'`` expects a sparse distance graph
+        as input.  Any other metric supported by ``pynndescent`` may be
+        used, but requires ``pynndescent`` to be installed.
+
+    algorithm : str, default='boruvka'
+        The MST algorithm to use.  Must be ``'boruvka'`` or ``'kruskal'``.
+        ``'kruskal'`` is required when using ``cannot_link`` constraints.
+
+    knn_k : int or None, default=None
+        Number of nearest neighbours to compute when building the MST.
+        When ``None``, a suitable default is chosen automatically.
+
+    cannot_link : array-like or None, default=None
+        An array of pairs ``(i, j)`` of sample indices that must not be
+        placed in the same cluster.  Only supported with
+        ``algorithm='kruskal'``.
+
+    validate_cannot_link : bool, default=True
+        Whether to validate ``cannot_link`` constraints before clustering.
+
+    metric_kwds : dict or None, default=None
+        Additional keyword arguments to pass to the distance metric.
+
+    verbose : bool, default=False
+        If ``True``, print progress messages during fitting.
 
     Attributes
     ----------
     cluster_layers_ : List[ClusterLayer]
         A list of the created cluster layers.
+
     cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
         A dictionary representing the cluster tree.
-    cluster_probabilities_ : List[np.ndarray]
-        Membership probabilities for each returned layer.
-    cluster_persistence_scores_ : List[float]
-        Persistence scores for each returned layer.
-    plscan_min_cluster_sizes_ : Optional[np.ndarray]
-        The minimum cluster sizes explored by PLSCAN, when exposed by the
-        upstream implementation.
+
+    plscan_ : PLSCAN
+        The fitted PLSCAN object. Algorithm specific attributes saved
+        during the fit process can be accessed here.
+
     """
 
     def __init__(
         self,
-        min_clusters: int = 6,
         min_samples: int = 5,
-        base_min_cluster_size: int = 10,
-        max_layers: Optional[int] = 10,
+        max_layers: int = 10,
+        base_min_cluster_size: int = 5,
+        base_n_clusters: Optional[int] = None,
+        layer_similarity_threshold: float = 0.2,
+        reproducible: bool = False,
+        metric: str = "euclidean",
+        algorithm: str = "boruvka",
+        knn_k: Optional[int] = None,
+        cannot_link: Optional[list[Tuple[int, int]]] = None,
+        validate_cannot_link: bool = True,
+        metric_kwds: dict or None = None,
         verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
     ):
         super().__init__()
-        self.min_clusters = min_clusters
         self.min_samples = min_samples
-        self.base_min_cluster_size = base_min_cluster_size
         self.max_layers = max_layers
+        self.base_min_cluster_size = base_min_cluster_size
+        self.base_n_clusters = base_n_clusters
+        self.layer_similarity_threshold = layer_similarity_threshold
+        self.reproducible = reproducible
+        self.metric = metric
+        self.algorithm = algorithm
+        self.knn_k = knn_k
+        self.cannot_link = cannot_link
+        self.validate_cannot_link = validate_cannot_link
+        self.metric_kwds = metric_kwds
+        self.verbose = verbose
 
-        _, self.verbose = handle_verbose_params(
-            verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-        )
+    def fit(self, vectors: np.ndarray, verbose: Optional[bool] = None):
+        vectors = _validate_vectors(vectors, precomputed=self.metric == "precomputed")
+        _validate_density_parameters(self)
+        if not vectors.shape[0]:
+            self.plscan_ = None
+            return self._set_labels([])
+        if vectors.shape[0] < max(2, self.min_samples, self.base_min_cluster_size):
+            self.plscan_ = None
+            return self._set_labels([np.full(vectors.shape[0], -1, dtype=np.int64)])
+        from fast_hdbscan import PLSCAN
 
-    def fit(
-        self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        **layer_kwargs,
-    ) -> Clusterer:
-        show_progress_bar_val, verbose_output = handle_verbose_params(
-            verbose=verbose if verbose is not None else self.verbose,
-            show_progress_bar=show_progress_bar,
-            default_verbose=False,
-        )
-
-        # Normalize clustering inputs for the upstream PLSCAN engine; keep
-        # embedding_vectors untouched for Toponymy centroid construction.
-        clusterable_vectors = np.ascontiguousarray(
-            clusterable_vectors, dtype=np.float32
-        )
-
-        self.plscan_ = PLSCAN(
-            min_samples=self.min_samples,
-            base_min_cluster_size=self.base_min_cluster_size,
-            max_layers=self.max_layers,
-            verbose=verbose_output,
-        )
-        self.plscan_.fit(clusterable_vectors)
-
-        raw_cluster_layers = zip(
-            self.plscan_.cluster_layers_,
-            self.plscan_.membership_strength_layers_,
-            self.plscan_.layer_persistence_scores_,
-        )
-        filtered_cluster_layers = []
-        for labels, probabilities, persistence_score in raw_cluster_layers:
-            # Normalize labels to be contiguous, preserving noise as -1
-            unique_labels, inverse = np.unique(labels, return_inverse=True)
-            if unique_labels.size > 0 and unique_labels[0] == -1:
-                labels = inverse - 1
-            else:
-                labels = inverse
-
-            n_clusters_in_layer = labels.max() + 1
-            if n_clusters_in_layer < self.min_clusters:
-                continue
-            if self.verbose:
-                print(
-                    f"Layer {len(filtered_cluster_layers)} found {n_clusters_in_layer} clusters"
-                )
-            filtered_cluster_layers.append((labels, probabilities, persistence_score))
-            if (
-                self.max_layers is not None
-                and len(filtered_cluster_layers) >= self.max_layers
-            ):
-                break
-
-        if len(filtered_cluster_layers) == 0:
-            raise ValueError(
-                "Not enough clusters found in any PLSCAN layer: "
-                f"min_clusters={self.min_clusters}."
-            )
-
-        cluster_label_layers = [labels for labels, _, _ in filtered_cluster_layers]
-        self.cluster_probabilities_ = [
-            probabilities for _, probabilities, _ in filtered_cluster_layers
-        ]
-        self.cluster_persistence_scores_ = [
-            persistence_score for _, _, persistence_score in filtered_cluster_layers
-        ]
-        self.plscan_min_cluster_sizes_ = getattr(
-            self.plscan_, "min_cluster_sizes_", None
-        )
-        self.cluster_tree_ = build_cluster_tree(cluster_label_layers)
-        self.cluster_layers_ = [
-            layer_class(
-                labels,
-                centroids_from_labels(labels, embedding_vectors),
-                layer_id=i,
-                verbose=show_progress_bar_val,
-                show_progress_bar=show_progress_bar_val,
-                **layer_kwargs,
-            )
-            for i, labels in enumerate(cluster_label_layers)
-        ]
+        options = self.get_params(deep=False)
+        options["verbose"] = bool(self.verbose if verbose is None else verbose)
+        estimator = PLSCAN(**options)
+        estimator.fit(vectors)
+        self._set_labels(estimator.cluster_layers_)
+        self.plscan_ = estimator
         return self
 
-    def fit_predict(
+
+class EVoCClusterer(Clusterer):
+    """
+    A wrapper class for using the EVoC clustering algorithm. Use EVoC (Embedding
+    Vector Oriented Clustering) for efficient clustering of high-dimensional
+    embedding vectors, such as CLIP-vectors, sentence-transformers output, etc. The
+    clustering uses a combination of a node embedding of a nearest neighbour graph,
+    related to UMAP, and a density based clustering approach related to HDBSCAN,
+    improving upon those approaches in efficiency and quality for the specific case
+    of high-dimensional embedding vectors.
+
+    Parameters
+    ----------
+
+    noise_level : float, default=0.5
+        The noise level expected in the data. A value of 0.0 will try to cluster
+        more data, at the expense of getting less accurate clustering. A value of
+        1.0 will try for accurate clusters, discarding more data as noise to do so.
+
+    base_min_cluster_size : int, default=5
+        The minimum number of points in a cluster at the base layer of the clustering.
+        This gives the finest granularity clustering that will be returned, with less
+        granularity at higher layers.
+
+    base_n_clusters : int or None, default=None
+        If not None, the algorithm will attempt to find the granularity of
+        clustering that will give exactly this many clusters for the bottom-most layer
+        of clustering. This affects the base layer computation and allows multiple
+        layers to be built on top of this base. Since the actual number of clusters
+        cannot be guaranteed this is only approximate, but usually the algorithm can
+        manage to get this exact number, assuming a reasonable clustering into
+        ``base_n_clusters`` exists.
+
+    approx_n_clusters : int, default=None
+        If not None, the algorithm will attempt to find the granularity of
+        clustering that will give exactly this many clusters as the final output.
+        Unlike ``base_n_clusters``, when this parameter is set, only a single
+        clustering layer will be returned -- no hierarchical layers will be produced.
+        This is useful when you know the exact number of clusters you want and don't
+        need the multi-layer analysis. Since the actual number of clusters cannot be
+        guaranteed this is only approximate, but usually the algorithm can manage to
+        get this exact number, assuming a reasonable clustering into ``approx_n_clusters``
+        exists.
+
+    n_neighbors : int, default=15
+        The number of neighbors to use in the nearest neighbor graph construction.
+
+    min_samples : int, default=5
+        The minimum number of samples to use in the density estimation when
+        performing density based clustering on the node embedding.
+
+    n_epochs : int, default=50
+        The number of epochs to use when training the node embedding.
+
+    node_embedding_init : str or None, default='label_prop'
+        The method to use to initialize the node embedding. If None, no initialization
+        will be used. If 'label_prop', the label propagation method will be used.
+
+    symmetrize_graph : bool, default=True
+        Whether to symmetrize the nearest neighbor graph before using it to
+        construct the node embedding.
+
+    node_embedding_dim : int or None, default=None
+        The number of dimensions to use in the node embedding. If None, a default
+        value of min(max(n_neighbors // 4, 4), 15) will be used.
+
+    neighbor_scale : float, default=1.0
+        The scale factor to use when constructing the nearest neighbor graph. This
+        multiplies the effective number of neighbors used in graph construction
+        (neighbor_scale * n_neighbors). Values > 1.0 create denser graphs with more
+        connectivity, potentially capturing more global structure but at increased
+        computational cost. Values < 1.0 create sparser graphs focused on local
+        structure.
+
+    random_state : int or None, default=None
+        The random seed to use for the random number generator. If None, the random
+        number generator will not be seeded and will use the system time as the seed.
+
+    min_similarity_threshold : float, default=0.2
+        The minimum similarity threshold for cluster layer selection. Peaks that result
+        in clusterings with Jaccard similarity above this threshold will be filtered out
+        to ensure diverse cluster layers.
+
+    max_layers : int, default=10
+        The maximum number of cluster layers to return. The algorithm will select up to
+        this many diverse peaks based on persistence and similarity criteria.
+
+    n_label_prop_iter : int, default=20
+        The number of iterations to use in the label propagation algorithm when
+        initializing the node embedding. This parameter controls how many steps
+        the label propagation process takes to converge when node_embedding_init
+        is set to 'label_prop'.
+
+    Attributes
+    ----------
+    cluster_layers_ : List[ClusterLayer]
+        A list of the created cluster layers.
+
+    cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
+        A dictionary representing the cluster tree.
+
+    evoc_ : EVoC
+        The fitted EVoC object. Algorithm specific attributes saved
+        during the fit process can be accessed here.
+
+    """
+
+    def __init__(
         self,
-        clusterable_vectors: np.ndarray,
-        embedding_vectors: np.ndarray,
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        verbose: Optional[bool] = None,
-        show_progress_bar: Optional[bool] = None,
-        **layer_kwargs,
-    ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
-        self.fit(
-            clusterable_vectors,
-            embedding_vectors,
-            layer_class=layer_class,
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-            **layer_kwargs,
+        noise_level: float = 0.5,
+        base_min_cluster_size: int = 5,
+        base_n_clusters: Optional[int] = None,
+        approx_n_clusters: Optional[int] = None,
+        n_neighbors: int = 15,
+        min_samples: int = 5,
+        n_epochs: int = 50,
+        node_embedding_init: Optional[str] = "label_prop",
+        symmetrize_graph: bool = True,
+        node_embedding_dim: Optional[int] = None,
+        neighbor_scale: float = 1.0,
+        random_state: Optional[int] = None,
+        min_similarity_threshold: float = 0.2,
+        max_layers: int = 10,
+        n_label_prop_iter: int = 20,
+        verbose: Optional[bool] = False,
+    ):
+        super().__init__()
+        self.noise_level = noise_level
+        self.base_min_cluster_size = base_min_cluster_size
+        self.base_n_clusters = base_n_clusters
+        self.approx_n_clusters = approx_n_clusters
+        self.n_neighbors = n_neighbors
+        self.min_samples = min_samples
+        self.n_epochs = n_epochs
+        self.node_embedding_init = node_embedding_init
+        self.symmetrize_graph = symmetrize_graph
+        self.node_embedding_dim = node_embedding_dim
+        self.neighbor_scale = neighbor_scale
+        self.random_state = random_state
+        self.min_similarity_threshold = min_similarity_threshold
+        self.max_layers = max_layers
+        self.n_label_prop_iter = n_label_prop_iter
+        self.verbose = verbose
+
+    def fit(self, vectors: np.ndarray):
+        vectors = _validate_vectors(vectors)
+        _validate_density_parameters(self)
+        if not vectors.shape[0]:
+            self.evoc_ = None
+            return self._set_labels([])
+        if vectors.shape[0] < max(2, self.min_samples, self.base_min_cluster_size):
+            self.evoc_ = None
+            return self._set_labels([np.full(vectors.shape[0], -1, dtype=np.int64)])
+        try:
+            from evoc import EVoC
+        except ModuleNotFoundError as error:
+            if error.name != "evoc":
+                raise
+            raise ImportError("EVoCClusterer requires toponymy[evoc]") from error
+
+        options = self.get_params(deep=False)
+        # EVoC 0.3.1 has no verbose constructor argument.
+        options.pop("verbose")
+        estimator = EVoC(**options)
+        estimator.fit(vectors)
+        self._set_labels(estimator.cluster_layers_)
+        self.evoc_ = estimator
+        return self
+
+
+class ToponymyClusterer(PLSCANClusterer):
+    """Deprecated name for PLSCANClusterer; legacy kernel options are removed."""
+
+    def fit(self, vectors, verbose=None):
+        warnings.warn(
+            "ToponymyClusterer now uses PLSCAN; use PLSCANClusterer explicitly",
+            FutureWarning,
+            stacklevel=2,
         )
-        return self.cluster_layers_, self.cluster_tree_
-
-
-try:
-    import evoc
-
-    class EVoCClusterer(Clusterer):
-
-        def __init__(
-            self,
-            min_clusters: int = 4,
-            base_min_cluster_size: Optional[int] = 10,
-            base_n_clusters: Optional[int] = None,
-            noise_level: float = 0.5,
-            n_neighbors: int = 15,
-            min_samples: int = 5,
-            next_cluster_size_quantile: float = 0.85,
-            n_epochs: int = 50,
-            node_embedding_init: str = "label_prop",
-            symmetrize_graph: bool = True,
-            node_embedding_dim: Optional[int] = None,
-            neighbor_scale: float = 1.0,
-            verbose: Optional[bool] = None,
-            show_progress_bar: Optional[bool] = None,
-        ):
-            super().__init__()
-
-            self.min_clusters = min_clusters
-            self.base_min_cluster_size = base_min_cluster_size
-            self.base_n_clusters = base_n_clusters
-            self.noise_level = noise_level
-            self.n_neighbors = n_neighbors
-            self.min_samples = min_samples
-            self.next_cluster_size_quantile = next_cluster_size_quantile
-            self.n_epochs = n_epochs
-            self.node_embedding_init = node_embedding_init
-            self.symmetrize_graph = symmetrize_graph
-            self.node_embedding_dim = node_embedding_dim
-            self.neighbor_scale = neighbor_scale
-
-            # Handle verbose parameters
-            _, self.verbose = handle_verbose_params(
-                verbose=verbose,
-                show_progress_bar=show_progress_bar,
-                default_verbose=False,
-            )
-
-            self.evoc = evoc.EVoC(
-                noise_level=noise_level,
-                base_min_cluster_size=base_min_cluster_size,
-                base_n_clusters=base_n_clusters,
-                approx_n_clusters=min_clusters,
-                n_neighbors=n_neighbors,
-                min_samples=min_samples,
-                neighbor_scale=neighbor_scale,
-            )
-
-        def fit(
-            self,
-            clusterable_vectors: np.ndarray,
-            embedding_vectors: np.ndarray,
-            layer_class: Type[ClusterLayer] = ClusterLayerText,
-            verbose: Optional[bool] = None,
-            show_progress_bar: Optional[bool] = None,
-            **layer_kwargs,
-        ) -> Clusterer:
-            self.evoc.fit(embedding_vectors)
-            cluster_labels = self.evoc.cluster_layers_
-            self.cluster_tree_ = build_cluster_tree(cluster_labels)
-            self.cluster_layers_ = [
-                layer_class(
-                    labels,
-                    centroids_from_labels(labels, embedding_vectors),
-                    layer_id=i,
-                    verbose=verbose if verbose is not None else False,
-                    show_progress_bar=(
-                        show_progress_bar if show_progress_bar is not None else False
-                    ),
-                    **layer_kwargs,
-                )
-                for i, labels in enumerate(cluster_labels)
-            ]
-            return self
-
-        def fit_predict(
-            self,
-            clusterable_vectors: np.ndarray,
-            embedding_vectors: np.ndarray,
-            layer_class: Type[ClusterLayer] = ClusterLayerText,
-            verbose: Optional[bool] = None,
-            show_progress_bar: Optional[bool] = None,
-            **layer_kwargs,
-        ) -> Tuple[List[ClusterLayer], Dict[Tuple[int, int], List[Tuple[int, int]]]]:
-            self.fit(
-                clusterable_vectors,
-                embedding_vectors,
-                layer_class=layer_class,
-                verbose=verbose,
-                show_progress_bar=show_progress_bar,
-            )
-            return self.cluster_layers_, self.cluster_tree_
-
-except ImportError:
-    pass
+        return super().fit(vectors, verbose=verbose)

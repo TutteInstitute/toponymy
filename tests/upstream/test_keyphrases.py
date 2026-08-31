@@ -1,36 +1,39 @@
-from collections import Counter
+from toponymy.keyphrases import (
+    create_tokenizers_ngrammer,
+    build_object_x_keyphrase_matrix,
+    build_keyphrase_vocabulary,
+    build_keyphrase_count_matrix,
+    information_weighted_keyphrases,
+    central_keyphrases,
+    bm25_keyphrases,
+    submodular_selection_information_keyphrases,
+    subset_matrix_and_class_labels,
+)
+from toponymy.clustering import (
+    centroids_from_labels,
+)
 
-import bm25s
-import numpy as np
-import pytest
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
 from sklearn.preprocessing import normalize
+from collections import Counter
+from pathlib import Path
 from vectorizers.transformers import InformationWeightTransformer
 
-from toponymy.new_feature_extractor import (
-    FeatureExtractorBase,
-    TextExemplarExtractor,
-    TextKeyphraseExtractor,
-)
+import numpy as np
+
+import pytest
+import json
 
 
 def create_ngrammer(ngram_range, token_pattern=r"(?u)\b\w\w+\b"):
+    from sklearn.feature_extraction.text import CountVectorizer
+
     vectorizer = CountVectorizer(
         ngram_range=ngram_range,
         token_pattern=token_pattern,
     )
     return vectorizer.build_analyzer()
-
-
-@pytest.fixture
-def text_exemplar_extractor():
-    return TextExemplarExtractor()
-
-
-@pytest.fixture
-def text_keyphrase_extractor():
-    return TextKeyphraseExtractor()
 
 
 @pytest.fixture
@@ -44,8 +47,8 @@ def cluster_layer():
 
 
 @pytest.fixture
-def matrix_and_keyphrases(text_keyphrase_extractor, all_topic_objects):
-    return text_keyphrase_extractor.build_object_x_keyphrase_matrix(
+def matrix_and_keyphrases(all_topic_objects):
+    return build_object_x_keyphrase_matrix(
         all_topic_objects,
         token_pattern=r"(?u)\b\w\w+\b",
         ngram_range=(1, 1),
@@ -68,188 +71,11 @@ def keyphrase_vectors(keyphrases, embedder):
     return embedder.encode(keyphrases)
 
 
-def test_cannot_create_abstract_feature_extractor():
-    with pytest.raises(
-        TypeError,
-        match="Can't instantiate abstract class FeatureExtractorBase without an implementation for abstract methods 'feature_return_type', 'fit'",
-    ):
-        FeatureExtractorBase()
-
-
-@pytest.mark.parametrize("n_exemplars", [4, 15])
-def test_random_exemplar(
-    n_exemplars, test_object_cluster_label_vector, all_topic_objects, topic_objects
-):
-    exemplars, indices = TextExemplarExtractor.random_exemplars(
-        test_object_cluster_label_vector, all_topic_objects, n_exemplars=n_exemplars
-    )
-    assert len(exemplars) == test_object_cluster_label_vector.max() + 1
-
-    for i in range(test_object_cluster_label_vector.max() + 1):
-        assert len(exemplars[i]) == min(
-            n_exemplars, len(topic_objects[i]["paragraphs"])
-        )
-
-
-@pytest.mark.parametrize("n_exemplars", [3, 5])
-@pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
-@pytest.mark.parametrize("sampling_method", ["centroid", "random"])
-def test_diverse_exemplar_result_sizes(
-    n_exemplars,
-    diversify_alpha,
-    sampling_method,
-    test_object_cluster_label_vector,
-    all_topic_objects,
-    topic_vectors,
-):
-    exemplar_results, exemplar_indices = TextExemplarExtractor.diverse_exemplars(
-        cluster_label_vector=test_object_cluster_label_vector,
-        objects=all_topic_objects,
-        object_vectors=topic_vectors,
-        n_exemplars=n_exemplars,
-        diversify_alpha=diversify_alpha,
-        sampling_method=sampling_method,
-    )
-    assert len(exemplar_results) == len(np.unique(test_object_cluster_label_vector)) - 1
-    if diversify_alpha == 1.0:
-        print(exemplar_results)
-    print([len(x) for x in exemplar_results])
-    assert all([len(x) == n_exemplars for x in exemplar_results]) and exemplar_results
-    assert all([len(set(x)) == n_exemplars for x in exemplar_results])
-
-
-@pytest.mark.parametrize("sampling_method", ["centroid", "random"])
-def test_empty_cluster_diverse(
-    sampling_method,
-    test_object_cluster_label_vector,
-    all_topic_objects,
-    topic_vectors,
-):
-    new_clustering = test_object_cluster_label_vector.copy()
-    new_clustering[new_clustering == 0] = 9
-    exemplar_results, exemplar_indices = TextExemplarExtractor.diverse_exemplars(
-        cluster_label_vector=new_clustering,
-        objects=all_topic_objects,
-        object_vectors=topic_vectors,
-        sampling_method=sampling_method,
-    )
-    assert len(exemplar_results[0]) == 0
-
-
-@pytest.mark.parametrize(
-    "submodular_function", ["facility_location", "saturated_coverage"]
-)
-def test_empty_cluster_diverse(
-    submodular_function,
-    test_object_cluster_label_vector,
-    all_topic_objects,
-    topic_vectors,
-):
-    new_clustering = test_object_cluster_label_vector.copy()
-    new_clustering[new_clustering == 0] = 9
-    exemplar_results, exemplar_indices = (
-        TextExemplarExtractor.submodular_selection_exemplars(
-            cluster_label_vector=new_clustering,
-            objects=all_topic_objects,
-            object_vectors=topic_vectors,
-            submodular_function=submodular_function,
-        )
-    )
-    assert len(exemplar_results[0]) == 0
-
-
-def test_bad_submodular_function(
-    test_object_cluster_label_vector, all_topic_objects, topic_vectors
-):
-    with pytest.raises(ValueError):
-        TextExemplarExtractor.submodular_selection_exemplars(
-            cluster_label_vector=test_object_cluster_label_vector,
-            objects=all_topic_objects,
-            object_vectors=topic_vectors,
-            submodular_function="bad_function",
-        )
-
-
-@pytest.mark.parametrize("n_exemplars", [4, 15])
-def test_submodular_exemplar(
-    n_exemplars,
-    test_object_cluster_label_vector,
-    all_topic_objects,
-    topic_vectors,
-    topic_objects,
-):
-    exemplar_results, exemplar_indices = (
-        TextExemplarExtractor.submodular_selection_exemplars(
-            cluster_label_vector=test_object_cluster_label_vector,
-            objects=all_topic_objects,
-            object_vectors=topic_vectors,
-            n_exemplars=n_exemplars,
-        )
-    )
-    assert len(exemplar_results) == test_object_cluster_label_vector.max() + 1
-
-    for i in range(test_object_cluster_label_vector.max() + 1):
-        assert len(exemplar_results[i]) == min(
-            n_exemplars, len(topic_objects[i]["paragraphs"])
-        )
-
-
-def test_empty_cluster_random(test_object_cluster_label_vector, all_topic_objects):
-    new_clustering = test_object_cluster_label_vector.copy()
-    new_clustering[new_clustering == 0] = 9
-    exemplar_results, exemplar_indices = TextExemplarExtractor.random_exemplars(
-        cluster_label_vector=new_clustering,
-        objects=all_topic_objects,
-    )
-    assert len(exemplar_results[0]) == 0
-
-
-def test_convert_objects_to_text_passes_strings(text_keyphrase_extractor):
-    string_objects = ["a", "b", "c"]
-    output = text_keyphrase_extractor._convert_objects_to_text(string_objects)
-    assert output == string_objects
-
-
-def test_convert_objects_to_text_fails_no_object_to_text_non_string(
-    text_keyphrase_extractor,
-):
-    non_string_objects = ["a", 1]
-    with pytest.raises(
-        TypeError,
-        match="No object_to_text_function provided and not all objects are strings; cannot convert to text representations",
-    ):
-        text_keyphrase_extractor._convert_objects_to_text(non_string_objects)
-
-
-def test_convert_objects_to_text_converts_with_custom_string_function(
-    text_keyphrase_extractor,
-):
-    class Digit:
-        def __init__(self, x: int):
-            self.x = x
-
-        def __str__(self):
-            strmap = {
-                0: "zero",
-                1: "one",
-                2: "two",
-            }
-            return strmap[self.x]
-
-    non_string_objects = [Digit(0), Digit(1), Digit(2)]
-    output = text_keyphrase_extractor._convert_objects_to_text(
-        non_string_objects, object_to_text_function=lambda x: str(x)
-    )
-    assert output == ["zero", "one", "two"]
-
-
 @pytest.mark.parametrize("max_features", [900, 300])
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
-def test_vocabulary_building(
-    text_keyphrase_extractor, test_objects, max_features, ngram_range
-):
+def test_vocabulary_building(test_objects, max_features, ngram_range):
     ngrammer = create_ngrammer((1, ngram_range))
-    vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
+    vocabulary = build_keyphrase_vocabulary(
         test_objects, n_jobs=4, max_features=max_features, ngrammer=ngrammer
     )
     assert len(vocabulary) <= max_features
@@ -261,12 +87,10 @@ def test_vocabulary_building(
 @pytest.mark.parametrize("max_features", [900, 450])
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
 def test_tokenizer_vocabulary_building(
-    text_keyphrase_extractor, test_objects, embedder, max_features, ngram_range
+    test_objects, embedder, max_features, ngram_range
 ):
-    ngrammer = text_keyphrase_extractor._create_tokenizers_ngrammer(
-        embedder.tokenizer, (1, ngram_range)
-    )
-    vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
+    ngrammer = create_tokenizers_ngrammer(embedder.tokenizer, (1, ngram_range))
+    vocabulary = build_keyphrase_vocabulary(
         test_objects, n_jobs=4, max_features=max_features, ngrammer=ngrammer
     )
     assert len(vocabulary) <= max_features
@@ -276,13 +100,13 @@ def test_tokenizer_vocabulary_building(
 
 
 @pytest.mark.parametrize("ngram_range", [4, 3, 2, 1])
-def test_count_matrix_building(text_keyphrase_extractor, test_objects, ngram_range):
+def test_count_matrix_building(test_objects, ngram_range):
     ngrammer = create_ngrammer((1, ngram_range))
-    vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
+    vocabulary = build_keyphrase_vocabulary(
         test_objects, n_jobs=2, max_features=1000, ngrammer=ngrammer
     )
     vocabulary_map = {word: i for i, word in enumerate(vocabulary)}
-    count_matrix = text_keyphrase_extractor.build_keyphrase_count_matrix(
+    count_matrix = build_keyphrase_count_matrix(
         test_objects, vocabulary_map, n_jobs=4, ngrammer=ngrammer
     )
     assert count_matrix.shape[0] == len(test_objects)
@@ -306,22 +130,21 @@ def test_count_matrix_building(text_keyphrase_extractor, test_objects, ngram_ran
 
 @pytest.mark.parametrize("ngram_range", [3, 1])
 @pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
-def test_count_matrix_building_in_parts(
-    text_keyphrase_extractor, test_objects, ngram_range, token_pattern
-):
+def test_count_matrix_building_in_parts(test_objects, ngram_range, token_pattern):
     ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
-    vocabulary_split = text_keyphrase_extractor.build_keyphrase_vocabulary(
+    vocabulary_split = build_keyphrase_vocabulary(
         test_objects, max_features=1000, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
     )
-    # with a small chunk size
     vocabulary_map = {word: i for i, word in enumerate(vocabulary_split)}
-    count_matrix_split = text_keyphrase_extractor.build_keyphrase_count_matrix(
+    count_matrix_split = build_keyphrase_count_matrix(
         test_objects, vocabulary_map, ngrammer=ngrammer, n_jobs=4, min_chunk_size=10
     )
 
-    # using normal chunk size
+    # vocabulary = build_keyphrase_vocabulary(
+    #     test_objects, max_features=1000, ngrammer=ngrammer, n_jobs=4
+    # )
     vocabulary_map = {word: i for i, word in enumerate(vocabulary_split)}
-    count_matrix = text_keyphrase_extractor.build_keyphrase_count_matrix(
+    count_matrix = build_keyphrase_count_matrix(
         test_objects, vocabulary_map, ngrammer=ngrammer, n_jobs=4
     )
     assert count_matrix_split.shape[0] == count_matrix.shape[0]
@@ -337,11 +160,12 @@ def test_count_matrix_building_in_parts(
 @pytest.mark.parametrize("ngram_range", [3, 2])
 @pytest.mark.parametrize("token_pattern", [r"(?u)\b\w[-'\w]+\b", r"(?u)\b\w\w+\b"])
 @pytest.mark.parametrize("max_features", [1000, 100])
-def test_matching_sklearn(
-    text_keyphrase_extractor, test_objects, ngram_range, token_pattern, max_features
-):
+def test_matching_sklearn(test_objects, ngram_range, token_pattern, max_features):
+    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS
+
     ngrammer = create_ngrammer((1, ngram_range), token_pattern=token_pattern)
-    vocabulary = text_keyphrase_extractor.build_keyphrase_vocabulary(
+    vocabulary = build_keyphrase_vocabulary(
         test_objects,
         n_jobs=1,
         max_features=max_features,
@@ -350,7 +174,7 @@ def test_matching_sklearn(
         stop_words=ENGLISH_STOP_WORDS,
     )
     vocabulary_map = {word: i for i, word in enumerate(sorted(vocabulary))}
-    count_matrix = text_keyphrase_extractor.build_keyphrase_count_matrix(
+    count_matrix = build_keyphrase_count_matrix(
         test_objects,
         vocabulary_map,
         n_jobs=1,
@@ -405,7 +229,7 @@ def test_central_keyphrases_result_sizes(
     n_keyphrases,
     diversify_alpha,
 ):
-    central_keyphrases_results = TextKeyphraseExtractor.central_keyphrases(
+    central_keyphrases_results = central_keyphrases(
         cluster_layer,
         matrix,
         keyphrases,
@@ -427,7 +251,7 @@ def test_central_keyphrases_result_sizes(
 def test_central_keyphrases(
     cluster_layer, matrix, keyphrases, keyphrase_vectors, embedder
 ):
-    central_results = TextKeyphraseExtractor.central_keyphrases(
+    central_results = central_keyphrases(
         cluster_layer,
         matrix,
         keyphrases,
@@ -479,7 +303,7 @@ def test_bm25_keyphrases_result_sizes(
     n_keyphrases,
     diversify_alpha,
 ):
-    bm25_keyphrases_results = TextKeyphraseExtractor.bm25_keyphrases(
+    bm25_keyphrases_results = bm25_keyphrases(
         cluster_layer,
         matrix,
         keyphrases,
@@ -496,7 +320,7 @@ def test_bm25_keyphrases_result_sizes(
 def test_bm25_keyphrases(
     cluster_layer, matrix, keyphrases, keyphrase_vectors, embedder, topic_objects
 ):
-    bm25_results = TextKeyphraseExtractor.bm25_keyphrases(
+    bm25_results = bm25_keyphrases(
         cluster_layer,
         matrix,
         keyphrases,
@@ -507,6 +331,8 @@ def test_bm25_keyphrases(
     bm25_objects = [
         "\n".join(x["paragraphs"]) for x in topic_objects if x["topic"] != "No topic"
     ]
+    import bm25s
+
     retriever = bm25s.BM25()
     corpus_tokens = bm25s.tokenize(bm25_objects)
     retriever.index(corpus_tokens)
@@ -541,7 +367,7 @@ def test_information_weighted_keyphrases_result_sizes(
     n_keyphrases,
     diversify_alpha,
 ):
-    bm25_keyphrases_results = TextKeyphraseExtractor.information_weighted_keyphrases(
+    bm25_keyphrases_results = information_weighted_keyphrases(
         cluster_layer,
         matrix,
         keyphrases,
@@ -558,7 +384,7 @@ def test_information_weighted_keyphrases_result_sizes(
 def test_information_weighted_keyphrases(
     cluster_layer, matrix, keyphrases, keyphrase_vectors, embedder
 ):
-    iwt_results = TextKeyphraseExtractor.information_weighted_keyphrases(
+    iwt_results = information_weighted_keyphrases(
         cluster_layer,
         matrix,
         keyphrases,
@@ -567,8 +393,8 @@ def test_information_weighted_keyphrases(
         min_alpha=0.0,
         max_alpha=0.0,
     )
-    sub_matrix, class_layer, column_map = (
-        TextKeyphraseExtractor.subset_matrix_and_class_labels(cluster_layer, matrix)
+    sub_matrix, class_layer, column_map = subset_matrix_and_class_labels(
+        cluster_layer, matrix
     )
     iwt_transformer = InformationWeightTransformer(weight_power=2.0, prior_strength=0.1)
     class_layer = cluster_layer[cluster_layer >= 0]
@@ -614,16 +440,14 @@ def test_submodular_keyphrases_result_sizes(
     n_keyphrases,
     submodular_function,
 ):
-    submodular_keyphrases_results = (
-        TextKeyphraseExtractor.submodular_selection_information_keyphrases(
-            cluster_layer,
-            matrix,
-            keyphrases,
-            keyphrase_vectors,
-            embedder,
-            submodular_function=submodular_function,
-            n_keyphrases=n_keyphrases,
-        )
+    submodular_keyphrases_results = submodular_selection_information_keyphrases(
+        cluster_layer,
+        matrix,
+        keyphrases,
+        keyphrase_vectors,
+        embedder,
+        submodular_function=submodular_function,
+        n_keyphrases=n_keyphrases,
     )
     assert len(submodular_keyphrases_results) == len(np.unique(cluster_layer)) - 1
     assert (

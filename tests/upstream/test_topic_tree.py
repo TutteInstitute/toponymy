@@ -1,7 +1,4 @@
 from toponymy import Toponymy
-from toponymy.clustering import ToponymyClusterer
-from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.llm_wrappers import HuggingFaceNamer
 
 from toponymy.topic_tree import (
     TopicTree,
@@ -901,26 +898,10 @@ def test_topic_tree_class():
     )
 
 
-def test_unfitted_toponymy_fails(null_llm, embedder, clusterer):
-    model = Toponymy(
-        null_llm,
-        embedder,
-        clusterer,
-        keyphrase_builder=KeyphraseBuilder(n_jobs=1),
-        object_description="sentences",
-        corpus_description="collection of sentences",
-        lowest_detail_level=0.8,
-        highest_detail_level=1.0,
-        verbose=True,
-    )
-    with pytest.raises(
-        NotFittedError,
-        match="This Toponymy instance is not fitted yet. Call 'fit' with appropriate arguments before using this estimator.",
-    ):
-        model.topic_tree_
-
-
-# Tests for prune_duplicate_children function
+def test_unfitted_toponymy_fails():
+    topic_model = Toponymy(None)
+    with pytest.raises(NotFittedError):
+        topic_model.topic_tree_
 
 
 def test_prune_duplicate_children_no_duplicates():

@@ -9,7 +9,7 @@ import pytest
 from scipy import sparse
 from sklearn.base import clone
 
-from toponymy.new_clustering import (
+from toponymy.clustering import (
     EVoCClusterer,
     KMeansClusterer,
     PLSCANClusterer,

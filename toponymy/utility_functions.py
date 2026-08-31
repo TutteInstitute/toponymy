@@ -28,7 +28,9 @@ def distance_to_vector(vector, other_vectors):
 def diversify_fixed_alpha(query_vector, candidate_neighbor_vectors, alpha=1.0):
     distance_to_query = distance_to_vector(query_vector, candidate_neighbor_vectors)
 
-    retained_neighbor_indices = [i for i in range(min(1, len(candidate_neighbor_vectors)))]
+    retained_neighbor_indices = [
+        i for i in range(min(1, len(candidate_neighbor_vectors)))
+    ]
     for i, vector in enumerate(candidate_neighbor_vectors[1:], 1):
         retained_vectors = candidate_neighbor_vectors[
             np.array(retained_neighbor_indices)
@@ -57,7 +59,12 @@ def diversify_max_alpha(
 ):
     if tolerance <= 0 or not np.isfinite(tolerance):
         raise ValueError("tolerance must be finite and positive")
-    if not np.isfinite(min_alpha) or not np.isfinite(max_alpha) or min_alpha < 0 or max_alpha < min_alpha:
+    if (
+        not np.isfinite(min_alpha)
+        or not np.isfinite(max_alpha)
+        or min_alpha < 0
+        or max_alpha < min_alpha
+    ):
         raise ValueError("alpha bounds must be finite and satisfy 0 <= min <= max")
     if n_results <= 0:
         return [i for i in range(0)]
@@ -97,4 +104,3 @@ def centroids_from_labels(
             result[i] /= counts[i]
 
     return result
-

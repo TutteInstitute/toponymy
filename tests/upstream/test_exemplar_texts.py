@@ -8,7 +8,6 @@ from toponymy.exemplar_texts import (
     submodular_selection_exemplars,
 )
 from pathlib import Path
-import sentence_transformers
 
 from toponymy.clustering import (
     centroids_from_labels,
@@ -50,7 +49,6 @@ def test_diverse_exemplar_result_sizes(
         cluster_label_vector=test_object_cluster_label_vector,
         objects=all_topic_objects,
         object_vectors=topic_vectors,
-        centroid_vectors=test_object_centroid_vectors,
         n_exemplars=n_exemplars,
         diversify_alpha=diversify_alpha,
         method=method,
@@ -64,7 +62,7 @@ def test_diverse_exemplar_result_sizes(
 
 
 @pytest.mark.parametrize("method", ["centroid", "random"])
-def test_empty_cluster_diverse(
+def test_empty_cluster_diverse_centroid(
     method,
     test_object_cluster_label_vector,
     all_topic_objects,
@@ -77,7 +75,6 @@ def test_empty_cluster_diverse(
         cluster_label_vector=new_clustering,
         objects=all_topic_objects,
         object_vectors=topic_vectors,
-        centroid_vectors=test_object_centroid_vectors,
         method=method,
     )
     assert len(exemplar_results[0]) == 0

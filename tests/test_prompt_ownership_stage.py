@@ -1,5 +1,5 @@
 import pytest
-from toponymy import new_templates
+from toponymy import templates as new_templates
 
 def _template_module():
     return new_templates

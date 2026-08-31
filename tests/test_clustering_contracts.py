@@ -9,7 +9,7 @@ import pytest
 from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 
-from toponymy.new_clustering import (
+from toponymy.clustering import (
     PrecomputedClusterer,
     build_cluster_layers,
     build_cluster_tree,

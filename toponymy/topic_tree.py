@@ -2,8 +2,8 @@ import numpy as np
 import html
 from typing import List, Tuple
 import copy
-from toponymy.treemap import treemap_dataframe
-from toponymy.clustering import ClusterTree
+from toponymy.treemap import _layer_value, _rooted_tree, treemap_dataframe
+from toponymy.types import ClusterTree
 
 
 def topic_name_string(
@@ -16,17 +16,21 @@ def topic_name_string(
     cluster_percentage: bool = False,
     show_topic_id: bool = False,
 ) -> str:
-    if layer < len(topic_names) and index < len(topic_names[layer]):
-        topic_string = topic_names[layer][index]
-    else:
+    topic_string = _layer_value(topic_names, layer, index)
+    if topic_string is None:
         topic_string = f"Unnamed topic from layer {layer} cluster {index}\n"
 
     if show_topic_id:
         topic_string = f"{layer}_{index}: {topic_string}"
     if cluster_size:
-        topic_string += f" ({cluster_sizes[layer][index]} objects)"
+        topic_string += f" ({_layer_value(cluster_sizes, layer, index, 0)} objects)"
     if cluster_percentage:
-        topic_string += f" [{cluster_sizes[layer][index] / n_objects * 100:.2f}%]"
+        percentage = (
+            _layer_value(cluster_sizes, layer, index, 0) / n_objects * 100
+            if n_objects
+            else 0
+        )
+        topic_string += f" [{percentage:.2f}%]"
 
     return topic_string
 
@@ -48,6 +52,9 @@ def prune_duplicate_children(
     topic_names : List[List[str]]
         The list of topics to be included in the tree.
     """
+    for parent, children in tree_dict.items():
+        if any(child[0] >= parent[0] for child in children):
+            raise ValueError("Topic tree edges must lead to lower layers")
     pruned_tree = copy.deepcopy(tree_dict)
 
     # First, identify which nodes will be pruned
@@ -58,12 +65,12 @@ def prune_duplicate_children(
         if parent[0] >= len(topic_names):
             return
 
-        parent_name = topic_names[parent[0]][parent[1]]
+        parent_name = _layer_value(topic_names, *parent)
         children = tree_dict.get(parent, [])
 
         for child in children:
-            child_name = topic_names[child[0]][child[1]]
-            if parent_name == child_name:
+            child_name = _layer_value(topic_names, *child)
+            if parent_name is not None and parent_name == child_name:
                 pruned_nodes.add(child)
                 # Also check grandchildren recursively
                 if child[0] > 0 and child in tree_dict:
@@ -85,13 +92,13 @@ def prune_duplicate_children(
         if parent[0] >= len(topic_names):
             return children
 
-        parent_name = topic_names[parent[0]][parent[1]]
+        parent_name = _layer_value(topic_names, *parent)
         new_children = []
 
         for child in children:
-            child_name = topic_names[child[0]][child[1]]
+            child_name = _layer_value(topic_names, *child)
 
-            if parent_name == child_name:
+            if parent_name is not None and parent_name == child_name:
                 # This child duplicates the parent, so prune it
                 # Recursively get its children and check them against the parent
                 if child[0] > 0 and child in tree_dict:
@@ -99,7 +106,7 @@ def prune_duplicate_children(
                     grandchildren = prune_children_recursive(child)
                     # Add grandchildren that don't duplicate the parent
                     for grandchild in grandchildren:
-                        grandchild_name = topic_names[grandchild[0]][grandchild[1]]
+                        grandchild_name = _layer_value(topic_names, *grandchild)
                         if parent_name != grandchild_name:
                             new_children.append(grandchild)
                 # Don't add the duplicate child itself
@@ -259,7 +266,7 @@ def topic_tree_html_recursion(
             weight_val = 900
         else:
             depth_scale = max(max_layer - 1, 1)
-            gray_val = np.sqrt(1.0 - (layer / depth_scale)) * 200
+            gray_val = np.sqrt(max(0.0, 1.0 - (layer / depth_scale))) * 200
             weight_val = 200 + (layer / depth_scale) * 600
             weight_val = round(weight_val / 100) * 100
 
@@ -297,6 +304,9 @@ def topic_tree_html_recursion(
                 max_layer=max_layer,
                 variable_color=variable_color,
                 variable_weight=variable_weight,
+                cluster_size=cluster_size,
+                cluster_percentage=cluster_percentage,
+                show_topic_id=show_topic_id,
             )
 
         html_content = f"""
@@ -349,9 +359,7 @@ def topic_tree_html(
     str
         An HTML representation of the topics in the tree.
     """
-    root_node = max(
-        tree_dict.keys(),
-    )
+    tree_dict, root_node = _rooted_tree(tree_dict, topic_names)
     # Start the main HTML list
     root_html = "<ul>\n"
     root_html += topic_tree_html_recursion(
@@ -467,18 +475,18 @@ class TopicTree:
         n_objects: int,
         prune_duplicates: bool = True,
     ) -> None:
-        self.tree = tree
-        self.topics = topics
-        self.topic_sizes = topic_sizes
+        if n_objects < 0:
+            raise ValueError("n_objects must be non-negative")
+        self.tree, self._root = _rooted_tree(tree, topics)
+        self.topics = copy.deepcopy(topics)
+        self.topic_sizes = copy.deepcopy(topic_sizes)
         self.n_objects = n_objects
         self.prune_duplicates = prune_duplicates
         if prune_duplicates:
-            self.tree = prune_duplicate_children(tree, topics)
+            self.tree = prune_duplicate_children(self.tree, self.topics)
 
     def __str__(self) -> str:
-        root_node = max(
-            self.tree.keys(),
-        )
+        root_node = self._root
         result = topic_tree_string_recursion(
             self.tree,
             root_node,
@@ -522,7 +530,7 @@ class TopicTree:
         """
         tree_string = topic_tree_string_recursion(
             self.tree,
-            max(self.tree.keys()),
+            self._root,
             self.topics,
             self.topic_sizes,
             n_objects=self.n_objects,
@@ -599,7 +607,12 @@ class TopicTree:
                 ids="id",
                 parents="parent",
                 names="label",
-                values="value",
+                values="layout_value",
+                custom_data=["value"],
+                branchvalues="total",
+            )
+            fig.update_traces(
+                hovertemplate="%{label}<br>Objects: %{customdata[0]}<extra></extra>"
             )
             fig.update_layout(
                 margin=margin,

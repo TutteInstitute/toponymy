@@ -1,10 +1,9 @@
 import json
 import tempfile
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from copy import deepcopy
-from dataclasses import dataclass
-from functools import cached_property
+from dataclasses import dataclass, field
 import base64
 
 import scipy.sparse as sp
@@ -14,7 +13,8 @@ import shutil
 
 from toponymy.topic_tree import TopicTree
 
-_SERIAL_VERSION = "0.1"
+_SERIAL_VERSION = "0.2"
+_READABLE_SERIAL_VERSIONS = {"0.1", "0.2"}
 
 
 def topic_uid(tup) -> str:
@@ -23,12 +23,24 @@ def topic_uid(tup) -> str:
     b = (
         int(b) + 1
     )  # Because unclustered is -1 and we can't convert negative to unsigned.
-    combined = (a << 10) | b  # pack into 20 bits
+    if a < 0 or b < 0:
+        raise ValueError(
+            "Topic identifiers require nonnegative layers and labels >= -1"
+        )
+    if a >= (1 << 14) or b >= (1 << 10):
+        return f"v2:{a}:{b - 1}"
+    combined = (a << 10) | b  # retain existing compact identifiers when representable
     return base64.urlsafe_b64encode(combined.to_bytes(3, "big")).rstrip(b"=").decode()
 
 
 def uid_to_ints(s: str):
     """Returns (layer, cluster_number)"""
+    if s.startswith("v2:"):
+        _, layer, cluster = s.split(":")
+        values = int(layer), int(cluster)
+        if values[0] < 0 or values[1] < -1:
+            raise ValueError("Invalid topic identifier")
+        return values
     padded = s + "=" * (-len(s) % 4)
     combined = int.from_bytes(base64.urlsafe_b64decode(padded), "big")
     return combined >> 10, (combined & 0x3FF) - 1
@@ -49,112 +61,217 @@ def _pandas_col_to_arrow(series: pd.Series):
 
 
 @dataclass
-class TopicModel:
-    """Storage class for the data of a fitted Toponymy."""
+class Topic:
+    """Learned topic state, keyed by layer and original clustering label."""
 
-    topic_df: pd.DataFrame
-    cluster_tree: dict
-    cluster_layers: list
-    embedding_vectors: np.ndarray
-    reduced_vectors: np.ndarray = None
-    document_df: pd.DataFrame = None
+    layer: int
+    label: int
+    members: np.ndarray
+    features: dict = field(default_factory=dict)
+    prompt: object = None
+    name: str | None = None
+    summary: str | None = None
+    explanation: str | None = None
+
+    @property
+    def key(self):
+        return self.layer, self.label
+
+
+class TopicModel:
+    """Topic-centric fitted results and the existing portable storage interface.
+
+    Topics own mutable naming state. Matrices are borrowed; membership matrices
+    use columns in sorted original-ID order. topic_df is a materialized view,
+    so changing it does not update names: edit a Topic explicitly instead.
+    """
+
+    def __init__(
+        self,
+        topic_df,
+        cluster_tree,
+        cluster_layers,
+        embedding_vectors,
+        reduced_vectors=None,
+        document_df=None,
+        *,
+        topics=None,
+        metadata=None,
+        clustering_graph=None,
+    ):
+        self._topic_df = topic_df.copy() if topic_df is not None else None
+        self._topics = topics
+        self.cluster_tree = {
+            key: list(children) for key, children in cluster_tree.items()
+        }
+        self.cluster_layers = list(cluster_layers)
+        self.embedding_vectors = embedding_vectors
+        self.reduced_vectors = reduced_vectors
+        self.clustering_graph = clustering_graph
+        self.document_df = (
+            pd.DataFrame({"item_num": range(len(embedding_vectors))})
+            if document_df is None
+            else document_df.copy()
+        )
+        self.metadata = {} if metadata is None else dict(metadata)
 
     def __repr__(self):
-        n_samples = self.embedding_vectors.shape[0]
-        n_topics = len(self.topic_df)
-        s = f"TopicModel(n_samples={n_samples},"
-        s += f" n_topics={n_topics})"
-        return s
+        return f"TopicModel(n_samples={len(self.embedding_vectors)}, n_topics={len(self.topics)})"
 
-    @cached_property
+    @classmethod
+    def from_topics(cls, topics, layers, tree, embedding_vectors, reduced_vectors=None):
+        matrices = []
+        for layer in layers:
+            rows = (
+                np.concatenate([cluster.members for cluster in layer])
+                if len(layer)
+                else np.empty(0, dtype=np.int64)
+            )
+            cols = np.repeat(
+                np.arange(len(layer)), [len(cluster.members) for cluster in layer]
+            )
+            matrices.append(
+                sp.csr_matrix(
+                    (np.full(len(rows), 255, dtype=np.uint8), (rows, cols)),
+                    shape=(len(embedding_vectors), len(layer)),
+                )
+            )
+        return cls(
+            None, tree, matrices, embedding_vectors, reduced_vectors, topics=topics
+        )
+
+    @property
+    def topics(self):
+        if self._topics is None:
+            from .templates import Prompt
+
+            topics = {}
+            table = self._topic_df
+            if table is not None:
+                for layer_index, matrix in enumerate(self.cluster_layers):
+                    rows = table[table["layer"] == layer_index].sort_values("cluster")
+                    for ordinal, row in enumerate(rows.to_dict("records")):
+                        label = int(row["cluster"])
+                        column = ordinal if len(rows) == matrix.shape[1] else label
+                        members = matrix.getcol(column).nonzero()[0]
+                        members.flags.writeable = False
+                        features = (
+                            json.loads(row["features_json"])
+                            if row.get("features_json")
+                            else {"cluster_keywords": list(row.get("keyphrases", []))}
+                        )
+                        prompt_data = (
+                            json.loads(row["prompt_json"])
+                            if row.get("prompt_json")
+                            else None
+                        )
+                        prompt = Prompt(**prompt_data) if prompt_data else None
+                        topics[(layer_index, label)] = Topic(
+                            layer_index,
+                            label,
+                            members,
+                            features,
+                            prompt,
+                            row.get("name"),
+                            row.get("summary"),
+                            row.get("explanation"),
+                        )
+            self._topics = topics
+        return self._topics
+
+    @property
+    def topic_df(self):
+        rows = []
+        for key, topic in sorted(self.topics.items()):
+            prompt = topic.prompt._asdict() if topic.prompt is not None else None
+            rows.append(
+                {
+                    "uid": topic_uid(key),
+                    "layer": key[0],
+                    "cluster": key[1],
+                    "name": topic.name,
+                    "size": len(topic.members),
+                    "keyphrases": topic.features.get("cluster_keywords", []),
+                    "features_json": json.dumps(topic.features, ensure_ascii=False),
+                    "prompt_json": (
+                        json.dumps(prompt, ensure_ascii=False) if prompt else None
+                    ),
+                    "summary": topic.summary,
+                    "explanation": topic.explanation,
+                }
+            )
+        return pd.DataFrame(
+            rows,
+            columns=[
+                "uid",
+                "layer",
+                "cluster",
+                "name",
+                "size",
+                "keyphrases",
+                "features_json",
+                "prompt_json",
+                "summary",
+                "explanation",
+            ],
+        )
+
+    @property
     def topic_sizes(self):
-        """
-        Reconstruct topic_sizes from the topic_df.
-
-        Returns
-        -------
-        List[List[int]]
-            A list of lists where topic_sizes[i][j] is the size of cluster j in layer i.
-        """
-        if "size" not in self.topic_df.columns:
-            # Fallback: compute from cluster_layers if size column doesn't exist
-            topic_sizes = []
-            for layer_matrix in self.cluster_layers:
-                # Each column represents a cluster, sum to get cluster sizes
-                # Divide by 255 since we use 255 as the indicator value
-                if sp.issparse(layer_matrix):
-                    sizes = np.asarray(layer_matrix.sum(axis=0)).ravel().tolist()
-                else:
-                    sizes = layer_matrix.sum(axis=0).tolist()
-                topic_sizes.append([int(s // 255) for s in sizes])
-            return topic_sizes
-
-        # Reconstruct from topic_df
-        # Only include layers that exist in cluster_layers (excluding root/parent layers)
-        num_layers = len(self.cluster_layers)
-        topic_sizes = [[] for _ in range(num_layers)]
-
-        for layer_idx in range(num_layers):
-            layer_topics = self.topic_df[
-                self.topic_df["layer"] == layer_idx
-            ].sort_values("cluster")
-            if len(layer_topics) > 0:
-                topic_sizes[layer_idx] = layer_topics["size"].tolist()
-            else:
-                # Fallback to computing from cluster_layers for this layer
-                layer_matrix = self.cluster_layers[layer_idx]
-                if sp.issparse(layer_matrix):
-                    sizes = np.asarray(layer_matrix.sum(axis=0)).ravel().tolist()
-                else:
-                    sizes = layer_matrix.sum(axis=0).tolist()
-                topic_sizes[layer_idx] = [int(s // 255) for s in sizes]
-
-        return topic_sizes
+        return [
+            {
+                label: len(topic.members)
+                for (index, label), topic in self.topics.items()
+                if index == layer
+            }
+            for layer in range(len(self.cluster_layers))
+        ]
 
     @classmethod
     def from_toponymy(cls, toponymy, document_df=None):
-        cluster_layers = []
-        for layer_idx, layer in enumerate(toponymy.cluster_layers_):
-            labels = layer.cluster_labels
-            unique_labels = np.unique(labels)
-            n_clusters = int((unique_labels[unique_labels >= 0]).max()) + 1
-
-            matrix = np.zeros((len(labels), n_clusters), dtype=np.uint8)
-            for doc_idx, label in enumerate(labels):
-                if label >= 0:  # skip noise points (label == -1)
-                    matrix[doc_idx, label] = 255
-
-            cluster_layers.append(sp.csr_matrix(matrix))
-
-        # --- Topic metadata ---
-        rows = []
-        for layer_idx, layer in enumerate(toponymy.cluster_layers_):
-            unique_labels = np.unique(layer.cluster_labels)
-            for cluster in unique_labels[unique_labels >= 0]:
-                rows.append(
-                    {
-                        "uid": topic_uid((layer_idx, int(cluster))),
-                        "layer": layer_idx,
-                        "cluster": cluster,
-                        "name": toponymy.topic_names_[layer_idx][cluster],
-                        "size": toponymy.topic_sizes_[layer_idx][cluster],
-                        "keyphrases": toponymy.cluster_layers_[layer_idx].keyphrases[
-                            cluster
-                        ],
-                    }
+        if hasattr(toponymy, "topic_model_"):
+            model = toponymy.topic_model_
+            return cls(
+                model.topic_df,
+                model.cluster_tree,
+                model.cluster_layers,
+                model.embedding_vectors,
+                model.reduced_vectors,
+                model.document_df if document_df is None else document_df,
+                metadata=model.metadata,
+                clustering_graph=model.clustering_graph,
+            )
+        # Read the stable pre-0.6 fitted representation for migration.
+        topics, matrices = {}, []
+        for layer_index, layer in enumerate(toponymy.cluster_layers_):
+            labels = np.asarray(layer.cluster_labels)
+            ids = np.unique(labels[labels >= 0])
+            rows, cols = [], []
+            for ordinal, label in enumerate(ids):
+                members = np.flatnonzero(labels == label)
+                rows.extend(members)
+                cols.extend([ordinal] * len(members))
+                topics[(layer_index, int(label))] = Topic(
+                    layer_index,
+                    int(label),
+                    members,
+                    {"cluster_keywords": list(layer.keyphrases[label])},
+                    name=toponymy.topic_names_[layer_index][label],
                 )
-        topic_df = pd.DataFrame(rows)
-        if document_df is None:
-            n_samples = toponymy.embedding_vectors_.shape[0]
-            document_df = pd.DataFrame({"item_num": range(n_samples)})
-
+            matrices.append(
+                sp.csr_matrix(
+                    (np.full(len(rows), 255, dtype=np.uint8), (rows, cols)),
+                    shape=(len(labels), len(ids)),
+                )
+            )
         return cls(
-            cluster_layers=cluster_layers,
-            cluster_tree=toponymy.cluster_tree_,
-            topic_df=topic_df,
-            embedding_vectors=toponymy.embedding_vectors_,
-            reduced_vectors=toponymy.clusterable_vectors_,
-            document_df=document_df,
+            None,
+            toponymy.cluster_tree_,
+            matrices,
+            toponymy.embedding_vectors_,
+            toponymy.clusterable_vectors_,
+            document_df,
+            topics=topics,
         )
 
     @classmethod
@@ -165,13 +282,21 @@ class TopicModel:
             root = Path(tmp)
 
             with zipfile.ZipFile(path) as z:
+                for entry in z.infolist():
+                    member = PurePosixPath(entry.filename.replace("\\", "/"))
+                    if (
+                        member.is_absolute()
+                        or ".." in member.parts
+                        or ":" in entry.filename
+                    ):
+                        raise ValueError("Invalid path in topic archive")
                 z.extractall(root)
 
-            with open(root / "metadata.json") as f:
+            with open(root / "metadata.json", encoding="utf8") as f:
                 metadata = json.load(f)
 
             serial_version = metadata["serial_version"]
-            if serial_version != _SERIAL_VERSION:
+            if serial_version not in _READABLE_SERIAL_VERSIONS:
                 raise ValueError(
                     f"The file's serial version ({serial_version}) does not match "
                     f"the current version ({_SERIAL_VERSION})."
@@ -215,6 +340,12 @@ class TopicModel:
                 topic_df=topic_df,
                 cluster_tree=cluster_tree,
                 cluster_layers=matrices,
+                metadata=metadata.get("runtime_metadata", {}),
+                clustering_graph=(
+                    sp.load_npz(root / "clustering_graph.npz")
+                    if metadata.get("has_clustering_graph", False)
+                    else None
+                ),
             )
 
     def to_file(self, path: str):
@@ -235,6 +366,9 @@ class TopicModel:
                 np.save(root / "reduced_vectors.npy", self.reduced_vectors)
                 has_reduced = True
 
+            if self.clustering_graph is not None:
+                sp.save_npz(root / "clustering_graph.npz", self.clustering_graph)
+
             for i, matrix in enumerate(self.cluster_layers):
                 sp.save_npz(matrices_dir / f"layer_{i}.npz", matrix)
 
@@ -249,6 +383,8 @@ class TopicModel:
                 "serial_version": _SERIAL_VERSION,
                 "n_layers": len(self.cluster_layers),
                 "has_reduced": has_reduced,
+                "runtime_metadata": self.metadata,
+                "has_clustering_graph": self.clustering_graph is not None,
             }
             with open(root / "metadata.json", "w") as f:
                 json.dump(metadata, f)
@@ -267,7 +403,7 @@ class TopicModel:
         # --- config ---
         config = lance.dataset(str(path / "config.lance")).to_table().to_pydict()
         serial_version = config["serial_version"][0]
-        if serial_version != _SERIAL_VERSION:
+        if serial_version not in _READABLE_SERIAL_VERSIONS:
             raise ValueError(
                 f"The file's serial version ({serial_version}) does not match "
                 f"the current version ({_SERIAL_VERSION})."
@@ -282,28 +418,42 @@ class TopicModel:
         }
 
         doc_table = lance.dataset(str(path / "documents.lance")).to_table().to_pydict()
-        embedding_vectors = np.array(doc_table.pop("embedding"), dtype=np.float32)
+        embedding_vectors = np.array(
+            doc_table.pop("embedding"),
+            dtype=config.get("embedding_dtype", ["float32"])[0],
+        )
+        if "embedding_dim" in config:
+            embedding_vectors = embedding_vectors.reshape(
+                -1, config["embedding_dim"][0]
+            )
         reduced_vectors = None
         if has_reduced:
             reduced_vectors = np.array(
-                doc_table.pop("reduced_embedding"), dtype=np.float32
+                doc_table.pop("reduced_embedding"),
+                dtype=config.get("reduced_dtype", ["float32"])[0],
             )
+            if "reduced_dim" in config:
+                reduced_vectors = reduced_vectors.reshape(-1, config["reduced_dim"][0])
         document_df = pd.DataFrame(doc_table)
 
         topic_dict = lance.dataset(str(path / "topics.lance")).to_table().to_pydict()
         topic_df = pd.DataFrame(topic_dict)
 
         coo_dict = lance.dataset(str(path / "clusters.lance")).to_table().to_pydict()
-        layers_arr = np.array(coo_dict["layer"], dtype=np.int16)
-        rows_arr = np.array(coo_dict["row_idx"], dtype=np.int32)
-        cols_arr = np.array(coo_dict["col_idx"], dtype=np.int16)
+        layers_arr = np.array(coo_dict["layer"], dtype=np.int64)
+        rows_arr = np.array(coo_dict["row_idx"], dtype=np.int64)
+        cols_arr = np.array(coo_dict["col_idx"], dtype=np.int64)
         vals_arr = np.array(coo_dict["value"], dtype=np.uint8)  # safe: values are 0-255
         n_docs = len(document_df)
 
         matrices = []
         for layer_idx in range(n_layers):
             mask = layers_arr == layer_idx
-            n_cols = int(cols_arr[mask].max()) + 1 if mask.any() else 0
+            n_cols = (
+                config["layer_columns"][0][layer_idx]
+                if "layer_columns" in config
+                else int(cols_arr[mask].max()) + 1 if mask.any() else 0
+            )
             csr = sp.coo_matrix(
                 (vals_arr[mask], (rows_arr[mask], cols_arr[mask])),
                 shape=(n_docs, n_cols),
@@ -311,6 +461,16 @@ class TopicModel:
             ).tocsr()
             matrices.append(csr)
 
+        clustering_graph = None
+        if config.get("has_clustering_graph", [False])[0]:
+            edges = lance.dataset(str(path / "graph.lance")).to_table().to_pydict()
+            clustering_graph = sp.csr_matrix(
+                (
+                    np.asarray(edges["distance"], dtype=config["graph_dtype"][0]),
+                    (edges["row"], edges["column"]),
+                ),
+                shape=(n_docs, n_docs),
+            )
         return cls(
             embedding_vectors=embedding_vectors,
             reduced_vectors=reduced_vectors,
@@ -318,6 +478,8 @@ class TopicModel:
             topic_df=topic_df,
             cluster_tree=cluster_tree,
             cluster_layers=matrices,
+            metadata=json.loads(config.get("runtime_metadata", ["{}"])[0]),
+            clustering_graph=clustering_graph,
         )
 
     def to_lance(self, path: str, overwrite: bool = False):
@@ -348,7 +510,10 @@ class TopicModel:
                 pa.field(col, _pandas_col_to_arrow(self.document_df[col]))
                 for col in self.document_df.columns
             ],
-            pa.field("embedding", pa.list_(pa.float32(), emb_dim)),
+            pa.field(
+                "embedding",
+                pa.list_(pa.from_numpy_dtype(self.embedding_vectors.dtype), emb_dim),
+            ),
         ]
 
         has_reduced = self.reduced_vectors is not None
@@ -356,7 +521,10 @@ class TopicModel:
             red_dim = self.reduced_vectors.shape[1]
             doc_dict["reduced_embedding"] = self.reduced_vectors.tolist()
             schema_fields.append(
-                pa.field("reduced_embedding", pa.list_(pa.float32(), red_dim))
+                pa.field(
+                    "reduced_embedding",
+                    pa.list_(pa.from_numpy_dtype(self.reduced_vectors.dtype), red_dim),
+                )
             )
 
         doc_schema = pa.schema(schema_fields)
@@ -376,17 +544,25 @@ class TopicModel:
         for layer_idx, matrix in enumerate(self.cluster_layers):
             coo = matrix.tocoo()
             n = len(coo.data)
-            coo_layers.append(np.full(n, layer_idx, dtype=np.int16))
-            coo_rows.append(coo.row.astype(np.int32))
-            coo_cols.append(coo.col.astype(np.int16))
+            coo_layers.append(np.full(n, layer_idx, dtype=np.int64))
+            coo_rows.append(coo.row.astype(np.int64))
+            coo_cols.append(coo.col.astype(np.int64))
             coo_vals.append(coo.data.astype(np.int32))
 
         clusters_table = pa.table(
             {
-                "layer": pa.array(np.concatenate(coo_layers), type=pa.int16()),
-                "row_idx": pa.array(np.concatenate(coo_rows), type=pa.int32()),
-                "col_idx": pa.array(np.concatenate(coo_cols), type=pa.int16()),
-                "value": pa.array(np.concatenate(coo_vals), type=pa.int32()),
+                "layer": pa.array(
+                    (np.concatenate(coo_layers) if coo_layers else []), type=pa.int64()
+                ),
+                "row_idx": pa.array(
+                    (np.concatenate(coo_rows) if coo_rows else []), type=pa.int64()
+                ),
+                "col_idx": pa.array(
+                    (np.concatenate(coo_cols) if coo_cols else []), type=pa.int64()
+                ),
+                "value": pa.array(
+                    (np.concatenate(coo_vals) if coo_vals else []), type=pa.int32()
+                ),
             }
         )
         lance.write_dataset(clusters_table, str(path / "clusters.lance"))
@@ -396,12 +572,39 @@ class TopicModel:
             for k, v in self.cluster_tree.items()
         }
 
+        if self.clustering_graph is not None:
+            edges = self.clustering_graph.tocoo()
+            graph_table = pa.table(
+                {
+                    "row": pa.array(edges.row, type=pa.int64()),
+                    "column": pa.array(edges.col, type=pa.int64()),
+                    "distance": pa.array(edges.data),
+                }
+            )
+            lance.write_dataset(graph_table, str(path / "graph.lance"))
+
         # --- config.lance ---
         config_table = pa.table(
             {
                 "serial_version": pa.array([_SERIAL_VERSION], type=pa.string()),
                 "n_layers": pa.array([len(self.cluster_layers)], type=pa.int32()),
                 "has_reduced": pa.array([has_reduced], type=pa.bool_()),
+                "embedding_dtype": [str(self.embedding_vectors.dtype)],
+                "embedding_dim": [self.embedding_vectors.shape[1]],
+                "reduced_dtype": [
+                    str(self.reduced_vectors.dtype) if has_reduced else None
+                ],
+                "reduced_dim": [self.reduced_vectors.shape[1] if has_reduced else None],
+                "layer_columns": [[matrix.shape[1] for matrix in self.cluster_layers]],
+                "runtime_metadata": [json.dumps(self.metadata)],
+                "has_clustering_graph": [self.clustering_graph is not None],
+                "graph_dtype": [
+                    (
+                        str(self.clustering_graph.dtype)
+                        if self.clustering_graph is not None
+                        else None
+                    )
+                ],
                 "cluster_tree": pa.array(
                     [json.dumps(uid_tree)],
                     type=pa.string(),
@@ -412,35 +615,26 @@ class TopicModel:
 
     @property
     def topic_name_vectors(self):
-        vectors = []
-        max_len = max([len(x) for x in self.topic_df["name"].values])
-        for layer, matrix in enumerate(self.cluster_layers):
-            matrix = matrix.todense()
-            vector_layer = np.full(matrix.shape[0], "Unlabelled", dtype=f"<U{max_len}")
-            for cluster in range(matrix.shape[1]):
-                cluster_uid = topic_uid((layer, cluster))
-                cluster_name = self.topic_df[self.topic_df["uid"] == cluster_uid][
-                    "name"
-                ].values[0]
-                column = matrix[:, cluster]
-                cluster_index = (column == 255).nonzero()[0]
-                vector_layer[cluster_index] = cluster_name
-            vectors.append(vector_layer)
+        vectors = [
+            np.full(len(self.embedding_vectors), "Unlabelled", dtype=object)
+            for _ in self.cluster_layers
+        ]
+        for (layer, _), topic in self.topics.items():
+            vectors[layer][topic.members] = (
+                topic.name if topic.name is not None else "Unlabelled"
+            )
         return vectors
 
     @property
     def topic_names(self):
-        all_names = []
-        for layer, matrix in enumerate(self.cluster_layers):
-            layer_names = []
-            for cluster in range(matrix.shape[1]):
-                cluster_uid = topic_uid((layer, cluster))
-                cluster_name = self.topic_df[self.topic_df["uid"] == cluster_uid][
-                    "name"
-                ].values[0]
-                layer_names.append(cluster_name)
-            all_names.append(layer_names)
-        return all_names
+        return [
+            {
+                label: topic.name
+                for (index, label), topic in self.topics.items()
+                if index == layer
+            }
+            for layer in range(len(self.cluster_layers))
+        ]
 
     def topic_tree(self, prune_duplicates=True, **kwargs):
         """

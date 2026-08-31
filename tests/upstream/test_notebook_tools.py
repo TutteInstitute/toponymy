@@ -5,11 +5,11 @@ import httpx
 import nbformat
 import pytest
 import socket
-from huggingface_hub import hf_hub_url
 
 from nbformat.v4 import new_notebook, new_code_cell
 
 from toponymy.tools.notebook_test_helpers import (
+    examples_dir,
     get_test_ollama_model,
     notebook_test_replacement,
 )
@@ -32,9 +32,108 @@ from toponymy.tools.notebook_runner import (
 )
 from toponymy.llm_wrappers import OpenAINamer, OllamaNamer, LiteLLMNamer
 
+pytestmark = pytest.mark.usefixtures("local_notebook_kernel")
+
 
 def _deny_network(*args, **kwargs):
     raise AssertionError("Unexpected network call in HF fallback test")
+
+
+def test_examples_directory_accepts_explicit_local_path(tmp_path, monkeypatch):
+    data = tmp_path / "example-data"
+    data.mkdir()
+    monkeypatch.setenv("TOPONYMY_EXAMPLES_DIR", str(data))
+    assert examples_dir() == data.resolve()
+
+
+def test_small_dataset_loader_uses_explicit_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOPONYMY_EXAMPLES_DIR", str(tmp_path))
+    calls = []
+    sentinel = object()
+
+    def read_local_parquet(path):
+        calls.append(path)
+        return sentinel
+
+    monkeypatch.setattr(
+        "toponymy.tools.notebook_data_load.pd.read_parquet", read_local_parquet
+    )
+    assert load_small_newsgroups() is sentinel
+    assert calls == [tmp_path / "20newsgroups_embedded_150.parquet"]
+
+
+def test_examples_directory_does_not_fall_back_from_explicit_missing_path(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TOPONYMY_EXAMPLES_DIR", str(tmp_path / "missing"))
+    with pytest.raises(FileNotFoundError, match="TOPONYMY_EXAMPLES_DIR"):
+        examples_dir()
+
+
+def test_examples_directory_rejects_empty_override(monkeypatch):
+    monkeypatch.setenv("TOPONYMY_EXAMPLES_DIR", "")
+    with pytest.raises(ValueError, match="TOPONYMY_EXAMPLES_DIR"):
+        examples_dir()
+
+
+def test_missing_checkout_examples_explain_local_data_configuration(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("TOPONYMY_EXAMPLES_DIR", raising=False)
+    monkeypatch.setattr("toponymy.tools.notebook_test_helpers.PACKAGE_ROOT", tmp_path)
+    with pytest.raises(FileNotFoundError, match="not the installed package"):
+        examples_dir()
+
+
+def test_notebook_uses_input_directory_from_an_unrelated_working_directory(
+    tmp_path, monkeypatch
+):
+    notebook_directory = tmp_path / "notebooks"
+    notebook_directory.mkdir()
+    (notebook_directory / "input.txt").write_text(
+        "local notebook input", encoding="utf8"
+    )
+    notebook = new_notebook(
+        cells=[
+            new_code_cell(
+                "from pathlib import Path\n"
+                "assert Path('input.txt').read_text(encoding='utf8') == 'local notebook input'\n"
+                "print('VERIFIED_RELATIVE_NOTEBOOK_INPUT')"
+            )
+        ]
+    )
+    path = notebook_directory / "relative.ipynb"
+    nbformat.write(notebook, path)
+    launch_directory = tmp_path / "launch"
+    launch_directory.mkdir()
+    monkeypatch.chdir(launch_directory)
+
+    executed = run_notebook(os.path.relpath(path), timeout=30)
+
+    assert any(
+        "VERIFIED_RELATIVE_NOTEBOOK_INPUT" in output.get("text", "")
+        for cell in executed.cells
+        for output in cell.get("outputs", [])
+    )
+    assert Path.cwd() == launch_directory
+
+
+def test_default_notebooks_missing_from_install_have_actionable_error(
+    tmp_path, monkeypatch
+):
+    from toponymy.tools import notebook_runner
+
+    monkeypatch.setattr(notebook_runner, "NOTEBOOKS", [tmp_path / "missing.ipynb"])
+    calls = []
+    monkeypatch.setattr(
+        notebook_runner, "run_notebook", lambda *args, **kwargs: calls.append(args)
+    )
+    with pytest.raises(FileNotFoundError, match="Pass explicit local notebook paths"):
+        notebook_runner.run_all()
+    assert calls == []
+
+    notebook_runner.run_all([str(tmp_path / "explicit.ipynb")])
+    assert calls == [(str(tmp_path / "explicit.ipynb"),)]
 
 
 def test_notebook_test_replacement_decorator(notebook_testing_env, monkeypatch):
@@ -201,6 +300,8 @@ def test_hf_loaders_no_fallback_without_network(monkeypatch, loader, expected_ur
 def test_hf_dataset_urls_are_reachable(hf_url):
     """Check that HF dataset URLs used in notebook_data_load are still reachable (HEAD request, no download)."""
 
+    from huggingface_hub import hf_hub_url
+
     # hf://datasets/<owner>/<repo>/<path/to/file> -> strip scheme, parse with PurePosixPath
     _, owner, repo, *file_parts = PurePosixPath(hf_url.removeprefix("hf://")).parts
     url = hf_hub_url(
@@ -311,6 +412,9 @@ def test_run_notebook_captures_logs_on_failure(tmp_path):
     )
 
 
+@pytest.mark.local_model(
+    reason="Probes a running Ollama service and requires a local model"
+)
 def test_openainamer_fallback_to_notebook_mock(notebook_testing_env, monkeypatch):
     """When NOTEBOOK_TESTING=true, OpenAINamer should fallback to NotebookOpenAINamerMock which returns OllamaNamer."""
     # test fallback case

@@ -9,7 +9,6 @@ from pathlib import Path
 import numpy as np
 import pytest
 import json
-import sentence_transformers
 
 
 def cosine_similarity(a, b):

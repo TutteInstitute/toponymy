@@ -167,7 +167,7 @@ def run_notebook(
         nb,
         timeout=timeout,
         kernel_name=kernel_name,
-        resources={"metadata": {"path": str(doc_dir())}},
+        resources={"metadata": {"path": str(Path(path).resolve().parent)}},
     )
 
     logger.info("Running %s", path)
@@ -258,6 +258,14 @@ def run_all(
     """
     if notebooks is None:
         notebooks = NOTEBOOKS
+        missing = [str(path) for path in notebooks if not Path(path).is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "Default documentation notebooks are available in a source checkout, "
+                "not the installed package. Pass explicit local notebook paths to "
+                "run_all([...]) or use a source checkout. Missing: "
+                + ", ".join(missing)
+            )
 
     for nb in notebooks:
         run_notebook(
