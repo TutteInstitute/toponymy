@@ -51,6 +51,26 @@ stages:
   - stage: RunAllTests
     displayName: Run test suite
     jobs:
+    - job: CheckBlackFormatting
+      displayName: 'Check code formatting with black'
+      pool:
+        vmImage: 'ubuntu-latest'
+      steps:
+      - task: UsePythonVersion@0
+        inputs:
+          versionSpec: '3.10'
+        displayName: 'Use Python 3.10'
+      
+      - script: |
+          python -m pip install --upgrade pip
+          python -m pip install -U uv
+          uv sync --extra dev --python 3.10
+        displayName: 'Install dependencies'
+      
+      - script: |
+          uv run black --check --diff --target-version py310 toponymy/ doc/
+        displayName: 'Check black formatting'
+
     - job: DetectChangedNotebooks
       condition: and(eq(variables['Build.Reason'], 'PullRequest'), not(canceled()))
       pool:

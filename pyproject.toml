@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toponymy"
-version = "0.5.3"
+version = "0.5.4"
 authors = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 maintainers = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 description = "A library for using large language models to name topics"
@@ -56,9 +56,13 @@ filterwarnings = [
 ]
 log_level = "INFO"
 
+[tool.black]
+line-length = 88
+target-version = ['py310']
+
 [tool.setuptools]
 zip-safe = false
-packages = ["toponymy"]
+packages = ["toponymy", "toponymy.tools"]
 include-package-data = true
 
 [tool.setuptools.package-data]
@@ -72,7 +76,7 @@ dev = [
     "anthropic",
     "anywidget",
     "azure-ai-inference",
-    "black",
+    "black==26.5.1",
     "bm25s",
     "cohere",
     "datamapplot>=0.7",

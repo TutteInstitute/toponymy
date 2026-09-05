@@ -47,6 +47,7 @@ and a tour of some of the richer functionality and uses cases.
    basic_usage
    params_and_options
    saving_loading
+   debugging_llm_runs
 
 .. toctree::
    :maxdepth: 1

@@ -6005,7 +6005,7 @@ wheels = [
 
 [[package]]
 name = "toponymy"
-version = "0.5.2"
+version = "0.5.4"
 source = { editable = "." }
 dependencies = [
     { name = "apricot-select" },
@@ -6082,7 +6082,7 @@ requires-dist = [
     { name = "anywidget", marker = "extra == 'dev'" },
     { name = "apricot-select" },
     { name = "azure-ai-inference", marker = "extra == 'dev'" },
-    { name = "black", marker = "extra == 'dev'" },
+    { name = "black", marker = "extra == 'dev'", specifier = "==26.5.1" },
     { name = "bm25s", marker = "extra == 'dev'" },
     { name = "cohere", marker = "extra == 'dev'" },
     { name = "datamapplot", marker = "extra == 'dev'", specifier = ">=0.7" },
