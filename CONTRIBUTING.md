@@ -76,7 +76,7 @@ If the check fails, you'll see which files need formatting.
 
 ### Running the Tests
 
-Toponymy uses `pytest`. The tests live under `toponymy/tests/`.
+Toponymy uses `pytest`. The consolidated tests live under `tests/`.
 
 Install the project dependencies from the repo root:
 ```shell
@@ -85,16 +85,24 @@ uv sync --extra dev
 ```
 Run all tests:
 ```shell
-uv run pytest toponymy/tests -v
+uv run pytest tests -v
 ```
 Run a specific test file:
 ```shell
-uv run pytest toponymy/tests/test_toponymy.py -v
+uv run pytest tests/test_pipeline_contracts.py -v
 ```
 Run tests with coverage:
 ```shell
-uv run pytest toponymy/tests --show-capture=no -v --disable-warnings \
+uv run pytest tests --show-capture=no -v \
   --junitxml=junit/test-results.xml \
   --cov=toponymy/ --cov-report=xml --cov-report=html
 ```
+
+The default suite uses local inputs and fake provider transports. Tests requiring
+cached embedding models are retained under `tests/upstream/` and skipped unless
+`--run-local-models` is supplied; no model is downloaded by those fixtures.
+Real clustering tests use small local arrays. Property checks use a bounded quick
+profile by default; set `TOPONYMY_PROPERTY_PROFILE=extended` for 3,000 clustering
+examples and `TOPONYMY_EXTENDED_TESTS=1` for 2,000 parser examples. See the test
+modules for their exact budgets.
 

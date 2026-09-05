@@ -1,40 +1,35 @@
+.. _installation:
+
 Installation
 ============
 
-To get started using Toponymy you first have to get Toponymy installed. Fortunately, this is easy to do.
-Toponymy is available on PyPI, so you can install it using pip:
+Toponymy requires Python 3.10 or newer. To install a released package:
 
 .. code-block:: shell
 
-    pip install toponymy
+   pip install toponymy
 
+To install a source checkout, run ``pip install .`` from its root. Use
+``pip install '.[dev]'`` for the development dependencies. The source-tree
+documentation describes v0.6; check your installed package version when using
+an older release.
 
-To get the latest and greatest version of Toponymy, you can also install it from source.
-
-.. code-block:: shell
-
-    git clone https://github.com/TutteInstitute/toponymy.git
-    cd toponymy
-    pip install .
-
-If you would like all the optional dependencies, you can install Toponymy with 
-the ``dev`` extra:
+PLSCAN is supplied by the required ``fast-hdbscan`` dependency. EVoC is optional:
 
 .. code-block:: shell
 
-    pip install .[dev]
+   pip install 'toponymy[evoc]'
 
-
-This provides the basics to get started, but Toponymy makes use of LLMs and embedding models as well. Instead 
-of havign a very large dependency list, we allow you to install what you need, and different options 
-will become available within Toponymy based on what you have installed.
-
-If you are interested in working with local models, you can install ``llama-cpp-python`` or huggingface's ``transformers``.
-This will enable you to use the LlamaCpp and HuggingFace models, respectively. For LlamaCpp you will also need to download
-the models you want to use. You can find the models on HuggingFace or other model repositories. For the HuggingFace models, 
-you can specify the model name and the HuggingFace class will handle the downloading for you.
+For the optional contrastive TreeSHAP keyphrase extractor:
 
 .. code-block:: shell
 
-    pip install llama-cpp-python
-    pip install transformers
+   pip install 'toponymy[treeshap]'
+
+Naming wrappers may require a provider SDK or a separately configured local
+model. Embedding providers are optional for the default exemplar-only pipeline
+when you already have semantic vectors. See :doc:`llm_wrappers` and
+:doc:`embedding_wrappers` for those boundaries.
+
+The :doc:`basic_usage` example uses local arrays and deterministic responses.
+It does not download models or call a service.

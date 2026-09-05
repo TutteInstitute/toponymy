@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toponymy"
-version = "0.5.4"
+version = "0.6.0.dev0"
 authors = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 maintainers = [{name = "John Healy", email = "jchealy@gmail.com"}, {name = "Leland McInnes", email = "leland.mcinnes@gmail.com"}]
 description = "A library for using large language models to name topics"
@@ -24,7 +24,6 @@ dependencies = [
     "apricot-select",
     "datasets",
     "fast_hdbscan>=0.3.2",
-    "evoc>=0.3.1",
     "httpx",
     "jinja2",
     "jsonschema>=4.18",
@@ -46,14 +45,13 @@ dependencies = [
 Homepage = "https://github.com/TutteInstitute/toponymy"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 markers = [
-    "external: marks tests that make live external API calls"
+    "external: tests requiring live services or externally downloaded models",
+    "local_model: tests requiring an explicitly provisioned local model",
+    "real_clustering: small maintained-library clustering integration tests",
 ]
+testpaths = ["tests"]
 addopts = "-m 'not external'"
-filterwarnings = [
-    "ignore:coroutine '.*' was never awaited:RuntimeWarning:litellm",
-]
 log_level = "INFO"
 
 [tool.black]
@@ -72,6 +70,12 @@ toponymy = [
 ]
 
 [project.optional-dependencies]
+evoc = ["evoc>=0.3.1"]
+treeshap = ["shap>=0.46,<1"]
+lance = ["pylance"]
+cohere = ["cohere"]
+azure = ["openai>=1.30"]
+example-notebooks = ["nbclient", "nbformat", "ipykernel"]
 dev = [
     "anthropic",
     "anywidget",
@@ -82,6 +86,7 @@ dev = [
     "datamapplot>=0.7",
     "evoc",
     "huggingface-hub<1.0",
+    "hypothesis>=6",
     "ipykernel",
     "isort",
     "matplotlib",
