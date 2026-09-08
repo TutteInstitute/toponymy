@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
+import toponymy.provider_batches as provider_batches
 from toponymy.provider_batches import (
     AzureBatchTransport,
     BatchItemError,
@@ -173,6 +174,10 @@ class CohereClient:
     def cancel(self, batch_id):
         self.calls.append(("cancel", batch_id))
         return SimpleNamespace(batch=SimpleNamespace(status="BATCH_STATUS_CANCELING"))
+
+
+class SDKTimeoutError(asyncio.TimeoutError):
+    pass
 
 
 def azure_transport(client, **kwargs):
@@ -703,6 +708,174 @@ async def test_poll_retry_budget_is_not_reset_by_intermediate_pending_status():
     with pytest.raises(httpx.HTTPStatusError):
         await azure_transport(client, max_poll_retries=1).wait_for_completion("batch")
     assert len(client.calls) == 3
+
+
+@pytest.fixture
+def fixed_polling_clock(monkeypatch):
+    # Keep the polling clock before its deadline while the real asyncio timer
+    # expires. Event-loop timer resolution can produce this ordering on Windows.
+    api = SimpleNamespace(
+        **{
+            name: getattr(asyncio, name)
+            for name in (
+                "create_task",
+                "wait_for",
+                "to_thread",
+                "sleep",
+                "TimeoutError",
+            )
+        },
+        get_running_loop=lambda: SimpleNamespace(time=lambda: 100.0),
+    )
+    monkeypatch.setattr(provider_batches, "asyncio", api)
+    return api
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["azure", "cohere"])
+@pytest.mark.parametrize("request_timeout", [1.0, 2.0])
+async def test_owned_overall_expiry_does_not_require_clock_to_reach_deadline(
+    provider, request_timeout, fixed_polling_clock
+):
+    timers = []
+
+    async def expire_early(awaitable, *, timeout):
+        timers.append(timeout)
+        return await asyncio.wait_for(awaitable, timeout=0)
+
+    fixed_polling_clock.wait_for = expire_early
+    client = AzureClient() if provider == "azure" else CohereClient()
+    factory = azure_transport if provider == "azure" else cohere_transport
+    transport = factory(
+        client, timeout=1.0, request_timeout=request_timeout, max_poll_retries=0
+    )
+    assert await transport.wait_for_completion("batch") is False
+    assert timers == [1.0]
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["azure", "cohere"])
+@pytest.mark.parametrize("complete", [False, True])
+@pytest.mark.parametrize("timeout_type", [asyncio.TimeoutError, SDKTimeoutError])
+async def test_sdk_timeout_keeps_its_retry_budget_and_exception_identity(
+    provider, complete, timeout_type, fixed_polling_clock
+):
+    client = AzureClient() if provider == "azure" else CohereClient()
+    factory = azure_transport if provider == "azure" else cohere_transport
+    completed = "completed" if provider == "azure" else "BATCH_STATUS_COMPLETED"
+    pending = "in_progress" if provider == "azure" else "BATCH_STATUS_QUEUED"
+    error = timeout_type("SDK request timeout")
+    cause = asyncio.CancelledError("SDK internal cancellation")
+    error.__cause__ = cause
+    client.statuses = deque(
+        [error, pending, completed] if complete else [error, pending, error, completed]
+    )
+    # The overall deadline limits every request here. An SDK TimeoutError must
+    # still retry and then propagate; its type or cause does not prove ownership.
+    transport = factory(client, timeout=10.0, request_timeout=20.0, max_poll_retries=1)
+    if complete:
+        assert await transport.wait_for_completion("batch") is True
+    else:
+        with pytest.raises(asyncio.TimeoutError) as raised:
+            await transport.wait_for_completion("batch")
+        assert type(raised.value) is timeout_type
+        assert str(raised.value) == "SDK request timeout"
+        # CPython converts exact built-in timeouts at the thread-future boundary.
+        # SDK subclasses retain their identity and cause across that boundary.
+        if timeout_type is SDKTimeoutError:
+            assert raised.value is error
+            assert raised.value.__cause__ is cause
+    assert client.calls == [("retrieve", "batch")] * 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["azure", "cohere"])
+@pytest.mark.parametrize("complete", [False, True])
+async def test_owned_request_expiry_retries_without_becoming_overall_expiry(
+    provider, complete, fixed_polling_clock
+):
+    timers = []
+
+    async def expire_requests(awaitable, *, timeout):
+        timers.append(timeout)
+        if complete and len(timers) == 2:
+            return await asyncio.wait_for(awaitable, timeout=timeout)
+        return await asyncio.wait_for(awaitable, timeout=0)
+
+    fixed_polling_clock.wait_for = expire_requests
+    client = AzureClient() if provider == "azure" else CohereClient()
+    factory = azure_transport if provider == "azure" else cohere_transport
+    transport = factory(client, timeout=10.0, request_timeout=1.0, max_poll_retries=1)
+    if complete:
+        assert await transport.wait_for_completion("batch") is True
+        assert client.calls == [("retrieve", "batch")]
+    else:
+        with pytest.raises(asyncio.TimeoutError):
+            await transport.wait_for_completion("batch")
+        assert client.calls == []
+    assert timers == [1.0, 1.0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["azure", "cohere"])
+async def test_poll_cancellation_propagates_while_status_request_is_awaited(
+    provider, fixed_polling_clock
+):
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def waiting_call(function, *args):
+        started.set()
+        try:
+            await asyncio.Future()
+        finally:
+            stopped.set()
+
+    fixed_polling_clock.to_thread = waiting_call
+    client = AzureClient() if provider == "azure" else CohereClient()
+    factory = azure_transport if provider == "azure" else cohere_transport
+    waiter = asyncio.create_task(factory(client).wait_for_completion("batch"))
+    await started.wait()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert stopped.is_set()
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["azure", "cohere"])
+@pytest.mark.parametrize("outcome", ["failed", "unknown", "pending_deadline"])
+async def test_status_outcomes_remain_distinct_from_request_expiry(
+    provider, outcome, fixed_polling_clock
+):
+    clock = [100.0]
+
+    async def reach_deadline(delay):
+        clock[0] += 1.0
+
+    fixed_polling_clock.get_running_loop = lambda: SimpleNamespace(
+        time=lambda: clock[0]
+    )
+    fixed_polling_clock.sleep = reach_deadline
+    client = AzureClient() if provider == "azure" else CohereClient()
+    factory = azure_transport if provider == "azure" else cohere_transport
+    status = {
+        "azure": {"failed": "failed", "pending_deadline": "in_progress"},
+        "cohere": {
+            "failed": "BATCH_STATUS_FAILED",
+            "pending_deadline": "BATCH_STATUS_QUEUED",
+        },
+    }[provider].get(outcome, "undocumented_status")
+    client.statuses = deque([status])
+    transport = factory(client, timeout=1.0)
+    if outcome == "unknown":
+        with pytest.raises(BatchProtocolError, match="Unknown batch status"):
+            await transport.wait_for_completion("batch")
+    else:
+        assert await transport.wait_for_completion("batch") is False
+    assert client.calls == [("retrieve", "batch")]
 
 
 @pytest.mark.asyncio

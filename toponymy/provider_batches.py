@@ -440,8 +440,18 @@ def _transient(error: Exception) -> bool:
     )
 
 
+class _ThreadCallTimeout(asyncio.TimeoutError):
+    """The local await expired, rather than the SDK raising its own timeout."""
+
+
 async def _thread_call(function: Callable[..., T], *args: object, timeout: float) -> T:
-    return await asyncio.wait_for(asyncio.to_thread(function, *args), timeout=timeout)
+    task = asyncio.create_task(asyncio.to_thread(function, *args))
+    try:
+        return await asyncio.wait_for(task, timeout=timeout)
+    except asyncio.TimeoutError as error:
+        if task.cancelled():
+            raise _ThreadCallTimeout() from error
+        raise
 
 
 async def _wait_for_status(
@@ -466,7 +476,12 @@ async def _wait_for_status(
                 get_status, batch_id, timeout=min(request_timeout, remaining)
             )
         except errors as error:
-            if deadline <= loop.time():
+            # A timer may fire before a separate clock read reaches its deadline.
+            # Only our own deadline-limited await proves overall expiry; an SDK
+            # timeout still follows the transient-error policy below.
+            if (
+                isinstance(error, _ThreadCallTimeout) and remaining <= request_timeout
+            ) or deadline <= loop.time():
                 return False
             if not _transient(error) or remaining_retries == 0:
                 raise
