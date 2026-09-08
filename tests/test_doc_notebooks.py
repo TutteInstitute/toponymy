@@ -161,6 +161,15 @@ def test_notebook_inventory_requires_an_execution_policy():
     assert actual == RESULT_CHECKS.keys() | HISTORICAL_NOTEBOOKS.keys()
 
 
+@pytest.mark.parametrize("name", sorted(RESULT_CHECKS))
+def test_current_notebooks_start_with_a_document_title(name):
+    notebook = nbformat.read(doc_dir() / name, as_version=4)
+    first_markdown = next(
+        cell for cell in notebook.cells if cell.cell_type == "markdown"
+    )
+    title = first_markdown.source.splitlines()[0]
+    assert title.startswith("# ")
+    assert title[2:].strip()
 
 
 @pytest.mark.parametrize("name", sorted(HISTORICAL_NOTEBOOKS))
