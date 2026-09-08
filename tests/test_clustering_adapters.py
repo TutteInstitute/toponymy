@@ -133,7 +133,9 @@ def test_evoc_uses_actual_constructor_options_and_shared_tree_rule(monkeypatch):
             return self
 
     monkeypatch.setitem(sys.modules, "evoc", SimpleNamespace(EVoC=ExternalEVoC))
-    estimator = EVoCClusterer(random_state=31, approx_n_clusters=2).fit(np.ones((6, 2)))
+    estimator = EVoCClusterer(random_state=31, approx_n_clusters=2, isolated=False).fit(
+        np.ones((6, 2))
+    )
     assert calls[0]["random_state"] == 31
     assert calls[0]["approx_n_clusters"] == 2
     assert (0, 4) in estimator.cluster_tree_[(2, 0)]
@@ -179,7 +181,8 @@ def test_external_programming_errors_propagate(factory, module, attribute, monke
         sys.modules, module, SimpleNamespace(**{attribute: BrokenEstimator})
     )
     with pytest.raises(RuntimeError, match="external implementation"):
-        factory().fit(np.ones((6, 2)))
+        options = {"isolated": False} if factory is EVoCClusterer else {}
+        factory(**options).fit(np.ones((6, 2)))
 
 
 @pytest.mark.parametrize(

@@ -58,6 +58,26 @@ change membership. Empty input and all-noise partitions are valid results.
 layer. Its ``fit(vectors)`` validates the observation count. When labels were
 not supplied to the constructor, ``fit(label_layers)`` remains supported.
 
+EVoC fitting
+------------
+
+``EVoCClusterer`` fits in a fresh Python process by default. EVoC and
+fast_hdbscan currently define distinct internal namedtuple classes with the
+same names and fields. Numba's process-wide runtime type cache can confuse
+these classes when both libraries fit in one process. Isolation keeps both
+algorithms usable without changing their kernels or suppressing failures.
+
+The adapter preserves EVoC's naturally selected layers and returns its actual
+fitted model as ``evoc_``. Input passes through a temporary memory-mapped file;
+the process and temporary files are cleaned up after completion or interruption.
+The additional interpreter startup, compilation, disk space and model handoff
+costs apply to every fit. Child failures propagate with their error output.
+The caller's environment and thread settings are inherited unchanged.
+
+``EVoCClusterer(isolated=False)`` opts into direct fitting for a process where
+only EVoC executes clustering kernels. Accessing fitted attributes on ``evoc_``
+is supported; directly calling its kernel-executing methods bypasses isolation.
+Use the adapter's ``fit`` method when refitting alongside PLSCAN.
 
 Staged naming
 -------------

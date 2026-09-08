@@ -10,8 +10,6 @@ from scipy import sparse
 from sklearn.base import BaseEstimator
 from sklearn.exceptions import NotFittedError
 
-from toponymy.utility_functions import centroids_from_labels as centroids_from_labels
-
 from toponymy.types import (
     Cluster,
     ClusterLayer,
@@ -19,6 +17,7 @@ from toponymy.types import (
     _integer_vector,
     _nonnegative_integer,
 )
+from toponymy.utility_functions import centroids_from_labels as centroids_from_labels
 
 
 def _validate_label_layers(labels: Sequence[np.ndarray]) -> list[np.ndarray]:
@@ -167,6 +166,8 @@ class Clusterer(ABC, BaseEstimator):
         """Fit this estimator and return it."""
 
     def fit_predict(self, data=None, **kwargs):
+        if data is None and "clusterable_vectors" in kwargs:
+            data = kwargs.pop("clusterable_vectors")
         self.fit(data, **kwargs)
         return self.cluster_layers_, self.cluster_tree_
 
@@ -184,7 +185,9 @@ class Clusterer(ABC, BaseEstimator):
             tree = build_cluster_tree([layer.labels for layer in layers])
         validate_cluster_tree(tree, layers)
         self.cluster_layers_ = layers
-        self.cluster_tree_ = {parent: list(children) for parent, children in tree.items()}
+        self.cluster_tree_ = {
+            parent: list(children) for parent, children in tree.items()
+        }
         return self
 
 
@@ -222,7 +225,9 @@ class PrecomputedClusterer(Clusterer):
             if data is not None:
                 vectors = _validate_vectors(data, precomputed=sparse.issparse(data))
                 if configured and vectors.shape[0] != configured[0].size:
-                    raise ValueError("vectors and labels must have the same observation count")
+                    raise ValueError(
+                        "vectors and labels must have the same observation count"
+                    )
         return self._set_labels(configured, tree=self.cluster_tree)
 
 
@@ -241,9 +246,17 @@ class KMeansClusterer(Clusterer):
         self.random_state = random_state
         self.verbose = verbose
 
-    def fit(self, vectors, verbose=None):
+    def fit(
+        self,
+        vectors=None,
+        *,
+        clusterable_vectors=None,
+        verbose=None,
+    ):
         from sklearn.cluster import KMeans
 
+        if vectors is None:
+            vectors = clusterable_vectors
         vectors = _validate_vectors(vectors)
         for name in ("min_clusters", "base_n_clusters"):
             value = _nonnegative_integer(getattr(self, name), name)
@@ -265,15 +278,17 @@ class KMeansClusterer(Clusterer):
             n_clusters //= 4
             if n_clusters == 0:
                 break
-        return self._set_labels(labels)
+        self._set_labels(labels)
+        return self
 
 
 def _validate_density_parameters(estimator):
     for name in ("min_samples", "base_min_cluster_size", "max_layers"):
+        if name == "max_layers" and getattr(estimator, name) is None:
+            continue
         value = _nonnegative_integer(getattr(estimator, name), name)
         if value < (2 if name == "base_min_cluster_size" else 1):
             raise ValueError(f"{name} is too small")
-
 
 
 class PLSCANClusterer(Clusterer):
@@ -354,6 +369,7 @@ class PLSCANClusterer(Clusterer):
 
     def __init__(
         self,
+        min_clusters: int = 1,
         min_samples: int = 5,
         max_layers: int = 10,
         base_min_cluster_size: int = 5,
@@ -365,10 +381,11 @@ class PLSCANClusterer(Clusterer):
         knn_k: Optional[int] = None,
         cannot_link: Optional[list[Tuple[int, int]]] = None,
         validate_cannot_link: bool = True,
-        metric_kwds: dict or None = None,
+        metric_kwds: Optional[dict] = None,
         verbose: Optional[bool] = None,
     ):
         super().__init__()
+        self.min_clusters = min_clusters
         self.min_samples = min_samples
         self.max_layers = max_layers
         self.base_min_cluster_size = base_min_cluster_size
@@ -383,9 +400,20 @@ class PLSCANClusterer(Clusterer):
         self.metric_kwds = metric_kwds
         self.verbose = verbose
 
-    def fit(self, vectors: np.ndarray, verbose: Optional[bool] = None):
+    def fit(
+        self,
+        vectors: np.ndarray = None,
+        *,
+        clusterable_vectors=None,
+        verbose: Optional[bool] = None,
+    ):
+        if vectors is None:
+            vectors = clusterable_vectors
         vectors = _validate_vectors(vectors, precomputed=self.metric == "precomputed")
         _validate_density_parameters(self)
+        min_clusters = _nonnegative_integer(self.min_clusters, "min_clusters")
+        if min_clusters == 0:
+            raise ValueError("min_clusters must be positive")
         if not vectors.shape[0]:
             self.plscan_ = None
             return self._set_labels([])
@@ -395,10 +423,34 @@ class PLSCANClusterer(Clusterer):
         from fast_hdbscan import PLSCAN
 
         options = self.get_params(deep=False)
+        options.pop("min_clusters")
+        if options["max_layers"] is None:
+            options["max_layers"] = max(1, vectors.shape[0])
         options["verbose"] = bool(self.verbose if verbose is None else verbose)
         estimator = PLSCAN(**options)
         estimator.fit(vectors)
-        self._set_labels(estimator.cluster_layers_)
+        labels = [
+            np.asarray(layer, dtype=np.int64)
+            for layer in getattr(estimator, "cluster_layers_", [])
+            if np.unique(np.asarray(layer)[np.asarray(layer) >= 0]).size >= min_clusters
+        ]
+        if not labels and vectors.shape[0]:
+            labels = [np.full(vectors.shape[0], -1, dtype=np.int64)]
+        if self.max_layers is not None:
+            labels = labels[: self.max_layers]
+        self._set_labels(labels)
+        self.cluster_probabilities_ = [
+            np.asarray(probability)
+            for probability in getattr(
+                estimator,
+                "membership_strength_layers_",
+                [np.ones_like(layer, dtype=float) for layer in labels],
+            )
+        ][: len(labels)]
+        self.cluster_persistence_scores_ = list(
+            getattr(estimator, "layer_persistence_scores_", [1.0 for _ in labels])
+        )[: len(labels)]
+        self.plscan_min_cluster_sizes_ = getattr(estimator, "min_cluster_sizes_", None)
         self.plscan_ = estimator
         return self
 
@@ -495,6 +547,13 @@ class EVoCClusterer(Clusterer):
         the label propagation process takes to converge when node_embedding_init
         is set to 'label_prop'.
 
+    isolated : bool, default=True
+        Fit EVoC in a fresh Python process to avoid a Numba type-cache collision
+        with fast_hdbscan. Input is handed off through a temporary memory-mapped
+        file, and the fitted EVoC object is returned. This adds process startup,
+        compilation and disk I/O costs. Set False only when EVoC is the sole
+        clustering library executing Numba kernels in this process.
+
     Attributes
     ----------
     cluster_layers_ : List[ClusterLayer]
@@ -505,7 +564,9 @@ class EVoCClusterer(Clusterer):
 
     evoc_ : EVoC
         The fitted EVoC object. Algorithm specific attributes saved
-        during the fit process can be accessed here.
+        during the fit process can be accessed here. Calling its methods that
+        execute EVoC kernels directly is not isolated; call this adapter's fit
+        method to fit again safely alongside fast_hdbscan.
 
     """
 
@@ -527,6 +588,7 @@ class EVoCClusterer(Clusterer):
         max_layers: int = 10,
         n_label_prop_iter: int = 20,
         verbose: Optional[bool] = False,
+        isolated: bool = True,
     ):
         super().__init__()
         self.noise_level = noise_level
@@ -545,10 +607,13 @@ class EVoCClusterer(Clusterer):
         self.max_layers = max_layers
         self.n_label_prop_iter = n_label_prop_iter
         self.verbose = verbose
+        self.isolated = isolated
 
     def fit(self, vectors: np.ndarray):
         vectors = _validate_vectors(vectors)
         _validate_density_parameters(self)
+        if not isinstance(self.isolated, bool):
+            raise ValueError("isolated must be a boolean")
         if not vectors.shape[0]:
             self.evoc_ = None
             return self._set_labels([])
@@ -565,8 +630,14 @@ class EVoCClusterer(Clusterer):
         options = self.get_params(deep=False)
         # EVoC 0.3.1 has no verbose constructor argument.
         options.pop("verbose")
-        estimator = EVoC(**options)
-        estimator.fit(vectors)
+        options.pop("isolated")
+        if self.isolated:
+            from toponymy._evoc import fit_isolated
+
+            estimator = fit_isolated(vectors, options)
+        else:
+            estimator = EVoC(**options)
+            estimator.fit(vectors)
         self._set_labels(estimator.cluster_layers_)
         self.evoc_ = estimator
         return self
@@ -575,10 +646,10 @@ class EVoCClusterer(Clusterer):
 class ToponymyClusterer(PLSCANClusterer):
     """Deprecated name for PLSCANClusterer; legacy kernel options are removed."""
 
-    def fit(self, vectors, verbose=None):
+    def fit(self, vectors=None, verbose=None, **kwargs):
         warnings.warn(
             "ToponymyClusterer now uses PLSCAN; use PLSCANClusterer explicitly",
             FutureWarning,
             stacklevel=2,
         )
-        return super().fit(vectors, verbose=verbose)
+        return super().fit(vectors, verbose=verbose, **kwargs)
