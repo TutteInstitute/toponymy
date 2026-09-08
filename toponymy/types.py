@@ -109,6 +109,4 @@ class ClusterLayer:
 class TextEmbedderProtocol(Protocol):
     """The text encoding boundary used by selected feature extractors."""
 
-    def encode(
-        self, texts: Sequence[str], *args, **kwargs
-    ) -> NDArray[np.floating]: ...
+    def encode(self, texts: Sequence[str], *args, **kwargs) -> NDArray[np.floating]: ...

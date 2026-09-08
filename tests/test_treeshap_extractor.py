@@ -1,7 +1,7 @@
-import builtins
 """Real, small optional SHAP integrations; no provider calls or model downloads."""
 
 from types import SimpleNamespace
+import builtins
 import importlib.util
 
 import numpy as np
@@ -45,12 +45,22 @@ def test_exact_tree_shap_finds_present_contrastive_terms_and_refits():
     assert changed == [[["pear"], ["motor"]]]
 
 
-@pytest.mark.skipif(importlib.util.find_spec("shap") is None, reason="requires optional treeshap extra")
+@pytest.mark.skipif(
+    importlib.util.find_spec("shap") is None, reason="requires optional treeshap extra"
+)
 def test_tree_shap_actual_text_vectorization_and_dense_size_bound():
-    objects = ["apple pear fruit", "apple pear food", "engine motor vehicle", "engine motor machine"]
-    extractor = TreeSHAPKeyphraseExtractor(n_keyphrases=2, max_features=4,
-                                         max_samples_per_class=2, n_estimators=12)
-    result = extractor.fit_predict(objects, [SimpleNamespace(labels=np.array([9, 9, 40, 40]))])
+    objects = [
+        "apple pear fruit",
+        "apple pear food",
+        "engine motor vehicle",
+        "engine motor machine",
+    ]
+    extractor = TreeSHAPKeyphraseExtractor(
+        n_keyphrases=2, max_features=4, max_samples_per_class=2, n_estimators=12
+    )
+    result = extractor.fit_predict(
+        objects, [SimpleNamespace(labels=np.array([9, 9, 40, 40]))]
+    )
     assert len(extractor.keyphrase_list_) <= 4
     assert len(result[0]) == 2
     assert all(result[0])
@@ -75,8 +85,15 @@ def test_tree_shap_requires_a_real_contrast_and_does_not_import_shap(
     assert extractor.classifier_count_ == 0
 
 
-@pytest.mark.parametrize("configuration", [{"max_features": 0}, {"max_samples_per_class": -2},
-                                            {"n_estimators": 0}, {"n_keyphrases": 0}])
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        {"max_features": 0},
+        {"max_samples_per_class": -2},
+        {"n_estimators": 0},
+        {"n_keyphrases": 0},
+    ],
+)
 def test_tree_shap_validates_resource_bounds(configuration):
     with pytest.raises(ValueError, match="positive"):
         TreeSHAPKeyphraseExtractor(**configuration).fit_predict([], [])

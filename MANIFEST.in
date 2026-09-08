@@ -1,0 +1,5 @@
+include CONTRIBUTING.md
+recursive-include tests *.py *.json *.npy *.zip
+recursive-include doc *.rst *.ipynb *.py *.txt *.png *.svg
+recursive-include examples *.py *.parquet *.zip *.npy
+global-exclude *.py[cod]

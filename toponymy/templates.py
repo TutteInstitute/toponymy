@@ -96,6 +96,126 @@ class TextTemplate(Template):
     subtopic_start: ClassVar[str] = "<SUBTOPIC>\n"
     subtopic_end: ClassVar[str] = "\n</SUBTOPIC>"
 
+    # Fixed programs are shared; every render receives its own fresh context.
+    _disambiguation_system_program: ClassVar[jinja2.Template] = jinja2.Template("""
+You are an expert in {{corpus_description}}. You have been asked to provide more specific and distinguishing names for various groups of
+{{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
+
+Your task is to generate a new {{name_kind}} name for each topic group presented.
+You should make use of the relative relationships between these topics, their keywords, subtopic information, and sample {{document_type}} to generate new, distinct topic names.
+The new names must be in the same order as the original topics are presented.
+There should be no duplicate topic names in your final list of new names.
+
+{% if "very specific" in name_kind %}
+Each new topic name should be specific to the information of that topic and sufficiently detailed to ensure it can be distinguished from all the other similar topics listed.
+{% elif "general" in name_kind %}
+Each topic name should be broad and simple enough to capture the overall sense of the large and diverse range of {{document_type}} contained in it at a glance, while still separating it from the other topics listed.
+{% endif %}
+{% if features_list | selectattr("cluster_subtopics.major") | list %}
+When major subtopics are present, primarily make use of the major and minor subtopics, and ensure each generated topic name reflects the core essence of *all* major subtopics.
+{% endif %}
+
+The response must be formatted as a single JSON object in the format:
+{"new_topic_name_mapping": {"1": "NEW_TOPIC_NAME1", "2": "NEW_TOPIC_NAME2", ... }, "topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
+where each NEW_TOPIC_NAME value is a JSON string containing the complete new topic name, and SCORE is a float value between 0.0 and 1.0 representing the quality and specificity of the new name.
+If the current auto-generated names are bilingual, keep the same "English / French" style in a single string value.
+Ensure your entire response is only the JSON object, with no other text before or after it.
+""")
+
+    _disambiguation_user_program: ClassVar[jinja2.Template] = jinja2.Template("""
+Below are the auto-generated topic names, along with keywords, subtopics, and sample {{document_type}} for each topic area.
+
+Corpus description: {{corpus_description}}
+
+{% for features, name in feature_names %}
+"{{loop.index}}":
+- Current auto-generated name: {{name}}
+{% if features["cluster_keywords"] %}
+- Keywords for this group include: {{", ".join(features["cluster_keywords"])}}
+{% endif %}
+{%- if features["cluster_subtopics"]["major"] %}
+- Major subtopics of this group are:
+{%- for subtopic in features["cluster_subtopics"]["major"] %}
+{{features["subtopic_start"]}}{{subtopic}}{{features["subtopic_end"]}}
+{%- endfor %}
+{%- endif %}
+{%- if features["cluster_subtopics"]["minor"] %}
+- Minor subtopics of this group are:
+{%- for subtopic in features["cluster_subtopics"]["minor"] %}
+{{features["subtopic_start"]}}{{subtopic}}{{features["subtopic_end"]}}
+{%- endfor %}
+{%- endif %}
+{%- if features["cluster_subtopics"]["misc"] %}
+- Other miscellaneous specific subtopics of this group in order of relevance (from most to least) include:
+{%- for subtopic in features["cluster_subtopics"]["misc"] %}
+{{features["subtopic_start"]}}{{subtopic}}{{features["subtopic_end"]}}
+{%- endfor %}
+{%- endif %}
+{%- if features["cluster_sentences"] %}
+- Sample {{document_type}} from this group include:
+{%- for sentence in features["cluster_sentences"] %}
+{{features["exemplar_start_delimiter"]}}{{sentence}}{{features["exemplar_end_delimiter"]}}
+{%- endfor %}
+{%- endif %}
+{% endfor %}
+
+Please provide new {{name_kind}} names for each topic, following the JSON output format specified.
+""")
+
+    _cluster_system_program: ClassVar[jinja2.Template] = jinja2.Template("""
+You are an expert at classifying {{document_type}} from {{corpus_description}} into topics.
+Your task is to {{cluster_task}} for this group of {{document_type}} from {{corpus_description}}. The name should be {{name_kind}}.
+The response must be {{cluster_response_description}}
+A score of 1.0 means a perfectly descriptive and specific name, while 0.0 would be a completely generic or unrelated name.
+{% if "very specific" in name_kind %}
+Make every requested output precise, detailed, and distinguishing. The topic name should be specific to the information given and sufficiently detailed to distinguish it from similarly detailed topics. If analysis or summary fields are requested, apply the same specificity level to those fields.
+{% elif "general" in name_kind %}
+Make every requested output broad enough to capture the overall range at a glance. The topic name should be broad and simple enough to capture the overall sense of the large and diverse range of {{document_type}} contained in it. If analysis or summary fields are requested, apply the same generality level to those fields.
+{% endif %}
+{% if cluster_subtopics["major"] %}
+When major subtopics are present, primarily make use of the major and minor subtopics, and ensure each generated topic name reflects the core essence of *all* major subtopics.
+{% endif %}
+Ensure your entire response is only the JSON object, with no other text before or after it.
+{% if summary_kind %}
+If a summary is requested, its form should be {{summary_kind}}.
+{% endif %}
+Keep all JSON string values on a single line (escape any newlines as \\n).
+""")
+
+    _cluster_user_program: ClassVar[jinja2.Template] = jinja2.Template("""
+Here is the information about the group of {{document_type}}:
+{% if cluster_keywords %}
+- Keywords for this group include: {{", ".join(cluster_keywords)}}
+{% endif %}
+{%- if cluster_subtopics["major"] %}
+- Major subtopics of this group are:
+{%- for subtopic in cluster_subtopics["major"] %}
+{{subtopic_start}}{{subtopic}}{{subtopic_end}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["minor"] %}
+- Minor subtopics of this group are:
+{%- for subtopic in cluster_subtopics["minor"] %}
+{{subtopic_start}}{{subtopic}}{{subtopic_end}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_subtopics["misc"] %}
+- Other miscellaneous detailed subtopics of this group in order of relevance (from most to least) include:
+{%- for subtopic in cluster_subtopics["misc"] %}
+{{subtopic_start}}{{subtopic}}{{subtopic_end}}
+{%- endfor %}
+{%- endif %}
+{%- if cluster_sentences %}
+- Sample {{document_type}} from this group include:
+{%- for sentence in cluster_sentences %}
+{{exemplar_start_delimiter}}{{sentence}}{{exemplar_end_delimiter}}
+{%- endfor %}
+{%- endif %}
+
+Based on this information, {{user_request}} for this group of {{document_type}}. The name should be {{name_kind}}.
+Recall that the response must be {{cluster_response_description}}
+""")
+
     def _add_template_features(
         self, features: dict[str, Any], name_kind: str
     ) -> dict[str, Any]:
@@ -152,73 +272,10 @@ class TextTemplate(Template):
         features: list[dict[str, Any]],
         name_kind: str,
     ) -> Prompt:
-        system_prompt = jinja2.Template("""
-You are an expert in {{corpus_description}}. You have been asked to provide more specific and distinguishing names for various groups of
-{{document_type}} from {{corpus_description}} that have been assigned overly similar auto-generated topic names.
-
-Your task is to generate a new {{name_kind}} name for each topic group presented.
-You should make use of the relative relationships between these topics, their keywords, subtopic information, and sample {{document_type}} to generate new, distinct topic names.
-The new names must be in the same order as the original topics are presented.
-There should be no duplicate topic names in your final list of new names.
-
-{% if "very specific" in name_kind %}
-Each new topic name should be specific to the information of that topic and sufficiently detailed to ensure it can be distinguished from all the other similar topics listed.
-{% elif "general" in name_kind %}
-Each topic name should be broad and simple enough to capture the overall sense of the large and diverse range of {{document_type}} contained in it at a glance, while still separating it from the other topics listed.
-{% endif %}
-{% if features_list | selectattr("cluster_subtopics.major") | list %}
-When major subtopics are present, primarily make use of the major and minor subtopics, and ensure each generated topic name reflects the core essence of *all* major subtopics.
-{% endif %}
-
-The response must be formatted as a single JSON object in the format:
-{"new_topic_name_mapping": {"1": "NEW_TOPIC_NAME1", "2": "NEW_TOPIC_NAME2", ... }, "topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
-where each NEW_TOPIC_NAME value is a JSON string containing the complete new topic name, and SCORE is a float value between 0.0 and 1.0 representing the quality and specificity of the new name.
-If the current auto-generated names are bilingual, keep the same "English / French" style in a single string value.
-Ensure your entire response is only the JSON object, with no other text before or after it.
-""")
-        user_prompt = jinja2.Template("""
-Below are the auto-generated topic names, along with keywords, subtopics, and sample {{document_type}} for each topic area.
-
-Corpus description: {{corpus_description}}
-
-{% for features, name in feature_names %}
-"{{loop.index}}":
-- Current auto-generated name: {{name}}
-{% if features["cluster_keywords"] %}
-- Keywords for this group include: {{", ".join(features["cluster_keywords"])}}
-{% endif %}
-{%- if features["cluster_subtopics"]["major"] %}
-- Major subtopics of this group are:
-{%- for subtopic in features["cluster_subtopics"]["major"] %}
-{{features["subtopic_start"]}}{{subtopic}}{{features["subtopic_end"]}}
-{%- endfor %}
-{%- endif %}
-{%- if features["cluster_subtopics"]["minor"] %}
-- Minor subtopics of this group are:
-{%- for subtopic in features["cluster_subtopics"]["minor"] %}
-{{features["subtopic_start"]}}{{subtopic}}{{features["subtopic_end"]}}
-{%- endfor %}
-{%- endif %}
-{%- if features["cluster_subtopics"]["misc"] %}
-- Other miscellaneous specific subtopics of this group in order of relevance (from most to least) include:
-{%- for subtopic in features["cluster_subtopics"]["misc"] %}
-{{features["subtopic_start"]}}{{subtopic}}{{features["subtopic_end"]}}
-{%- endfor %}
-{%- endif %}
-{%- if features["cluster_sentences"] %}
-- Sample {{document_type}} from this group include:
-{%- for sentence in features["cluster_sentences"] %}
-{{features["exemplar_start_delimiter"]}}{{sentence}}{{features["exemplar_end_delimiter"]}}
-{%- endfor %}
-{%- endif %}
-{% endfor %}
-
-Please provide new {{name_kind}} names for each topic, following the JSON output format specified.
-""")
         context = self._disambiguation_context(names, features, name_kind)
         return Prompt(
-            system_prompt.render(**context),
-            user_prompt.render(**context),
+            self._disambiguation_system_program.render(**context),
+            self._disambiguation_user_program.render(**context),
             _disambiguation_schema(len(names)),
         )
 
@@ -227,62 +284,10 @@ Please provide new {{name_kind}} names for each topic, following the JSON output
         return extract_response(response, topic_name_mapping)
 
     def cluster_prompt(self, features: dict[str, Any], name_kind: str) -> Prompt:
-        system_prompt = jinja2.Template("""
-You are an expert at classifying {{document_type}} from {{corpus_description}} into topics.
-Your task is to {{cluster_task}} for this group of {{document_type}} from {{corpus_description}}. The name should be {{name_kind}}.
-The response must be {{cluster_response_description}}
-A score of 1.0 means a perfectly descriptive and specific name, while 0.0 would be a completely generic or unrelated name.
-{% if "very specific" in name_kind %}
-Make every requested output precise, detailed, and distinguishing. The topic name should be specific to the information given and sufficiently detailed to distinguish it from similarly detailed topics. If analysis or summary fields are requested, apply the same specificity level to those fields.
-{% elif "general" in name_kind %}
-Make every requested output broad enough to capture the overall range at a glance. The topic name should be broad and simple enough to capture the overall sense of the large and diverse range of {{document_type}} contained in it. If analysis or summary fields are requested, apply the same generality level to those fields.
-{% endif %}
-{% if cluster_subtopics["major"] %}
-When major subtopics are present, primarily make use of the major and minor subtopics, and ensure each generated topic name reflects the core essence of *all* major subtopics.
-{% endif %}
-Ensure your entire response is only the JSON object, with no other text before or after it.
-{% if summary_kind %}
-If a summary is requested, its form should be {{summary_kind}}.
-{% endif %}
-Keep all JSON string values on a single line (escape any newlines as \\n).
-""")
-        user_prompt = jinja2.Template("""
-Here is the information about the group of {{document_type}}:
-{% if cluster_keywords %}
-- Keywords for this group include: {{", ".join(cluster_keywords)}}
-{% endif %}
-{%- if cluster_subtopics["major"] %}
-- Major subtopics of this group are:
-{%- for subtopic in cluster_subtopics["major"] %}
-{{subtopic_start}}{{subtopic}}{{subtopic_end}}
-{%- endfor %}
-{%- endif %}
-{%- if cluster_subtopics["minor"] %}
-- Minor subtopics of this group are:
-{%- for subtopic in cluster_subtopics["minor"] %}
-{{subtopic_start}}{{subtopic}}{{subtopic_end}}
-{%- endfor %}
-{%- endif %}
-{%- if cluster_subtopics["misc"] %}
-- Other miscellaneous detailed subtopics of this group in order of relevance (from most to least) include:
-{%- for subtopic in cluster_subtopics["misc"] %}
-{{subtopic_start}}{{subtopic}}{{subtopic_end}}
-{%- endfor %}
-{%- endif %}
-{%- if cluster_sentences %}
-- Sample {{document_type}} from this group include:
-{%- for sentence in cluster_sentences %}
-{{exemplar_start_delimiter}}{{sentence}}{{exemplar_end_delimiter}}
-{%- endfor %}
-{%- endif %}
-
-Based on this information, {{user_request}} for this group of {{document_type}}. The name should be {{name_kind}}.
-Recall that the response must be {{cluster_response_description}}
-""")
         context = self._add_template_features(features, name_kind)
         return Prompt(
-            system_prompt.render(**context),
-            user_prompt.render(**context),
+            self._cluster_system_program.render(**context),
+            self._cluster_user_program.render(**context),
             _name_schema(self),
         )
 
