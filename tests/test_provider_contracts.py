@@ -487,3 +487,28 @@ async def test_batch_alignment_and_parse_failure_does_not_resubmit():
     assert namer.calls == 1
 
 
+def test_anthropic_results_align_by_id_and_expose_partial_failure():
+    success = SimpleNamespace(
+        type="succeeded",
+        message=SimpleNamespace(
+            content=[SimpleNamespace(type="text", text='{"topic_name":"A"}')]
+        ),
+    )
+    failure = SimpleNamespace(
+        type="errored",
+        error=SimpleNamespace(type="rate_limit_error", message="slow down"),
+    )
+    records = [
+        SimpleNamespace(custom_id="1", result=failure),
+        SimpleNamespace(custom_id="0", result=success),
+    ]
+    results = wrappers._ordered_anthropic_results(records)
+    assert results[0].value == '{"topic_name":"A"}'
+    assert isinstance(results[1].error, wrappers.LLMBatchItemError)
+    for bad in (
+        [records[0]],
+        [records[1], records[1]],
+        [SimpleNamespace(custom_id="01", result=success)],
+    ):
+        with pytest.raises(wrappers.InvalidLLMInputError):
+            wrappers._ordered_anthropic_results(bad)

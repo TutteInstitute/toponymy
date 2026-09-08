@@ -70,10 +70,10 @@ toponymy = [
 ]
 
 [project.optional-dependencies]
-evoc = ["evoc>=0.3.1"]
+evoc = ["evoc>=0.3.1", "matplotlib"]
 treeshap = ["shap>=0.46,<1"]
 lance = ["pylance"]
-cohere = ["cohere"]
+cohere = ["cohere>=7.0.8"]
 azure = ["openai>=1.30"]
 example-notebooks = ["nbclient", "nbformat", "ipykernel"]
 dev = [

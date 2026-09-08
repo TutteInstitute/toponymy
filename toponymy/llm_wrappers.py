@@ -742,12 +742,114 @@ def _result_values(results):
     return [result.value for result in results]
 
 
+def _transport_batch_results(results):
+    from .provider_batches import BatchItemError
+
+    aligned = []
+    for result in results:
+        if isinstance(result, BatchItemError):
+            if getattr(result, "status_code", None) in (400, 401, 403, 404, 422):
+                raise FailFastLLMError(
+                    str(result), original_exception=result
+                ) from result
+            aligned.append(CallResult(error=LLMBatchItemError(str(result))))
+        elif isinstance(result, Exception):
+            raise result
+        else:
+            aligned.append(CallResult(value=result))
+    return aligned
 
 
+def _ordered_anthropic_results(records):
+    indexed = {}
+    for record in records:
+        key = record.custom_id
+        if not isinstance(key, str) or not key.isdecimal() or str(int(key)) != key:
+            raise InvalidLLMInputError("Invalid batch result ID")
+        index = int(key)
+        if index in indexed:
+            raise InvalidLLMInputError("Duplicate batch result ID")
+        result = record.result
+        if result.type == "succeeded":
+            text = "".join(
+                block.text
+                for block in result.message.content
+                if getattr(block, "type", None) == "text"
+            )
+            indexed[index] = CallResult(value=text)
+        else:
+            error = getattr(result, "error", None)
+            error = getattr(error, "error", error)
+            kind = getattr(error, "type", result.type)
+            message = getattr(error, "message", str(error))
+            if kind in (
+                "authentication_error",
+                "permission_error",
+                "invalid_request_error",
+                "not_found_error",
+            ):
+                raise FailFastLLMError(f"Batch item {key}: {kind}: {message}")
+            indexed[index] = CallResult(
+                error=LLMBatchItemError(f"Batch item {key}: {kind}: {message}")
+            )
+    if sorted(indexed) != list(range(len(indexed))):
+        raise InvalidLLMInputError("Batch result IDs are missing or misaligned")
+    return [indexed[index] for index in range(len(indexed))]
 
 
+async def _await_owned_batch_operation(task):
+    """Finish a bounded SDK operation even if its caller is cancelled again."""
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
 
 
+async def _run_managed_batch(wrapper, prompts, temperature, max_tokens):
+    """Own one submission and cancel its job once when the operation is abandoned.
+
+    Cancellation during synchronous submission waits for its eventual identifier
+    before cancelling. SDK request timeouts bound those operations. Cleanup errors
+    are logged and never replace the original cancellation or exception. Submission
+    errors without an identifier are propagated; submission is never retried.
+    """
+    await asyncio.sleep(0)
+    submission = asyncio.create_task(
+        asyncio.to_thread(wrapper.submit_batch, prompts, temperature, max_tokens)
+    )
+    batch_id = None
+    try:
+        batch_id = await asyncio.shield(submission)
+        if not await wrapper._wait_for_completion_async(batch_id):
+            raise TimeoutError(f"Batch job {batch_id} did not complete")
+        return await wrapper._retrieve_batch_results(batch_id)
+    except (asyncio.CancelledError, Exception):
+        if batch_id is None:
+            # A failed submission exposes no job identifier. In particular, do
+            # not retry an ambiguous SDK timeout which may already have created
+            # a paid job. Preserve the caller's original cancellation if it won
+            # a race with submission failure.
+            if submission.done() and (
+                submission.cancelled() or submission.exception() is not None
+            ):
+                raise
+            try:
+                batch_id = await _await_owned_batch_operation(submission)
+            except (Exception, asyncio.CancelledError):
+                logger.exception(
+                    "Batch submission ended without an identifier during cleanup"
+                )
+        if batch_id is not None:
+            cancellation = asyncio.create_task(
+                asyncio.to_thread(wrapper.cancel_batch, batch_id)
+            )
+            try:
+                await _await_owned_batch_operation(cancellation)
+            except (Exception, asyncio.CancelledError):
+                logger.exception("Failed to cancel abandoned batch %s", batch_id)
+        raise
 
 
 class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
@@ -3130,544 +3232,459 @@ class AsyncVLLMNamer(AsyncLLMWrapper):
         return [output.outputs[0].text for output in outputs]
 
 
-try:
-    import cohere
+class CohereBatchNamer(AsyncLLMWrapper):
+    """Cohere batches with owned jobs and aligned per-item results.
 
-    class CohereBatchNamer(FailedImportAsyncLLMWrapper):
-        """
-        Provides access to Cohere's Batch Processing API with asynchronous support.
-        This allows for processing large batches of prompts over an extended period.
-        For more information on Cohere's Batch Processing, see https://docs.cohere.com/docs/batch-processing.
+    Cancellation or timeout cancels a submitted job exactly once, including a job
+    whose identifier arrives after caller cancellation. Cleanup errors are logged
+    while preserving the original exception. Cancellation can therefore take the
+    bounded SDK submission/cancellation time to complete.
 
-        This wrapper conforms to the AsyncLLMWrapper interface, but note that it uses Cohere's batch API,
-        which processes jobs over hours rather than in real-time. The async methods will block until the batch job completes.
+    ``use_json_schema=True`` requires a prompt schema supported by the model and
+    provider grammar. Automatic mode uses supported schemas and otherwise sends
+    ordinary text requests; constraints are never removed. ``use_json_object``
+    selects JSON-object mode explicitly. ``supports_json_schema`` overrides model
+    capability only when the caller has verified the configured model.
+    """
 
-        This class provides a different tradeoff between speed and cost compared to the AsyncCohere wrapper.
-        It is designed for scenarios where you have a large number of prompts to process and can afford to wait for the results.
-        Cohere's batch processing is more cost-effective (half the cost per token) for large volumes of data, but it does
-        not provide immediate responses.
+    _supports_debug_callback = True
 
-        Parameters:
-        -----------
-        api_key: str
-            Your Cohere API key. You can set this as an environment variable CO_API_KEY or pass it directly
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "command-r-08-2024",
+        llm_specific_instructions=None,
+        polling_interval=60,
+        timeout=7200,
+        callback: DebugCallback | None = None,
+        *,
+        client=None,
+        use_json_schema: bool | None = None,
+        use_json_object: bool | None = None,
+        supports_json_schema: bool | None = None,
+    ):
+        from .provider_batches import CohereBatchTransport
 
-        model: str, optional
-            The name of the Cohere model to use. Default is "command-r-08-2024". You can use any model available
-            in the Cohere API, but this is a good balance of performance and cost.
+        self.transport = CohereBatchTransport(
+            api_key=api_key,
+            model=model,
+            polling_interval=polling_interval,
+            timeout=timeout,
+            client=client,
+            use_json_schema=use_json_schema,
+            use_json_object=use_json_object,
+            supports_json_schema=supports_json_schema,
+        )
+        self.use_json_schema = use_json_schema
+        self.use_json_object = use_json_object
+        self.client = self.transport.client
+        self.model = model
+        self.callback = callback
+        self.extra_prompting = (
+            "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+        )
+        self.polling_interval = polling_interval
+        self.timeout = timeout
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
+    async def _call_llm_batch(self, prompts, temperature, max_tokens):
+        normalized = [validate_prompt(prompt, False) for prompt in prompts]
+        return await self._call_llm_with_system_prompt_batch(
+            [
+                Prompt("", prompt["combined"], prompt.get("json_schema"))
+                for prompt in normalized
+            ],
+            temperature,
+            max_tokens,
+        )
 
-        polling_interval: int, optional
-            The interval (in seconds) to poll the batch job status. Default is 60 seconds. This controls how often
-            the wrapper checks the status of the batch job. A lower value will check more frequently, but may increase API usage.
+    async def _call_llm_with_system_prompt_batch(
+        self, prompts, temperature, max_tokens
+    ):
+        return await _run_managed_batch(self, prompts, temperature, max_tokens)
 
-        timeout: int, optional
-            The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
-            the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
-            if the batch job takes too long to process. You can adjust this based on your expected processing time.
+    @property
+    def supports_json_schema(self):
+        return self.transport.supports_json_schema
 
-        Attributes:
-        -----------
-        client: cohere.ClientV2
-            The Cohere client instance for batch processing.
+    def submit_batch(self, prompts, temperature, max_tokens) -> str:
+        _validate_generation_options(temperature, max_tokens)
+        normalized = [validate_prompt(prompt, True) for prompt in prompts]
+        for prompt in normalized:
+            prompt["user"] += self.extra_prompting
+            prompt["combined"] += self.extra_prompting
+        self._emit_debug_callback(
+            {
+                "event": "llm_call_start",
+                "routine": "submit_batch",
+                "prompts": normalized,
+            }
+        )
+        return self.transport.submit_batch(normalized, temperature, max_tokens)
 
-        model: str
-            The name of the Cohere model being used.
+    def get_batch_status(self, batch_id: str) -> str:
+        return self.transport.get_batch_status(batch_id)
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+    async def _retrieve_batch_results(self, batch_id: str):
+        results = _transport_batch_results(
+            await self.transport.retrieve_batch_text_results(batch_id)
+        )
+        self._emit_debug_callback(
+            {
+                "event": "llm_call_success",
+                "routine": "batch_results",
+                "batch_id": batch_id,
+                "results": results,
+            }
+        )
+        return results
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Cohere, this is always True.
+    async def retrieve_batch_text_results(
+        self, batch_id: str, *, return_results: bool = False
+    ):
+        results = await self._retrieve_batch_results(batch_id)
+        return results if return_results else _result_values(results)
 
-        """
+    async def _wait_for_completion_async(self, batch_id: str) -> bool:
+        return await self.transport.wait_for_completion(batch_id)
 
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "command-r-08-2024",
-            llm_specific_instructions=None,
-            polling_interval: int = 60,
-            timeout: int = 7200,
-            callback: DebugCallback | None = None,
+    def cancel_batch(self, batch_id: str):
+        return self.transport.cancel_batch(batch_id)
+
+    async def close(self):
+        close = getattr(self.client, "close", None)
+        if close is not None:
+            await asyncio.to_thread(close)
+
+
+def _anthropic_schema_problem(schema):
+    """Return an unsupported constraint without weakening the caller's schema.
+
+    This is a conservative subset of Anthropic's documented structured-output
+    grammar. Local nonrecursive JSON Pointer references are supported. Patterns,
+    nested resource identifiers, anchors and dynamic references remain explicit
+    unsupported cases until their complete grammar can be verified locally.
+    """
+    forbidden = {
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "maxItems",
+        "uniqueItems",
+        "contains",
+        "minContains",
+        "maxContains",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "patternProperties",
+        "propertyNames",
+        "minProperties",
+        "maxProperties",
+        "dependentRequired",
+        "dependentSchemas",
+        "dependencies",
+        "not",
+        "if",
+        "then",
+        "else",
+        "$dynamicRef",
+        "$recursiveRef",
+        "$anchor",
+        "$dynamicAnchor",
+        "$id",
+    }
+    pending = [(schema, ())]
+    while pending:
+        value, ancestors = pending.pop()
+        if not isinstance(value, dict):
+            continue
+        if id(value) in ancestors:
+            return "recursive references"
+        ancestors = (*ancestors, id(value))
+        unsupported = forbidden.intersection(value)
+        if unsupported:
+            return f"unsupported constraint {sorted(unsupported)[0]}"
+        if "minItems" in value and value["minItems"] not in (0, 1):
+            return "minItems greater than one"
+        if isinstance(value.get("items"), list):
+            return "tuple-valued items are unsupported"
+        types = value.get("type", [])
+        types = [types] if isinstance(types, str) else types
+        if ("object" in types or "properties" in value) and value.get(
+            "additionalProperties"
+        ) is not False:
+            return "objects require additionalProperties=false"
+        reference = value.get("$ref")
+        if reference is not None:
+            if "allOf" in value:
+                return "allOf combined with $ref"
+            if reference != "#" and not reference.startswith("#/"):
+                return "only local JSON Pointer references are supported"
+            target = schema
+            from urllib.parse import unquote
+
+            for part in unquote(reference[2:]).split("/") if reference != "#" else ():
+                part = part.replace("~1", "/").replace("~0", "~")
+                target = target[int(part)] if isinstance(target, list) else target[part]
+            pending.append((target, ancestors))
+        for key in ("properties", "$defs", "definitions"):
+            pending.extend((child, ancestors) for child in value.get(key, {}).values())
+        for key in ("anyOf", "oneOf", "allOf", "prefixItems"):
+            pending.extend((child, ancestors) for child in value.get(key, []))
+        if "items" in value:
+            pending.append((value["items"], ancestors))
+    return None
+
+
+class BatchAnthropicNamer(AsyncLLMWrapper):
+    """
+    Provides access to Anthropic's Batch Processing API with asynchronous support.
+    This allows for processing large batches of prompts over an extended period.
+    For more information on Anthropic's Batch Processing, see https://docs.anthropic.com/docs/batch-processing.
+
+    This wrapper conforms to the AsyncLLMWrapper interface, but note that it uses Anthropic's batch API,
+    which processes jobs over hours rather than in real-time. The async methods will block until the batch job completes.
+
+    This class provides a different tradeoff between speed and cost compared to the AsyncAnthropic wrapper.
+    It is designed for scenarios where you have a large number of prompts to process and can afford to wait for the results.
+    Anthropic's batch processing is more cost-effective (half the cost per token) for large volumes of data, but it does
+    not provide immediate responses.
+
+    Cancellation and timeout cancel the owned job exactly once. Cancellation
+    during submission waits for the eventual job ID before cleanup; cleanup
+    failures are logged without replacing the original cancellation or timeout.
+
+    ``use_json_schema=True`` fails before submission when the model or the
+    supported schema grammar cannot preserve the supplied constraints. Automatic
+    mode uses supported schemas and otherwise sends a text request. In particular,
+    numeric bounds in the default template schema cause text fallback; constraints
+    are never silently removed. JSON-object mode is unsupported. A caller-verified
+    model can opt into ``supports_json_schema=True``; the schema grammar is still
+    checked.
+
+    Parameters:
+    -----------
+    api_key: str
+        Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
+
+    model: str, optional
+        The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
+        in the Anthropic API, but this is a good balance of performance and cost.
+
+    llm_specific_instructions: str, optional
+        Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
+        model-specific instructions or context that may help improve the quality of the generated text.
+
+    polling_interval: int, optional
+        The interval (in seconds) to poll the batch job status. Default is 60 seconds. This controls how often
+        the wrapper checks the status of the batch job. A lower value will check more frequently, but may increase API usage.
+
+    timeout: int, optional
+        The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
+        the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
+        if the batch job takes too long to process. You can adjust this based on your expected processing time.
+
+    Attributes:
+    -----------
+    client: anthropic.Anthropic
+        The Anthropic client instance for batch processing.
+
+    model: str
+        The name of the Anthropic model being used.
+
+    extra_prompting: str
+        Additional instructions specific to the LLM, appended to the prompt.
+
+    supports_system_prompts: bool
+        Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
+
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "claude-haiku-4-5-20251001",
+        llm_specific_instructions=None,
+        polling_interval: int = 60,
+        timeout: int = 7200,
+        callback: DebugCallback | None = None,
+        *,
+        use_json_schema: bool | None = None,
+        use_json_object: bool | None = None,
+        supports_json_schema: bool | None = None,
+    ):
+        _validate_json_options(use_json_schema, use_json_object, None)
+        if supports_json_schema is not None and not isinstance(
+            supports_json_schema, bool
         ):
-            self.client = cohere.ClientV2(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+            raise InvalidLLMInputError("supports_json_schema must be bool or None")
+        if use_json_object is True:
+            raise InvalidLLMInputError(
+                "Anthropic batches support JSON Schema, not JSON-object mode"
             )
-            self.polling_interval = polling_interval
-            self.timeout = timeout
+        import math
 
-        async def _call_llm_batch(
-            self, prompts: List[Dict[str, Any]], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """
-            Submit a batch job and wait for completion.
-            This is a blocking operation that could take hours.
-            """
-            # Create batch requests
-            requests = []
-            for i, prompt in enumerate(prompts):
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": prompt["combined"]
-                                    + self.extra_prompting,
-                                }
-                            ],
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            # Submit batch
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            batch_id = batch.id
-
-            # Wait for completion (with async sleep)
-            if await self._wait_for_completion_async(batch_id):
-                return await self._retrieve_batch_results(batch_id)
-            else:
-                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            prompts: List[Dict[str, Any]],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """
-            Submit a batch job with system prompts and wait for completion.
-            """
-            # Create batch requests
-            requests = []
-            for i, prompt in enumerate(prompts):
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": [
-                                {"role": "system", "content": prompt["system"]},
-                                {
-                                    "role": "user",
-                                    "content": prompt["user"] + self.extra_prompting,
-                                },
-                            ],
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            # Submit batch
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            batch_id = batch.id
-
-            # Wait for completion
-            if await self._wait_for_completion_async(batch_id):
-                return await self._retrieve_batch_results(batch_id)
-            else:
-                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
-
-        async def _wait_for_completion_async(self, batch_id: str) -> bool:
-            """
-            Wait for a batch job to complete, using async sleep.
-            Returns True if completed successfully, False if failed or timed out.
-            """
-            start_time = time.time()
-
-            while time.time() - start_time < self.timeout:
-                batch = self.client.beta.messages.batches.retrieve(batch_id)
-
-                if batch.processing_status == "ended":
-                    return True
-                elif batch.processing_status in ["canceling", "canceled", "expired"]:
-                    warn(
-                        f"Batch job {batch_id} ended with status: {batch.processing_status}"
-                    )
-                    return False
-
-                # Use async sleep to not block the event loop
-                await asyncio.sleep(self.polling_interval)
-
-            warn(f"Batch job {batch_id} timed out after {self.timeout} seconds")
-            return False
-
-        async def _retrieve_batch_results(self, batch_id: str) -> List[str]:
-            """
-            Retrieve raw text results from a completed batch job.
-            """
-            # Run the synchronous API call in a thread pool to not block the event loop
-            loop = asyncio.get_event_loop()
-            results_page = await loop.run_in_executor(
-                None, self.client.beta.messages.batches.results, batch_id
+        try:
+            valid_timers = all(
+                not isinstance(value, bool)
+                and isinstance(value, (int, float))
+                and value > 0
+                and math.isfinite(float(value))
+                for value in (polling_interval, timeout)
             )
-
-            # Sort by custom_id to maintain order
-            sorted_results = sorted(
-                results_page.results, key=lambda x: int(x.custom_id)
+        except OverflowError:
+            valid_timers = False
+        if not valid_timers:
+            raise InvalidLLMInputError(
+                "Batch polling interval and timeout must be finite positive numbers"
             )
+        import anthropic
 
-            responses = []
-            for result in sorted_results:
-                if result.result.type == "succeeded":
-                    responses.append(result.result.message.content[0].text)
-                else:
-                    warn(f"Request {result.custom_id} failed: {result.result.error}")
-                    responses.append("")  # Empty string for failed requests
+        self.client = anthropic.Anthropic(
+            api_key=api_key, max_retries=0, timeout=min(30, timeout)
+        )
+        self.model = model
+        self.use_json_schema = use_json_schema
+        self.use_json_object = use_json_object
+        self._schema_capability = supports_json_schema
+        self.callback = callback
+        self._warn_if_debug_callback_unsupported()
+        self.extra_prompting = (
+            "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+        )
+        self.polling_interval = polling_interval
+        self.timeout = timeout
 
-            return responses
+    @property
+    def supports_json_schema(self):
+        if self._schema_capability is not None:
+            return self._schema_capability
+        return self.model in {
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5",
+            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-6",
+            "claude-sonnet-5",
+            "claude-opus-4-5",
+            "claude-opus-4-5-20251101",
+            "claude-opus-4-6",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-opus-5",
+        }
 
-        # Additional methods for non-blocking usage
-        def submit_batch(
-            self,
-            prompts: List[Union[str, Dict[str, str]]],
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """
-            Submit a batch job without waiting. Returns batch ID.
-            This is for users who want to manage batch jobs manually.
-            """
-            requests = []
+    async def _call_llm_batch(self, prompts, temperature, max_tokens):
+        normalized = [validate_prompt(prompt, False) for prompt in prompts]
+        return await self._call_llm_with_system_prompt_batch(
+            [
+                Prompt("", prompt["combined"], prompt.get("json_schema"))
+                for prompt in normalized
+            ],
+            temperature,
+            max_tokens,
+        )
 
-            for i, prompt in enumerate(prompts):
-                if isinstance(prompt, str):
-                    messages = [
-                        {"role": "user", "content": prompt + self.extra_prompting}
-                    ]
-                elif isinstance(prompt, dict):
-                    messages = [
-                        {"role": "system", "content": prompt["system"]},
-                        {
-                            "role": "user",
-                            "content": prompt["user"] + self.extra_prompting,
-                        },
-                    ]
-                else:
-                    raise InvalidLLMInputError(f"Prompt must be string or dict")
+    async def _call_llm_with_system_prompt_batch(
+        self, prompts, temperature, max_tokens
+    ):
+        return await _run_managed_batch(self, prompts, temperature, max_tokens)
 
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": messages,
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            return batch.id
-
-        def get_batch_status(self, batch_id: str) -> str:
-            """Check the status of a batch job."""
-            batch = self.client.beta.messages.batches.retrieve(batch_id)
-            return batch.processing_status
-
-        async def retrieve_batch_text_results(self, batch_id: str) -> List[str]:
-            """Retrieve raw text results from a completed batch."""
-            return await self._retrieve_batch_results(batch_id)
-
-        def cancel_batch(self, batch_id: str):
-            """Cancel a running batch job."""
-            self.client.beta.messages.batches.cancel(batch_id)
-
-except:
-
-    class CohereNamer(FailedImportLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-    class AsyncCohereNamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
-
-
-
-
-try:
-    import anthropic
-    import time
-
-    class BatchAnthropicNamer(AsyncLLMWrapper):
-        """
-        Provides access to Anthropic's Batch Processing API with asynchronous support.
-        This allows for processing large batches of prompts over an extended period.
-        For more information on Anthropic's Batch Processing, see https://docs.anthropic.com/docs/batch-processing.
-
-        This wrapper conforms to the AsyncLLMWrapper interface, but note that it uses Anthropic's batch API,
-        which processes jobs over hours rather than in real-time. The async methods will block until the batch job completes.
-
-        This class provides a different tradeoff between speed and cost compared to the AsyncAnthropic wrapper.
-        It is designed for scenarios where you have a large number of prompts to process and can afford to wait for the results.
-        Anthropic's batch processing is more cost-effective (half the cost per token) for large volumes of data, but it does
-        not provide immediate responses.
-
-        Parameters:
-        -----------
-        api_key: str
-            Your Anthropic API key. You can set this as an environment variable ANTHROPIC_API_KEY or pass it directly.
-
-        model: str, optional
-            The name of the Anthropic model to use. Default is "claude-haiku-4-5-20251001". You can use any model available
-            in the Anthropic API, but this is a good balance of performance and cost.
-
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
-
-        polling_interval: int, optional
-            The interval (in seconds) to poll the batch job status. Default is 60 seconds. This controls how often
-            the wrapper checks the status of the batch job. A lower value will check more frequently, but may increase API usage.
-
-        timeout: int, optional
-            The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
-            the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
-            if the batch job takes too long to process. You can adjust this based on your expected processing time.
-
-        Attributes:
-        -----------
-        client: anthropic.Anthropic
-            The Anthropic client instance for batch processing.
-
-        model: str
-            The name of the Anthropic model being used.
-
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
-
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
-
-        """
-
-        def __init__(
-            self,
-            api_key: str,
-            model: str = "claude-haiku-4-5-20251001",
-            llm_specific_instructions=None,
-            polling_interval: int = 60,
-            timeout: int = 7200,
-            callback: DebugCallback | None = None,
-        ):
-            self.client = anthropic.Anthropic(api_key=api_key)
-            self.model = model
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+    async def _wait_for_completion_async(self, batch_id: str) -> bool:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.timeout
+        while loop.time() < deadline:
+            batch = await asyncio.to_thread(
+                self.client.messages.batches.retrieve, batch_id
             )
-            self.polling_interval = polling_interval
-            self.timeout = timeout
-
-        async def _call_llm_batch(
-            self, prompts: List[Dict[str, Any]], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """
-            Submit a batch job and wait for completion.
-            This is a blocking operation that could take hours.
-            """
-            # Create batch requests
-            requests = []
-            for i, prompt in enumerate(prompts):
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": prompt["combined"]
-                                    + self.extra_prompting,
-                                }
-                            ],
-                            "temperature": temperature,
-                        },
-                    }
+            if batch.processing_status == "ended":
+                return True
+            if batch.processing_status in ("canceling", "canceled", "expired"):
+                raise LLMBatchItemError(
+                    f"Batch {batch_id} ended with {batch.processing_status}"
                 )
-
-            # Submit batch
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            batch_id = batch.id
-
-            # Wait for completion (with async sleep)
-            if await self._wait_for_completion_async(batch_id):
-                return await self._retrieve_batch_results(batch_id)
-            else:
-                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            prompts: List[Dict[str, Any]],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """
-            Submit a batch job with system prompts and wait for completion.
-            """
-            # Create batch requests
-            requests = []
-            for i, prompt in enumerate(prompts):
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "system": prompt["system"],
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": prompt["user"] + self.extra_prompting,
-                                },
-                            ],
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            # Submit batch
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            batch_id = batch.id
-
-            # Wait for completion
-            if await self._wait_for_completion_async(batch_id):
-                return await self._retrieve_batch_results(batch_id)
-            else:
-                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
-
-        async def _wait_for_completion_async(self, batch_id: str) -> bool:
-            """
-            Wait for a batch job to complete, using async sleep.
-            Returns True if completed successfully, False if failed or timed out.
-            """
-            start_time = time.time()
-
-            while time.time() - start_time < self.timeout:
-                batch = self.client.beta.messages.batches.retrieve(batch_id)
-
-                if batch.processing_status == "ended":
-                    return True
-                elif batch.processing_status in ["canceling", "canceled", "expired"]:
-                    warn(
-                        f"Batch job {batch_id} ended with status: {batch.processing_status}"
-                    )
-                    return False
-
-                # Use async sleep to not block the event loop
-                await asyncio.sleep(self.polling_interval)
-
-            warn(f"Batch job {batch_id} timed out after {self.timeout} seconds")
-            return False
-
-        async def _retrieve_batch_results(self, batch_id: str) -> List[str]:
-            """
-            Retrieve raw text results from a completed batch job.
-            """
-            # Run the synchronous API call in a thread pool to not block the event loop
-            loop = asyncio.get_event_loop()
-            results_page = await loop.run_in_executor(
-                None, self.client.beta.messages.batches.results, batch_id
+            await asyncio.sleep(
+                min(self.polling_interval, max(0, deadline - loop.time()))
             )
+        return False
 
-            # Sort by custom_id to maintain order
-            sorted_results = sorted(
-                results_page.results, key=lambda x: int(x.custom_id)
+    async def _retrieve_batch_results(self, batch_id: str):
+        def retrieve():
+            return list(self.client.messages.batches.results(batch_id))
+
+        return _ordered_anthropic_results(await asyncio.to_thread(retrieve))
+
+    # Additional methods for non-blocking usage
+    def submit_batch(self, prompts, temperature, max_tokens) -> str:
+        _validate_generation_options(temperature, max_tokens)
+        normalized = [validate_prompt(prompt, True) for prompt in prompts]
+        if not normalized:
+            raise InvalidLLMInputError("Cannot submit an empty provider batch")
+        requests = []
+        for index, prompt in enumerate(normalized):
+            schema = prompt.get("json_schema")
+            schema_problem = (
+                _anthropic_schema_problem(schema)
+                if schema is not None
+                else "missing prompt schema"
             )
-
-            responses = []
-            for result in sorted_results:
-                if result.result.type == "succeeded":
-                    responses.append(result.result.message.content[0].text)
-                else:
-                    warn(f"Request {result.custom_id} failed: {result.result.error}")
-                    responses.append("")  # Empty string for failed requests
-
-            return responses
-
-        # Additional methods for non-blocking usage
-        def submit_batch(
-            self,
-            prompts: List[Union[str, Dict[str, str]]],
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """
-            Submit a batch job without waiting. Returns batch ID.
-            This is for users who want to manage batch jobs manually.
-            """
-            requests = []
-
-            for i, prompt in enumerate(prompts):
-                if isinstance(prompt, str):
-                    messages = [
-                        {"role": "user", "content": prompt + self.extra_prompting}
-                    ]
-                elif isinstance(prompt, dict):
-                    messages = [
-                        {"role": "system", "content": prompt["system"]},
-                        {
-                            "role": "user",
-                            "content": prompt["user"] + self.extra_prompting,
-                        },
-                    ]
-                else:
-                    raise InvalidLLMInputError(f"Prompt must be string or dict")
-
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": messages,
-                            "temperature": temperature,
-                        },
-                    }
+            if self.use_json_schema is True and (
+                not self.supports_json_schema or schema_problem
+            ):
+                raise InvalidLLMInputError(
+                    "Required Anthropic JSON Schema is unsupported: "
+                    + (schema_problem or "model capability")
                 )
+            requests.append(
+                {
+                    "custom_id": str(index),
+                    "params": {
+                        "model": self.model,
+                        "max_tokens": max_tokens,
+                        "system": prompt["system"],
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt["user"] + self.extra_prompting,
+                            }
+                        ],
+                        "temperature": temperature,
+                    },
+                }
+            )
+            if (
+                self.use_json_schema is not False
+                and self.supports_json_schema
+                and schema is not None
+                and schema_problem is None
+            ):
+                requests[-1]["params"]["output_config"] = {
+                    "format": {"type": "json_schema", "schema": deepcopy(schema)}
+                }
+        self._emit_debug_callback(
+            {
+                "event": "llm_call_start",
+                "routine": "submit_batch",
+                "prompts": normalized,
+            }
+        )
+        return self.client.messages.batches.create(requests=requests).id
 
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            return batch.id
+    def get_batch_status(self, batch_id: str) -> str:
+        return self.client.messages.batches.retrieve(batch_id).processing_status
 
-        def get_batch_status(self, batch_id: str) -> str:
-            """Check the status of a batch job."""
-            batch = self.client.beta.messages.batches.retrieve(batch_id)
-            return batch.processing_status
+    async def retrieve_batch_text_results(
+        self, batch_id: str, *, return_results: bool = False
+    ):
+        results = await self._retrieve_batch_results(batch_id)
+        return results if return_results else _result_values(results)
 
-        async def retrieve_batch_text_results(self, batch_id: str) -> List[str]:
-            """Retrieve raw text results from a completed batch."""
-            return await self._retrieve_batch_results(batch_id)
-
-        def cancel_batch(self, batch_id: str):
-            """Cancel a running batch job."""
-            self.client.beta.messages.batches.cancel(batch_id)
-
-except:
-
-    class BatchAnthropicNamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+    def cancel_batch(self, batch_id: str):
+        return self.client.messages.batches.cancel(batch_id)
 
 
 # Ollama
@@ -4315,278 +4332,129 @@ def AsyncAzureAINamer(
     )
 
 
-try:
-    from azure.ai.inference import ChatCompletionsClient
-    from azure.ai.inference.aio import (
-        ChatCompletionsClient as AsyncChatCompletionsClient,
-    )
-    from azure.ai.inference.models import SystemMessage, UserMessage
-    from azure.core.credentials import AzureKeyCredential
+class BatchAzureAINamer(AsyncLLMWrapper):
+    """Azure OpenAI batches with owned jobs and aligned per-item results.
 
-    class BatchAzureAINamer(AsyncLLMWrapper):
-        """
-        Provides access to Azure AI Foundry's Batch Processing API with asynchronous support.
-        This allows for processing large batches of prompts over an extended period.
-        For more information on Azure AI Foundry's Batch Processing, see https://learn.microsoft.com/en-us/azure/ai-services/ai-foundry/batch-processing.
+    Cancellation and timeout cancel a submitted job exactly once, including a job
+    whose ID arrives after caller cancellation. Cleanup errors are logged without
+    replacing the original exception. SDK request timeouts bound cleanup work.
 
-        This wrapper conforms to the AsyncLLMWrapper interface, but note that it uses Azure's batch API,
-        which processes jobs over hours rather than in real-time. The async methods will block until the batch job completes.
+    ``use_json_schema=True`` requires a prompt schema and supported model before
+    file upload. Automatic mode preserves supported schemas and otherwise sends
+    plain text. Opaque Azure deployment names require a caller-verified
+    ``supports_json_schema=True`` capability override. ``use_json_object=True``
+    selects object mode explicitly and conflicts with required schema mode.
+    """
 
-        This class provides a different tradeoff between speed and cost compared to the AsyncAzureAI wrapper.
-        It is designed for scenarios where you have a large number of prompts to process and can afford to wait for the results.
-        Azure's batch processing is more cost-effective (half the cost per token) for large volumes of data, but it does
-        not provide immediate responses.
+    _supports_debug_callback = True
 
-        Parameters:
-        -----------
-        api_key: str
-            Your Azure API key. You can set this as an environment variable AZURE_API_KEY or pass it directly.
+    def __init__(
+        self,
+        api_key: str,
+        endpoint: str,
+        model: str,
+        llm_specific_instructions=None,
+        polling_interval=60,
+        timeout=7200,
+        callback: DebugCallback | None = None,
+        *,
+        client=None,
+        use_json_schema: bool | None = None,
+        use_json_object: bool | None = None,
+        supports_json_schema: bool | None = None,
+    ):
+        from .provider_batches import AzureBatchTransport
 
-        endpoint: str
-            The endpoint URL for your Azure AI Foundry model. This is typically in the format "https://<your-resource-name>.openai.azure.com/".
+        self.transport = AzureBatchTransport(
+            api_key=api_key,
+            endpoint=endpoint,
+            model=model,
+            polling_interval=polling_interval,
+            timeout=timeout,
+            client=client,
+            use_json_schema=use_json_schema,
+            use_json_object=use_json_object,
+            supports_json_schema=supports_json_schema,
+        )
+        self.use_json_schema = use_json_schema
+        self.use_json_object = use_json_object
+        self.client = self.transport.client
+        self.model = model
+        self.callback = callback
+        self.extra_prompting = (
+            "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
+        )
+        self.polling_interval = polling_interval
+        self.timeout = timeout
 
-        model: str
-            The name of the Azure AI Foundry model to use. This should match the model name you created in Azure AI Foundry.
+    async def _call_llm_batch(self, prompts, temperature, max_tokens):
+        normalized = [validate_prompt(prompt, False) for prompt in prompts]
+        return await self._call_llm_with_system_prompt_batch(
+            [
+                Prompt("", prompt["combined"], prompt.get("json_schema"))
+                for prompt in normalized
+            ],
+            temperature,
+            max_tokens,
+        )
 
-        llm_specific_instructions: str, optional
-            Additional instructions specific to the LLM, appended to the prompt. This can be used to provide
-            model-specific instructions or context that may help improve the quality of the generated text.
+    async def _call_llm_with_system_prompt_batch(
+        self, prompts, temperature, max_tokens
+    ):
+        return await _run_managed_batch(self, prompts, temperature, max_tokens)
 
-        polling_interval: int, optional
-            The interval (in seconds) to poll the batch job status. Default is 60 seconds. This controls how often
-            the wrapper checks the status of the batch job. A lower value will check more frequently, but may increase API usage.
+    @property
+    def supports_json_schema(self):
+        return self.transport.supports_json_schema
 
-        timeout: int, optional
-            The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
-            the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
-            if the batch job takes too long to process. You can adjust this based on your expected processing time.
+    def submit_batch(self, prompts, temperature, max_tokens) -> str:
+        _validate_generation_options(temperature, max_tokens)
+        normalized = [validate_prompt(prompt, True) for prompt in prompts]
+        for prompt in normalized:
+            prompt["user"] += self.extra_prompting
+            prompt["combined"] += self.extra_prompting
+        self._emit_debug_callback(
+            {
+                "event": "llm_call_start",
+                "routine": "submit_batch",
+                "prompts": normalized,
+            }
+        )
+        return self.transport.submit_batch(normalized, temperature, max_tokens)
 
-        Attributes:
-        -----------
-        client: azure.ai.inference.ChatCompletionsClient
-            The Azure AI Foundry LLM client instance.
+    def get_batch_status(self, batch_id: str) -> str:
+        return self.transport.get_batch_status(batch_id)
 
-        model: str
-            The name of the Azure AI Foundry model being used.
+    async def _retrieve_batch_results(self, batch_id: str):
+        results = _transport_batch_results(
+            await self.transport.retrieve_batch_text_results(batch_id)
+        )
+        self._emit_debug_callback(
+            {
+                "event": "llm_call_success",
+                "routine": "batch_results",
+                "batch_id": batch_id,
+                "results": results,
+            }
+        )
+        return results
 
-        extra_prompting: str
-            Additional instructions specific to the LLM, appended to the prompt.
+    async def retrieve_batch_text_results(
+        self, batch_id: str, *, return_results: bool = False
+    ):
+        results = await self._retrieve_batch_results(batch_id)
+        return results if return_results else _result_values(results)
 
-        supports_system_prompts: bool
-            Indicates whether the wrapper supports system prompts. For Azure AI Foundry, this is always True.
+    async def _wait_for_completion_async(self, batch_id: str) -> bool:
+        return await self.transport.wait_for_completion(batch_id)
 
-        """
+    def cancel_batch(self, batch_id: str):
+        return self.transport.cancel_batch(batch_id)
 
-        def __init__(
-            self,
-            api_key: str,
-            endpoint: str,
-            model: str,
-            llm_specific_instructions=None,
-            polling_interval: int = 60,
-            timeout: int = 7200,
-            callback: DebugCallback | None = None,
-        ):
-            self.client = anthropic.Anthropic(api_key=api_key)
-            self.model = model
-            self.extra_prompting = (
-                "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
-            )
-            self.polling_interval = polling_interval
-            self.timeout = timeout
-            self.callback = callback
-            self._warn_if_debug_callback_unsupported()
-
-        async def _call_llm_batch(
-            self, prompts: List[Dict[str, Any]], temperature: float, max_tokens: int
-        ) -> List[str]:
-            """
-            Submit a batch job and wait for completion.
-            This is a blocking operation that could take hours.
-            """
-            # Create batch requests
-            requests = []
-            for i, prompt in enumerate(prompts):
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": [
-                                {
-                                    "role": "user",
-                                    "content": prompt["combined"]
-                                    + self.extra_prompting,
-                                }
-                            ],
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            # Submit batch
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            batch_id = batch.id
-
-            # Wait for completion (with async sleep)
-            if await self._wait_for_completion_async(batch_id):
-                return await self._retrieve_batch_results(batch_id)
-            else:
-                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
-
-        async def _call_llm_with_system_prompt_batch(
-            self,
-            prompts: List[Dict[str, Any]],
-            temperature: float,
-            max_tokens: int,
-        ) -> List[str]:
-            """
-            Submit a batch job with system prompts and wait for completion.
-            """
-            # Create batch requests
-            requests = []
-            for i, prompt in enumerate(prompts):
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": [
-                                {"role": "system", "content": prompt["system"]},
-                                {
-                                    "role": "user",
-                                    "content": prompt["user"] + self.extra_prompting,
-                                },
-                            ],
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            # Submit batch
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            batch_id = batch.id
-
-            # Wait for completion
-            if await self._wait_for_completion_async(batch_id):
-                return await self._retrieve_batch_results(batch_id)
-            else:
-                raise RuntimeError(f"Batch job {batch_id} failed or timed out")
-
-        async def _wait_for_completion_async(self, batch_id: str) -> bool:
-            """
-            Wait for a batch job to complete, using async sleep.
-            Returns True if completed successfully, False if failed or timed out.
-            """
-            start_time = time.time()
-
-            while time.time() - start_time < self.timeout:
-                batch = self.client.beta.messages.batches.retrieve(batch_id)
-
-                if batch.processing_status == "ended":
-                    return True
-                elif batch.processing_status in ["canceling", "canceled", "expired"]:
-                    warn(
-                        f"Batch job {batch_id} ended with status: {batch.processing_status}"
-                    )
-                    return False
-
-                # Use async sleep to not block the event loop
-                await asyncio.sleep(self.polling_interval)
-
-            warn(f"Batch job {batch_id} timed out after {self.timeout} seconds")
-            return False
-
-        async def _retrieve_batch_results(self, batch_id: str) -> List[str]:
-            """
-            Retrieve raw text results from a completed batch job.
-            """
-            # Run the synchronous API call in a thread pool to not block the event loop
-            loop = asyncio.get_event_loop()
-            results_page = await loop.run_in_executor(
-                None, self.client.beta.messages.batches.results, batch_id
-            )
-
-            # Sort by custom_id to maintain order
-            sorted_results = sorted(
-                results_page.results, key=lambda x: int(x.custom_id)
-            )
-
-            responses = []
-            for result in sorted_results:
-                if result.result.type == "succeeded":
-                    responses.append(result.result.message.content[0].text)
-                else:
-                    warn(f"Request {result.custom_id} failed: {result.result.error}")
-                    responses.append("")  # Empty string for failed requests
-
-            return responses
-
-        # Additional methods for non-blocking usage
-        def submit_batch(
-            self,
-            prompts: List[Union[str, Dict[str, str]]],
-            temperature: float,
-            max_tokens: int,
-        ) -> str:
-            """
-            Submit a batch job without waiting. Returns batch ID.
-            This is for users who want to manage batch jobs manually.
-            """
-            requests = []
-
-            for i, prompt in enumerate(prompts):
-                if isinstance(prompt, str):
-                    messages = [
-                        {"role": "user", "content": prompt + self.extra_prompting}
-                    ]
-                elif isinstance(prompt, dict):
-                    messages = [
-                        {"role": "system", "content": prompt["system"]},
-                        {
-                            "role": "user",
-                            "content": prompt["user"] + self.extra_prompting,
-                        },
-                    ]
-                else:
-                    raise InvalidLLMInputError(f"Prompt must be string or dict")
-
-                requests.append(
-                    {
-                        "custom_id": str(i),
-                        "params": {
-                            "model": self.model,
-                            "max_tokens": max_tokens,
-                            "messages": messages,
-                            "temperature": temperature,
-                        },
-                    }
-                )
-
-            batch = self.client.beta.messages.batches.create(requests=requests)
-            return batch.id
-
-        def get_batch_status(self, batch_id: str) -> str:
-            """Check the status of a batch job."""
-            batch = self.client.beta.messages.batches.retrieve(batch_id)
-            return batch.processing_status
-
-        async def retrieve_batch_text_results(self, batch_id: str) -> List[str]:
-            """Retrieve raw text results from a completed batch."""
-            return await self._retrieve_batch_results(batch_id)
-
-        def cancel_batch(self, batch_id: str):
-            """Cancel a running batch job."""
-            self.client.beta.messages.batches.cancel(batch_id)
-
-except ImportError:
-
-    class BatchAzureAINamer(FailedImportAsyncLLMWrapper):
-
-        def __init__(self, *args, **kwds):
-            super().__init__(*args, **kwds)
+    async def close(self):
+        close = getattr(self.client, "close", None)
+        if close is not None:
+            await asyncio.to_thread(close)
 
 
 def GoogleGeminiNamer(
