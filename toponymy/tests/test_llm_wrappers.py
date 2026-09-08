@@ -945,6 +945,79 @@ def test_litellm_system_prompt_probe_success_caches_true(
     assert litellm_wrapper._system_prompt_capability is True
 
 
+def test_litellm_sampling_param_probe_falls_back_and_caches(
+    litellm_wrapper,
+    mock_data,
+):
+    unsupported_error = Exception("`temperature` is deprecated for this model.")
+    good_response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch(
+        "litellm.completion",
+        side_effect=[unsupported_error, good_response],
+    ) as mock_completion:
+        result = litellm_wrapper._completion_with_messages(
+            [{"role": "user", "content": "user"}],
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert litellm_wrapper._sampling_params_capability is False
+    assert mock_completion.call_count == 2
+    assert mock_completion.call_args_list[0].kwargs["temperature"] == 0.4
+    assert "temperature" not in mock_completion.call_args_list[1].kwargs
+
+
+def test_litellm_sampling_param_cached_false_omits_temperature(
+    litellm_wrapper,
+    mock_data,
+):
+    litellm_wrapper._sampling_params_capability = False
+    good_response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        litellm_wrapper._completion_with_messages(
+            [{"role": "user", "content": "user"}],
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert mock_completion.call_count == 1
+    assert "temperature" not in mock_completion.call_args.kwargs
+
+
+def test_litellm_sampling_param_probe_success_caches_true(litellm_wrapper, mock_data):
+    good_response = MockLLMResponse.create_chat_response(mock_data["valid_topic_name"])
+
+    with patch("litellm.completion", return_value=good_response) as mock_completion:
+        result = litellm_wrapper._completion_with_messages(
+            [{"role": "user", "content": "user"}],
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert litellm_wrapper._sampling_params_capability is True
+    assert mock_completion.call_args.kwargs["temperature"] == 0.4
+
+
+def test_litellm_unrelated_error_is_not_retried_without_temperature(litellm_wrapper):
+    with patch(
+        "litellm.completion",
+        side_effect=Exception("rate limit exceeded"),
+    ) as mock_completion:
+        with pytest.raises(Exception, match="rate limit exceeded"):
+            litellm_wrapper._completion_with_messages(
+                [{"role": "user", "content": "user"}],
+                temperature=0.4,
+                max_tokens=20,
+            )
+
+    assert mock_completion.call_count == 1
+    assert litellm_wrapper._sampling_params_capability is None
+
+
 def test_litellm_namer_temperature_override_is_used(litellm_wrapper, mock_data):
     wrapper = LiteLLMNamer(
         api_key="dummy",

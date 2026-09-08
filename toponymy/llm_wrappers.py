@@ -1375,6 +1375,7 @@ try:
             self._resolved_use_json_object: bool | None = None  # set internally
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
+            self._sampling_params_capability: bool | None = None
             self.max_tokens_topic_name = max_tokens_topic_name
             self.max_tokens_cluster_names = max_tokens_cluster_names
             self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
@@ -1423,6 +1424,18 @@ try:
                 }
             ]
 
+        def _looks_like_unsupported_sampling_param_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return "temperature" in message and any(
+                s in message
+                for s in (
+                    "deprecated",
+                    "not supported",
+                    "unsupported",
+                    "does not support",
+                )
+            )
+
         def _detect_json_object_support(self) -> bool:
             try:
                 supported = litellm.get_supported_openai_params(model=self.model)
@@ -1452,10 +1465,12 @@ try:
                 {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
             )
+            if self._sampling_params_capability is not False:
+                kwargs["temperature"] = temperature
+
             if self.api_key is not None:
                 kwargs["api_key"] = self.api_key
 
@@ -1473,13 +1488,36 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-            response = litellm.completion(
-                **self._provider_kwargs(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+            try:
+                response = litellm.completion(
+                    **self._provider_kwargs(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
                 )
-            )
+
+            except Exception as e:
+                if (
+                    self._sampling_params_capability is not None
+                    or not self._looks_like_unsupported_sampling_param_error(e)
+                ):
+                    raise
+
+                # Claude Opus 4.7 and later reject a non-default temperature
+                # with 400 "`temperature` is deprecated for this model."; retry
+                # without it and remember, so the rest of the run omits it too.
+                self._sampling_params_capability = False
+                response = litellm.completion(
+                    **self._provider_kwargs(
+                        messages=messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+
+            if self._sampling_params_capability is None:
+                self._sampling_params_capability = True
             return response.choices[0].message.content
 
         def _call_llm(
@@ -1679,6 +1717,7 @@ try:
             self._resolved_use_json_object: bool | None = None
             self.disable_system_prompts = disable_system_prompts
             self._system_prompt_capability: bool | None = None
+            self._sampling_params_capability: bool | None = None
             self.max_tokens_topic_name = max_tokens_topic_name
             self.max_tokens_cluster_names = max_tokens_cluster_names
             self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
@@ -1714,6 +1753,18 @@ try:
                 }
             ]
 
+        def _looks_like_unsupported_sampling_param_error(self, exc: Exception) -> bool:
+            message = str(exc).lower()
+            return "temperature" in message and any(
+                s in message
+                for s in (
+                    "deprecated",
+                    "not supported",
+                    "unsupported",
+                    "does not support",
+                )
+            )
+
         def _detect_json_object_support(self) -> bool:
             try:
                 supported = litellm.get_supported_openai_params(model=self.model)
@@ -1743,10 +1794,11 @@ try:
                 {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": temperature,
                     "max_tokens": max_tokens,
                 }
             )
+            if self._sampling_params_capability is not False:
+                kwargs["temperature"] = temperature
 
             if self.api_key is not None:
                 kwargs["api_key"] = self.api_key
@@ -1766,13 +1818,36 @@ try:
             max_tokens: int,
         ) -> str:
             async with self.semaphore:
-                response = await litellm.acompletion(
-                    **self._provider_kwargs(
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
+                try:
+                    response = await litellm.acompletion(
+                        **self._provider_kwargs(
+                            messages=messages,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                        )
                     )
-                )
+
+                except Exception as e:
+                    if (
+                        self._sampling_params_capability is not None
+                        or not self._looks_like_unsupported_sampling_param_error(e)
+                    ):
+                        raise
+
+                    # Claude Opus 4.7 and later reject a non-default temperature
+                    # with 400 "`temperature` is deprecated for this model.";
+                    # retry without it and remember, so the run omits it too.
+                    self._sampling_params_capability = False
+                    response = await litellm.acompletion(
+                        **self._provider_kwargs(
+                            messages=messages,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                        )
+                    )
+
+            if self._sampling_params_capability is None:
+                self._sampling_params_capability = True
             return response.choices[0].message.content
 
         async def _call_single_llm(

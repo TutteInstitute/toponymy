@@ -890,6 +890,33 @@ async def test_async_litellm_system_prompt_cached_false_flattens_immediately(
 
 
 @pytest.mark.asyncio
+async def test_async_litellm_sampling_param_probe_falls_back_and_caches(
+    async_litellm_wrapper,
+    mock_data,
+):
+    unsupported_error = Exception("`temperature` is deprecated for this model.")
+    good_response = MockAsyncResponse.create_chat_response(
+        mock_data["valid_topic_name"]
+    )
+
+    with patch(
+        "litellm.acompletion",
+        new=AsyncMock(side_effect=[unsupported_error, good_response]),
+    ) as mock_acompletion:
+        result = await async_litellm_wrapper._acompletion_with_messages(
+            [{"role": "user", "content": "user"}],
+            temperature=0.4,
+            max_tokens=20,
+        )
+
+    assert result == mock_data["valid_topic_name"]
+    assert async_litellm_wrapper._sampling_params_capability is False
+    assert mock_acompletion.await_count == 2
+    assert mock_acompletion.await_args_list[0].kwargs["temperature"] == 0.4
+    assert "temperature" not in mock_acompletion.await_args_list[1].kwargs
+
+
+@pytest.mark.asyncio
 async def test_async_litellm_system_prompt_probe_success_caches_true(
     async_litellm_wrapper,
     mock_data,
