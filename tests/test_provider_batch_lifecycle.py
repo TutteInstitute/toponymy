@@ -26,10 +26,12 @@ def lifecycle_wrapper(cls, phase, cleanup_failure=False):
     calls = {"submit": 0, "cancel": [], "original_cancel": None}
     wrapper = object.__new__(cls)
     wrapper.model = "fixture"
+    wrapper.transport = SimpleNamespace(
+        supports_json_schema=False, use_json_schema=None, use_json_object=None
+    )
     wrapper.use_json_schema = None
     wrapper.use_json_object = None
     wrapper._schema_capability = False
-    wrapper.transport = SimpleNamespace(supports_json_schema=False)
 
     def submit(prompts, temperature, max_tokens):
         calls["submit"] += 1

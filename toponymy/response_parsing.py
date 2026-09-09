@@ -38,14 +38,11 @@ def json_objects(response: str) -> Iterator[dict]:
     )
     position = 0
     while position < len(response):
-        starts = [
-            index
-            for index in (response.find("{", position), response.find("[", position))
-            if index >= 0
-        ]
-        if not starts:
+        while position < len(response) and response[position] not in "{[":
+            position += 1
+        if position == len(response):
             return
-        start = min(starts)
+        start = position
         depth, quoted, escaped = 0, False, False
         end = start
         for end in range(start, len(response)):
@@ -70,7 +67,7 @@ def json_objects(response: str) -> Iterator[dict]:
         position = end + 1
         try:
             value, consumed = decoder.raw_decode(response[start:position])
-        except (json.JSONDecodeError, ResponseParseError):
+        except (ValueError, RecursionError):
             continue
         if consumed == position - start and isinstance(value, dict):
             yield value
@@ -119,9 +116,14 @@ def topic_name_mapping(value: dict) -> list[str]:
     for key, name in mapping.items():
         # Legacy prompts used keys such as '1. Previous name'.
         prefix = key.strip().split(".", 1)[0]
-        if not prefix.isdecimal() or int(prefix) < 1:
+        if not prefix.isdecimal():
             raise ResponseParseError("Topic mapping keys must be positive indices")
-        index = int(prefix)
+        try:
+            index = int(prefix)
+        except ValueError as error:
+            raise ResponseParseError("Topic mapping index is too large") from error
+        if index < 1:
+            raise ResponseParseError("Topic mapping keys must be positive indices")
         if index in indexed or not isinstance(name, str) or not name.strip():
             raise ResponseParseError("Topic mapping indices and names must be valid")
         indexed[index] = name

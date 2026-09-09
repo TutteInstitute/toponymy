@@ -15,6 +15,8 @@ import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
+from contextvars import ContextVar
+from threading import Event
 from typing import TypeVar
 
 import httpx
@@ -22,6 +24,20 @@ import httpx
 T = TypeVar("T")
 Prompt = Mapping[str, object]
 Record = Mapping[str, object]
+
+_submission_cancel_event: ContextVar[Event | None] = ContextVar(
+    "toponymy_batch_submission_cancel_event", default=None
+)
+
+
+class _BatchPreparationCancelled(Exception):
+    """The caller cancelled before remote batch creation was dispatched."""
+
+
+def _check_submission_cancelled(event):
+    if event is not None and event.is_set():
+        raise _BatchPreparationCancelled()
+
 
 # Exact documented model identifiers only: a custom Azure deployment name does
 # not identify its underlying model. Callers can declare a known deployment's
@@ -226,6 +242,9 @@ def _requests(
     use_json_object: bool | None = None,
     supports_json_schema: bool = False,
 ) -> list[dict[str, object]]:
+    _schema_policy(
+        use_json_schema, use_json_object, supports_json_schema, model, azure=azure
+    )
     if not prompts:
         raise ValueError("Cannot submit an empty batch")
     if (
@@ -578,6 +597,8 @@ class CohereBatchTransport:
     def submit_batch(
         self, prompts: Sequence[Prompt], temperature: float, max_tokens: int
     ) -> str:
+        cancel_event = _submission_cancel_event.get()
+        _check_submission_cancelled(cancel_event)
         rows = _requests(
             prompts,
             temperature,
@@ -588,6 +609,7 @@ class CohereBatchTransport:
             use_json_object=self.use_json_object,
             supports_json_schema=self.supports_json_schema,
         )
+        _check_submission_cancelled(cancel_event)
         with io.BytesIO(_jsonl(rows)) as data:
             data.name = "toponymy-batch.jsonl"
             uploaded = self.client.datasets.create(
@@ -598,9 +620,11 @@ class CohereBatchTransport:
                 skip_malformed_input=False,
             )
         dataset_id = _identifier(_field(uploaded, "id"), "Cohere input dataset ID")
+        _check_submission_cancelled(cancel_event)
         deadline = time.monotonic() + self.timeout
         remaining_retries = self.max_poll_retries
         while time.monotonic() < deadline:
+            _check_submission_cancelled(cancel_event)
             try:
                 dataset = _field(self.client.datasets.get(id=dataset_id), "dataset")
             except self._poll_errors as error:
@@ -608,6 +632,7 @@ class CohereBatchTransport:
                     raise
                 remaining_retries -= 1
             else:
+                _check_submission_cancelled(cancel_event)
                 status = _field(dataset, "validation_status")
                 if status == "validated":
                     break
@@ -615,9 +640,14 @@ class CohereBatchTransport:
                     raise BatchProtocolError(
                         f"Dataset {dataset_id} validation status={status}: {_field(dataset, 'validation_error')}"
                     )
-            time.sleep(min(self.polling_interval, max(0, deadline - time.monotonic())))
+            delay = min(self.polling_interval, max(0, deadline - time.monotonic()))
+            if cancel_event is None:
+                time.sleep(delay)
+            elif cancel_event.wait(delay):
+                raise _BatchPreparationCancelled()
         else:
             raise TimeoutError(f"Dataset {dataset_id} validation timed out")
+        _check_submission_cancelled(cancel_event)
         response = self.client.batches.create(
             request={
                 "name": "toponymy-chat-batch",

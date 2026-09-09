@@ -28,12 +28,19 @@ requests to that provider.
 Schema policy
 -------------
 
-``use_json_schema=True`` requires a prompt schema and provider support. An
-unsupported required schema raises ``InvalidLLMInputError`` rather than silently
-falling back. ``False`` disables schema requests; ``None`` allows automatic
+``use_json_schema=True`` requires a prompt schema and provider support.
+Detected schema incompatibilities fail before submission.
+``False`` disables schema requests; ``None`` allows automatic
 capability selection. ``use_json_object`` controls JSON-object output separately.
 Do not force both modes or combine an explicit mode with a conflicting
 ``provider_kwargs['response_format']``.
+
+LiteLLM adapts schemas separately for each provider. Toponymy checks a conservative
+subset for direct Anthropic routes, including constraints LiteLLM removes during
+conversion. Other adapters and dependency versions may transform schemas beyond
+Toponymy's capability checks; required mode is not a proof of arbitrary schema
+preservation across all providers. Template field validation does not validate
+every constraint in a custom JSON Schema.
 
 Templates parse JSON structurally and validate fields by meaning, independently
 of key order. Invalid responses are errors; they are not successful empty topic

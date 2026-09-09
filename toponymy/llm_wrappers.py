@@ -810,22 +810,37 @@ async def _await_owned_batch_operation(task):
 async def _run_managed_batch(wrapper, prompts, temperature, max_tokens):
     """Own one submission and cancel its job once when the operation is abandoned.
 
-    Cancellation during synchronous submission waits for its eventual identifier
-    before cancelling. SDK request timeouts bound those operations. Cleanup errors
+    Cancellation stops cooperative preparation or waits for an in-flight create's
+    eventual identifier before cancelling. SDK request timeouts bound those operations. Cleanup errors
     are logged and never replace the original cancellation or exception. Submission
     errors without an identifier are propagated; submission is never retried.
     """
-    await asyncio.sleep(0)
-    submission = asyncio.create_task(
-        asyncio.to_thread(wrapper.submit_batch, prompts, temperature, max_tokens)
+    from threading import Event
+    from .provider_batches import (
+        _submission_cancel_event,
+        _BatchPreparationCancelled,
     )
+
+    await asyncio.sleep(0)
+    cancel_event = Event()
+    token = _submission_cancel_event.set(cancel_event)
+    try:
+        # Task and worker inherit this submission's context; overrides retain
+        # the existing three-argument submit_batch interface.
+        submission = asyncio.create_task(
+            asyncio.to_thread(wrapper.submit_batch, prompts, temperature, max_tokens)
+        )
+    finally:
+        _submission_cancel_event.reset(token)
     batch_id = None
     try:
         batch_id = await asyncio.shield(submission)
         if not await wrapper._wait_for_completion_async(batch_id):
             raise TimeoutError(f"Batch job {batch_id} did not complete")
         return await wrapper._retrieve_batch_results(batch_id)
-    except (asyncio.CancelledError, Exception):
+    except (asyncio.CancelledError, Exception) as error:
+        if isinstance(error, asyncio.CancelledError):
+            cancel_event.set()
         if batch_id is None:
             # A failed submission exposes no job identifier. In particular, do
             # not retry an ambiguous SDK timeout which may already have created
@@ -837,6 +852,8 @@ async def _run_managed_batch(wrapper, prompts, temperature, max_tokens):
                 raise
             try:
                 batch_id = await _await_owned_batch_operation(submission)
+            except _BatchPreparationCancelled:
+                pass
             except (Exception, asyncio.CancelledError):
                 logger.exception(
                     "Batch submission ended without an identifier during cleanup"
@@ -1575,6 +1592,25 @@ def _provider_request_kwargs(wrapper, prompt, messages, temperature, max_tokens)
                 )
             if object_supported:
                 kwargs["response_format"] = {"type": "json_object"}
+    required_schema = (
+        explicit_format == "json_schema" or wrapper.use_json_schema is True
+    )
+    provider = kwargs.get("custom_llm_provider")
+    if not provider:
+        provider = (
+            "anthropic"
+            if wrapper.model.startswith("claude-")
+            else wrapper.model.partition("/")[0]
+        )
+    if required_schema and provider == "anthropic":
+        selected_schema = kwargs["response_format"]["json_schema"]["schema"]
+        problem = _anthropic_schema_problem(
+            selected_schema, additional_forbidden={"oneOf", "prefixItems", "minItems"}
+        )
+        if problem:
+            raise InvalidLLMInputError(
+                f"Required schema cannot be preserved by LiteLLM's Anthropic transport: {problem}"
+            )
     kwargs.update(
         model=wrapper.model,
         messages=messages,
@@ -3238,7 +3274,8 @@ class CohereBatchNamer(AsyncLLMWrapper):
     Cancellation or timeout cancels a submitted job exactly once, including a job
     whose identifier arrives after caller cancellation. Cleanup errors are logged
     while preserving the original exception. Cancellation can therefore take the
-    bounded SDK submission/cancellation time to complete.
+    bounded SDK submission/cancellation time to complete. Dataset validation
+    polling stops cooperatively before creating a batch when cancellation arrives.
 
     ``use_json_schema=True`` requires a prompt schema supported by the model and
     provider grammar. Automatic mode uses supported schemas and otherwise sends
@@ -3275,8 +3312,6 @@ class CohereBatchNamer(AsyncLLMWrapper):
             use_json_object=use_json_object,
             supports_json_schema=supports_json_schema,
         )
-        self.use_json_schema = use_json_schema
-        self.use_json_object = use_json_object
         self.client = self.transport.client
         self.model = model
         self.callback = callback
@@ -3301,6 +3336,22 @@ class CohereBatchNamer(AsyncLLMWrapper):
         self, prompts, temperature, max_tokens
     ):
         return await _run_managed_batch(self, prompts, temperature, max_tokens)
+
+    @property
+    def use_json_schema(self):
+        return self.transport.use_json_schema
+
+    @use_json_schema.setter
+    def use_json_schema(self, value):
+        self.transport.use_json_schema = value
+
+    @property
+    def use_json_object(self):
+        return self.transport.use_json_object
+
+    @use_json_object.setter
+    def use_json_object(self, value):
+        self.transport.use_json_object = value
 
     @property
     def supports_json_schema(self):
@@ -3356,7 +3407,7 @@ class CohereBatchNamer(AsyncLLMWrapper):
             await asyncio.to_thread(close)
 
 
-def _anthropic_schema_problem(schema):
+def _anthropic_schema_problem(schema, *, additional_forbidden=()):
     """Return an unsupported constraint without weakening the caller's schema.
 
     This is a conservative subset of Anthropic's documented structured-output
@@ -3397,6 +3448,7 @@ def _anthropic_schema_problem(schema):
         "$dynamicAnchor",
         "$id",
     }
+    forbidden.update(additional_forbidden)
     pending = [(schema, ())]
     while pending:
         value, ancestors = pending.pop()
@@ -4376,8 +4428,6 @@ class BatchAzureAINamer(AsyncLLMWrapper):
             use_json_object=use_json_object,
             supports_json_schema=supports_json_schema,
         )
-        self.use_json_schema = use_json_schema
-        self.use_json_object = use_json_object
         self.client = self.transport.client
         self.model = model
         self.callback = callback
@@ -4402,6 +4452,22 @@ class BatchAzureAINamer(AsyncLLMWrapper):
         self, prompts, temperature, max_tokens
     ):
         return await _run_managed_batch(self, prompts, temperature, max_tokens)
+
+    @property
+    def use_json_schema(self):
+        return self.transport.use_json_schema
+
+    @use_json_schema.setter
+    def use_json_schema(self, value):
+        self.transport.use_json_schema = value
+
+    @property
+    def use_json_object(self):
+        return self.transport.use_json_object
+
+    @use_json_object.setter
+    def use_json_object(self, value):
+        self.transport.use_json_object = value
 
     @property
     def supports_json_schema(self):
