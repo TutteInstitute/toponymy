@@ -1,6 +1,6 @@
 """The staged topic modelling pipeline."""
 
-from copy import deepcopy
+from copy import copy, deepcopy
 from time import perf_counter
 
 import numpy as np
@@ -164,6 +164,10 @@ class Toponymy:
             key: list(children)
             for key, children in self.clusterer.cluster_tree_.items()
         }
+        # Retain this fit's hierarchy when a caller later refits the estimator.
+        self._fitted_clusterer = copy(self.clusterer)
+        self._fitted_clusterer.cluster_layers_ = self.cluster_layers_
+        self._fitted_clusterer.cluster_tree_ = self.cluster_tree_
         self.stage_timings_["clustering"] = perf_counter() - started
         topics = {
             (layer.layer_index, cluster.label): Topic(
@@ -189,13 +193,20 @@ class Toponymy:
         started = perf_counter()
         for extractor in self.feature_extractors:
             if extractor.layer_dependent:
-                extractor.fit(self.objects_, self.clusterer)
+                if extractor.can_fit_from_objects():
+                    extractor.fit(self.objects_, self._fitted_clusterer)
+                else:
+                    extractor.predict()
                 continue
             options = {"embedding_vectors": self.embedding_vectors_}
             if isinstance(extractor, TextKeyphraseExtractor):
                 options = {"embedder": self.embedding_model}
             options.update(self.feature_options.get(extractor.feature_key, {}))
-            features = extractor.fit_predict(self.objects_, self.clusterer, **options)
+            features = (
+                extractor.fit_predict(self.objects_, self._fitted_clusterer, **options)
+                if extractor.can_fit_from_objects()
+                else extractor.predict()
+            )
             if len(features) != len(self.cluster_layers_):
                 raise ValueError("Extractor output must have one entry per layer")
             for layer, values in zip(self.cluster_layers_, features):
@@ -251,7 +262,7 @@ class Toponymy:
             for extractor in self.feature_extractors:
                 if extractor.layer_dependent:
                     values = extractor.extract_layer(
-                        layer.layer_index, self.topics_, self.clusterer
+                        layer.layer_index, self.topics_, self._fitted_clusterer
                     )
                     self._assign_features(extractor.feature_key, layer, values)
         self._make_prompts(layer)

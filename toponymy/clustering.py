@@ -414,11 +414,13 @@ class PLSCANClusterer(Clusterer):
         min_clusters = _nonnegative_integer(self.min_clusters, "min_clusters")
         if min_clusters == 0:
             raise ValueError("min_clusters must be positive")
-        if not vectors.shape[0]:
-            self.plscan_ = None
-            return self._set_labels([])
         if vectors.shape[0] < max(2, self.min_samples, self.base_min_cluster_size):
+            self.cluster_probabilities_ = []
+            self.cluster_persistence_scores_ = []
+            self.plscan_min_cluster_sizes_ = None
             self.plscan_ = None
+            if not vectors.shape[0]:
+                return self._set_labels([])
             return self._set_labels([np.full(vectors.shape[0], -1, dtype=np.int64)])
         from fast_hdbscan import PLSCAN
 

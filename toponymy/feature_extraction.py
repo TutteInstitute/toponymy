@@ -31,6 +31,11 @@ class FeatureExtractorBase(ABC, BaseEstimator):
         return self.features is not None
 
     def can_fit_from_objects(self):
+        """Whether the pipeline can fit this extractor from its input objects.
+
+        Return False for custom metadata extractors fitted separately. Their
+        predicted features must align with the pipeline's layers and clusters.
+        """
         return True
 
     @abstractmethod

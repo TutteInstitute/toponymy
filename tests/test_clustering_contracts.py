@@ -235,6 +235,7 @@ def test_precomputed_fit_variants_and_clone():
 @given(label_layers())
 def test_generated_grouping_matches_independent_membership(labels):
     layers = build_cluster_layers(labels)
+    assert len(layers) == len(labels)
     for source, layer in zip(labels, layers):
         expected = {}
         for i, label in enumerate(source.tolist()):
