@@ -547,6 +547,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int | None = None,
     ) -> str | tuple:
+
         result = self._generate_topic_name_with_raw_response(
             prompt,
             temperature=temperature,

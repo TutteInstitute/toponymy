@@ -357,7 +357,9 @@ def test_async_azureai_namer_default():
 
 
 def test_async_azureai_namer_provider_kwargs_passthrough():
-    namer = AsyncAzureAINamer(api_key="dummy", model="dummy", provider_kwargs={"timeout": 123})
+    namer = AsyncAzureAINamer(
+        api_key="dummy", model="dummy", provider_kwargs={"timeout": 123}
+    )
 
     assert namer.provider_kwargs["timeout"] == 123
 

@@ -36,6 +36,11 @@ NOTEBOOK_CONFIG = {
         "run_in_pr": False,
         "timeout": 300,
     },
+    "debugging_llm_runs.ipynb": {
+        "has_openainamer": True,
+        "run_in_pr": True,
+        "timeout": 1000,
+    },
     "how_toponymy_works.ipynb": {
         "has_openainamer": True,
         "run_in_pr": False,

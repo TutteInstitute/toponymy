@@ -179,7 +179,9 @@ class TestHandleVerboseParams:
             show_pb, verbose = handle_verbose_params(verbose_legacy=True)
 
         assert verbose is True
-        assert show_pb is True  # When verbose_legacy=True, progress bar should also be True
+        assert (
+            show_pb is True
+        )  # When verbose_legacy=True, progress bar should also be True
 
     def test_show_progress_bars_with_deprecation_warning(self):
         """show_progress_bars should work with deprecation warning."""
