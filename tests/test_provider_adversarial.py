@@ -245,6 +245,15 @@ async def entered(event):
     raise AssertionError("Fake SDK boundary was not entered within bounded wait")
 
 
+async def assert_cancelled(task, message):
+    with pytest.raises(asyncio.CancelledError) as error:
+        await asyncio.wait_for(task, 2)
+    assert task.cancelled()
+    # Task.cancel propagates its message to the awaiter starting in Python 3.11.
+    if sys.version_info >= (3, 11):
+        assert str(error.value) == message
+
+
 @pytest.mark.asyncio
 async def test_cancel_during_cohere_validation_does_not_create_job(fake_sdk_imports):
     sdk = CohereSDK(ready=False)
@@ -256,8 +265,7 @@ async def test_cancel_during_cohere_validation_does_not_create_job(fake_sdk_impo
         # The old code creates after this release; cooperative cancellation
         # should already have stopped preparation. No SDK call itself blocks.
         asyncio.get_running_loop().call_later(0.02, sdk.ready["one"].set)
-        with pytest.raises(asyncio.CancelledError, match="cancel before creating"):
-            await asyncio.wait_for(task, 2)
+        await assert_cancelled(task, "cancel before creating remote batch")
         assert sdk.created == []
         assert sdk.cancelled == []
     finally:
@@ -280,8 +288,7 @@ async def test_cancel_during_actual_cohere_create_keeps_late_id_ownership(
         task.cancel("cancel in-flight create")
         await asyncio.sleep(0)
         sdk.create_release.set()
-        with pytest.raises(asyncio.CancelledError, match="in-flight create"):
-            await asyncio.wait_for(task, 2)
+        await assert_cancelled(task, "cancel in-flight create")
         assert sdk.created == ["one"]
         assert sdk.cancelled == ["job-one"]
     finally:
@@ -360,8 +367,7 @@ async def test_concurrent_same_wrapper_cancellation_is_isolated(
         loop = asyncio.get_running_loop()
         loop.call_later(0.02, sdk.ready["cancel"].set)
         loop.call_later(0.02, sdk.ready["keep"].set)
-        with pytest.raises(asyncio.CancelledError, match="only cancel this"):
-            await asyncio.wait_for(cancelled, 2)
+        await assert_cancelled(cancelled, "only cancel this submission")
         assert await asyncio.wait_for(successful, 2) == ["name keep"]
         assert sdk.created == ["keep"]
         assert sdk.cancelled == []
