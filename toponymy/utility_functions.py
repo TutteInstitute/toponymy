@@ -2,25 +2,33 @@ import numpy as np
 import numba
 
 
-@numba.njit(fastmath=True, cache=True)
+@numba.njit(cache=True)
 def distance_to_vector(vector, other_vectors):
-    result = np.zeros(other_vectors.shape[0], dtype=np.float32)
-    other_vector_norms = np.zeros(other_vectors.shape[0], dtype=np.float32)
+    """Cosine distances, including finite vectors at very small or large scales."""
+    distances = np.ones(other_vectors.shape[0], dtype=np.float64)
+    scale = 0.0
+    for j in range(vector.shape[0]):
+        scale = max(scale, abs(np.float64(vector[j])))
+    if scale == 0.0:
+        return distances
     vector_norm = 0.0
     for j in range(vector.shape[0]):
-        vector_norm += vector[j] * vector[j]
+        value = np.float64(vector[j]) / scale
+        vector_norm += value * value
 
     for i in range(other_vectors.shape[0]):
+        other_scale = 0.0
         for j in range(vector.shape[0]):
-            result[i] += vector[j] * other_vectors[i, j]
-            other_vector_norms[i] += other_vectors[i, j] * other_vectors[i, j]
-
-    distances = np.ones(other_vectors.shape[0], dtype=np.float64)
-    if vector_norm > 0.0:
-        for i in range(other_vectors.shape[0]):
-            if other_vector_norms[i] > 0.0:
-                cosine = result[i] / np.sqrt(vector_norm * other_vector_norms[i])
-                distances[i] = 1.0 - min(1.0, max(-1.0, cosine))
+            other_scale = max(other_scale, abs(np.float64(other_vectors[i, j])))
+        if other_scale == 0.0:
+            continue
+        product, other_norm = 0.0, 0.0
+        for j in range(vector.shape[0]):
+            value = np.float64(other_vectors[i, j]) / other_scale
+            product += (np.float64(vector[j]) / scale) * value
+            other_norm += value * value
+        cosine = product / np.sqrt(vector_norm * other_norm)
+        distances[i] = 1.0 - min(1.0, max(-1.0, cosine))
     return distances
 
 
