@@ -35,14 +35,20 @@ def topic_uid(tup) -> str:
 
 def uid_to_ints(s: str):
     """Returns (layer, cluster_number)"""
+    if not isinstance(s, str):
+        raise ValueError("Invalid topic identifier")
     if s.startswith("v2:"):
         _, layer, cluster = s.split(":")
         values = int(layer), int(cluster)
         if values[0] < 0 or values[1] < -1:
             raise ValueError("Invalid topic identifier")
         return values
-    padded = s + "=" * (-len(s) % 4)
-    combined = int.from_bytes(base64.urlsafe_b64decode(padded), "big")
+    if len(s) != 4:
+        raise ValueError("Invalid compact topic identifier")
+    decoded = base64.b64decode(s, altchars=b"-_", validate=True)
+    if len(decoded) != 3 or base64.urlsafe_b64encode(decoded).decode() != s:
+        raise ValueError("Invalid compact topic identifier")
+    combined = int.from_bytes(decoded, "big")
     return combined >> 10, (combined & 0x3FF) - 1
 
 
@@ -276,12 +282,20 @@ class TopicModel:
 
     @classmethod
     def from_file(cls, path: str):
+        """Load a trusted topic archive in the current or legacy format.
+
+        Paths, duplicate members and layer counts are checked; NumPy object
+        arrays are not loaded. Extraction and native array/Parquet readers have
+        no resource quota, so callers must bound archive size and trust its
+        source before loading.
+        """
         path = Path(path)
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
 
             with zipfile.ZipFile(path) as z:
+                members = set()
                 for entry in z.infolist():
                     member = PurePosixPath(entry.filename.replace("\\", "/"))
                     if (
@@ -290,6 +304,10 @@ class TopicModel:
                         or ":" in entry.filename
                     ):
                         raise ValueError("Invalid path in topic archive")
+                    normalized = str(member).casefold()
+                    if normalized in members:
+                        raise ValueError("Duplicate member in topic archive")
+                    members.add(normalized)
                 z.extractall(root)
 
             with open(root / "metadata.json", encoding="utf8") as f:
@@ -303,6 +321,22 @@ class TopicModel:
                 )
 
             has_reduced = metadata["has_reduced"]
+            n_layers = metadata.get("n_layers")
+            if (
+                isinstance(n_layers, bool)
+                or not isinstance(n_layers, int)
+                or n_layers < 0
+            ):
+                raise ValueError("Archive n_layers must be a nonnegative integer")
+            layer_files = sorted(
+                (root / "cluster_matrices").glob("layer_*.npz"),
+                key=lambda p: int(p.stem.split("_")[1]),
+            )
+            if len(layer_files) != n_layers or any(
+                file.name != f"layer_{index}.npz"
+                for index, file in enumerate(layer_files)
+            ):
+                raise ValueError("Archive cluster matrices must match n_layers")
 
             # --- DataFrames ---
             document_df = pd.read_parquet(root / "document_df.parquet")
@@ -317,11 +351,6 @@ class TopicModel:
                 )  # bugfix: was loading from cwd
 
             # --- Sparse cluster matrices ---
-            matrices_dir = root / "cluster_matrices"
-            layer_files = sorted(
-                matrices_dir.glob("layer_*.npz"),
-                key=lambda p: int(p.stem.split("_")[1]),
-            )
             matrices = [sp.load_npz(f) for f in layer_files]
 
             # --- Cluster tree topology ---
@@ -396,6 +425,7 @@ class TopicModel:
 
     @classmethod
     def from_lance(cls, path: str):
+        """Load trusted local Lance tables; callers must bound input resources."""
         import lance
 
         path = Path(path)
