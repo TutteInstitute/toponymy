@@ -33,3 +33,24 @@ when you already have semantic vectors. See :doc:`llm_wrappers` and
 
 The :doc:`basic_usage` example uses local arrays and deterministic responses.
 It does not download models or call a service.
+
+Windows paths
+-------------
+
+Long environment paths, including paths expanded by Windows app containers,
+can exceed the filename limits used by numerical dependencies when Numba writes
+compiled caches. This can raise ``FileNotFoundError`` during clustering or
+feature extraction even when installation and imports succeed. Use a shorter
+environment location, or set a short writable cache directory before starting
+Python or a notebook kernel. For example, in PowerShell:
+
+.. code-block:: powershell
+
+   $env:NUMBA_CACHE_DIR = 'C:\work\tp-cache'
+   New-Item -ItemType Directory -Force -Path $env:NUMBA_CACHE_DIR
+   python your_script.py
+
+This setting applies to processes started from that shell. It does not change
+machine-wide path settings. Lance dataset paths and temporary directories can
+also exceed native filename limits; keep those paths short separately, since
+``NUMBA_CACHE_DIR`` only controls the numerical cache.
