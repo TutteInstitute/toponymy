@@ -110,9 +110,12 @@ def test_child_failure_propagates_traceback_and_cleans_up(monkeypatch):
 
 
 @pytest.mark.parametrize("terminate_times_out", [False, True])
-def test_interrupt_reaps_child_before_temporary_cleanup(
+def test_interrupt_reaps_posix_child_before_temporary_cleanup(
     monkeypatch, terminate_times_out
 ):
+    monkeypatch.setattr(
+        _evoc, "sys", SimpleNamespace(platform="linux", executable=sys.executable)
+    )
     instances = []
 
     class Child:
@@ -161,6 +164,46 @@ def test_launch_failure_cleans_up_and_preserves_exception(monkeypatch):
     with pytest.raises(OSError, match="configured interpreter"):
         _evoc.fit_isolated(np.ones((6, 2)), {})
     assert not directories[0].exists()
+
+
+@pytest.mark.parametrize("child_exited", [False, True])
+def test_windows_tree_stop_reports_failure_unless_child_already_exited(
+    monkeypatch, child_exited
+):
+    polls = iter([None, 0 if child_exited else None])
+    waits = []
+    process = SimpleNamespace(
+        pid=12345, poll=lambda: next(polls), wait=lambda timeout: waits.append(timeout)
+    )
+
+    def stop(command, **kwargs):
+        assert command == ["taskkill", "/PID", "12345", "/T", "/F"]
+        assert kwargs["timeout"] == 10
+        assert kwargs["stdout"] == subprocess.DEVNULL
+        assert kwargs["stderr"] == subprocess.PIPE
+        assert kwargs["creationflags"] == 0x08000000
+        return subprocess.CompletedProcess(command, 128, stderr=b"termination failed")
+
+    monkeypatch.setattr(_evoc, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(
+        _evoc,
+        "subprocess",
+        SimpleNamespace(
+            run=stop,
+            DEVNULL=subprocess.DEVNULL,
+            PIPE=subprocess.PIPE,
+            CREATE_NO_WINDOW=0x08000000,
+        ),
+    )
+    if child_exited:
+        _evoc._stop_child(process)
+        assert waits == [5]
+    else:
+        with pytest.raises(subprocess.CalledProcessError) as caught:
+            _evoc._stop_child(process)
+        assert caught.value.returncode == 128
+        assert caught.value.stderr == b"termination failed"
+        assert waits == []
 
 
 def test_failure_output_is_bounded(tmp_path):

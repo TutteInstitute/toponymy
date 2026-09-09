@@ -70,6 +70,11 @@ algorithms usable without changing their kernels or suppressing failures.
 The adapter preserves EVoC's naturally selected layers and returns its actual
 fitted model as ``evoc_``. Input passes through a temporary memory-mapped file;
 the process and temporary files are cleaned up after completion or interruption.
+On Windows, interruption uses ``taskkill /T /F`` to stop the interpreter tree
+before removing the mapped input and inherited log. Waiting for a virtual
+environment's launcher alone can race those file handles. The adapter does not
+provide a total fit deadline or a guarantee about delivery of OS console signals.
+Failure of the system termination command is reported as a cleanup error.
 The additional interpreter startup, compilation, disk space and model handoff
 costs apply to every fit. Child failures propagate with their error output.
 The caller's environment and thread settings are inherited unchanged.

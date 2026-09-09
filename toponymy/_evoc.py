@@ -24,8 +24,21 @@ _CHILD_BOOTSTRAP = (
 
 
 def _stop_child(process):
-    """Reap the child before removing its memory-mapped input on Windows."""
+    """Stop the fit before removing its mapped input and inherited log."""
     if process.poll() is not None:
+        return
+    if sys.platform == "win32":
+        # A venv launcher can exit before its interpreter releases these files.
+        stopped = subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        if stopped.returncode and process.poll() is None:
+            stopped.check_returncode()
+        process.wait(timeout=5)
         return
     process.terminate()
     try:
