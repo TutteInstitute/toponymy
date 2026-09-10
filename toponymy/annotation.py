@@ -1,5 +1,7 @@
 from typing import (
+    Any,
     Dict,
+    Generic,
     Iterable,
     List,
     NamedTuple,
@@ -8,9 +10,13 @@ from typing import (
     runtime_checkable,
     Self,
     Tuple,
+    TypeVar,
 )
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, MutableMapping
 from collections import defaultdict
+from enum import Enum
+
+T = TypeVar("T")
 
 
 class NodeId(NamedTuple):
@@ -50,6 +56,7 @@ class AnnotationTree:
     * Every non-root node has exactly one parent.
     * Edges may span more than one layer.
     * The root is a catch-all node, and will not be considered a cluster node or a part of a layer.
+    * Layer ids are 0-indexed and there are no empty layers (this assumption is used by the executor)
 
     Parameters
     ----------
@@ -79,7 +86,7 @@ class AnnotationTree:
     13
     >>> tree.root
     NodeId(2, 0)
-    >>> tree.n_layers()
+    >>> tree.n_layers
     2
     >>> tree.root.layer, tree.root.cluster
     (2, 0)
@@ -130,40 +137,57 @@ class AnnotationTree:
 
         self._children = children_dict
         self._parent = parent_dict
-        self._nodes = frozenset(nodes - set(roots))
+        self._set_nodes = frozenset(nodes - set(roots))
+        self._sorted_nodes = tuple(sorted(self._set_nodes))
         self._root: Optional[NodeId] = roots[0]
 
         layers: Dict[int, List[NodeId]] = defaultdict(list)
-        for node in self._nodes:
+        for node in self._set_nodes:
             layers[node.layer].append(node)
         self._layers = {
             layer_id: tuple(sorted(layer_nodes))
             for layer_id, layer_nodes in layers.items()
         }
+        self._layer_ids = tuple(sorted(self._layers))
 
     @classmethod
     def from_clusterer(cls, clusterer: _HasClusterAnnotationTree, **kwargs) -> Self:
         return cls(clusterer.cluster_tree_, **kwargs)
 
     def __len__(self):
-        return len(self._nodes)
+        return len(self._set_nodes)
 
     def __contains__(self, node: object) -> bool:
         try:
-            return node in self._nodes
+            return node in self._set_nodes
         except TypeError:
             return False
 
+    def __eq__(self, other: object) -> bool:
+        if self is other:
+            return True
+        if not isinstance(other, AnnotationTree):
+            return NotImplemented
+        return (
+            self._root == other._root
+            and self._set_nodes == other._set_nodes
+            and self._parent == other._parent
+        )
+
     @property
     def n_layers(self) -> int:
-        return len(self._layers)
+        return len(self._layer_ids)
 
     @property
     def nodes(self) -> Iterable[NodeId]:
-        return sorted(self._nodes)
+        return self._sorted_nodes
+
+    @property
+    def layer_ids(self) -> Iterable[int]:
+        return self._layer_ids
 
     def layer(self, layer_id: int) -> Iterable[NodeId]:
-        return sorted(self._layers[layer_id])
+        return self._layers[layer_id]
 
     def children(self, node: NodeId) -> Iterable[NodeId] | None:
         return self._children.get(node, None)
@@ -212,3 +236,59 @@ class AnnotationTree:
                 remaining_depth -= 1
 
         return result
+
+
+class AnnotationState(Enum):
+    EMPTY = "empty"
+    COMPUTED = "computed"
+    FAILED = "failed"
+
+
+class Annotation(MutableMapping[NodeId, T]):
+    def __init__(self, name: str, tree: AnnotationTree):
+        self.name = name
+        self.tree = tree
+
+        self._values: dict[NodeId, T] = {}
+        self._states: dict[NodeId, AnnotationState] = {
+            node: AnnotationState.EMPTY for node in tree.nodes
+        }
+
+    def __getitem__(self, node: NodeId) -> T:
+        node = self._check(node)
+        return self._values[node]
+
+    def __setitem__(self, node: NodeId, value: T) -> None:
+        node = self._check(node)
+        self._values[node] = value
+        self._states[node] = AnnotationState.COMPUTED
+
+    def __delitem__(self, node: NodeId) -> None:
+        node = self._check(node)
+        self._values.pop(node, None)
+        self._states[node] = AnnotationState.EMPTY
+
+    def __iter__(self) -> Iterator[NodeId]:
+        return iter(self._values)
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    @property
+    def states(self) -> Mapping[NodeId, AnnotationState]:
+        return self._states
+
+    def fail(self, node: NodeId) -> None:
+        node = self._check(node)
+        self._values.pop(node, None)
+        self._states[node] = AnnotationState.FAILED
+
+    def _check(self, node: Any) -> NodeId:
+        if not isinstance(node, NodeId):
+            try:
+                node = NodeId(*node)
+            except (TypeError, ValueError):
+                raise KeyError(f"Invalid node ID: {node!r}")
+        if node not in self.tree:
+            raise KeyError(f"{node} is not a node of the cluster tree")
+        return node
