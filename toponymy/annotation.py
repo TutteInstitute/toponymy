@@ -493,11 +493,18 @@ class Annotator(Protocol):
 
 
 class Executor:
+    """Executes annotators against its annotation store."""
+
+    def __init__(self, store: AnnotationStore):
+        self.store = store
+
+    @property
+    def tree(self) -> AnnotationTree:
+        return self.store.tree
 
     def run(
         self,
         annotator: Annotator,
-        store: AnnotationStore,
         *,
         nodes: Iterable[NodeId] | None = None,
     ) -> dict[NodeId, str]:
@@ -525,29 +532,29 @@ class Executor:
         if len(set(outputs)) != len(outputs):
             raise ValueError("annotator.outputs contains duplicate names")
 
-        missing = [name for name in inputs if name not in store]
+        missing = [name for name in inputs if name not in self.store]
         if missing:
             raise KeyError(f"missing input annotation(s): {missing}")
 
         selected_nodes = (
-            store.tree.nodes
+            self.store.tree.nodes
             if nodes is None
-            else tuple(store.tree.check(node) for node in nodes)
+            else tuple(self.store.tree.check(node) for node in nodes)
         )
 
         for name in outputs:
-            if name not in store:
-                store.add(Annotation(name, store.tree))
+            if name not in self.store:
+                self.store.add(Annotation(name, self.store.tree))
 
         failures: dict[NodeId, str] = {}
 
         for node in selected_nodes:
             try:
-                values = {name: store[name][node] for name in inputs}
+                values = {name: self.store[name][node] for name in inputs}
                 result = annotator.annotate(node, **values)
             except Exception as error:
                 for name in outputs:
-                    store[name].fail(node)
+                    self.store[name].fail(node)
 
                 failures[node] = f"{type(error).__name__}: {error}"
                 continue
@@ -558,6 +565,6 @@ class Executor:
                 )
 
             for name, value in result.items():
-                store[name][node] = value
+                self.store[name][node] = value
 
         return failures
