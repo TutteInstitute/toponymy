@@ -566,7 +566,7 @@ class EVoCClusterer(Clusterer):
 
     evoc_ : types.SimpleNamespace or None
         Fitted native data and constructor values, including the materialized
-        native cluster_tree_. This container has no estimator methods. Use this
+        native ``cluster_tree_``. This container has no estimator methods. Use this
         adapter's fit or fit_predict to refit, and get_params or set_params to
         manage configuration. None when the input is too small for EVoC.
 

@@ -40,6 +40,16 @@ zero and one that select how specific the names should be across layers.
 embeddings when an embedder is supplied. Exact duplicate detection also works
 without an embedder.
 
+Set ``reuse_clusterer=True`` to use an already fitted hierarchy for the same
+observations in the same order. ``prepare`` still creates fresh topic and feature
+state; it validates alignment without refitting that clusterer.
+
+``SubtopicExtractor`` defaults to size-ordered child names. Its
+``selection_method`` can instead be ``central``, ``information_weighted``,
+``facility_location`` or ``saturated_coverage`` to select base-topic evidence
+using retained name embeddings. ``source="summary"`` or ``"explanation"`` chooses
+the selected text field. See :doc:`migration` for prerequisites and ID mapping.
+
 ``stage_timings_`` exposes local stage durations; ``request_counts_`` separates
 naming, disambiguation and name-embedding requests. They describe the current
 run, rather than estimates of provider billing or semantic quality.

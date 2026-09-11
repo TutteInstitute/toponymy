@@ -199,7 +199,7 @@ The selectable source replaces the former summary-layer ownership of child
 summaries and explanations; it selects one field for each extractor.
 
 Semantic subtopics
-~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~
 
 Set ``SubtopicExtractor(selection_method="central")`` to rank base-layer topic
 names by their centered cosine direction within each parent. The other semantic
@@ -261,6 +261,14 @@ global center and uses the same centered coordinates for ranking and
 diversification. Central and submodular exemplar selection preserve small
 directional differences after large common offsets cancel. Keyphrase counts
 must be finite and nonnegative; central count weights are scaled before summing.
+
+Tree displays
+~~~~~~~~~~~~~
+
+Direct display helpers reject multiple synthetic roots instead of choosing one
+and hiding the other branches. Rootless forests and a single legacy display root
+remain supported. Widgets default to an empty hierarchy; Circle Packing also
+accepts empty models and zero-size leaves without invalid zoom coordinates.
 
 Stored results
 ~~~~~~~~~~~~~~
