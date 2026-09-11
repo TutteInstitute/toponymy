@@ -241,3 +241,46 @@ def test_pure_plot_helpers_do_not_import_optional_widget_dependencies(monkeypatc
     assert plotting.construct_topic_hierarchy(
         SimpleNamespace(cluster_tree_={}, cluster_layers_=()), []
     ) == {"name": "Root", "size": 0}
+
+
+@pytest.mark.parametrize("consumer", ["topic_tree", "html", "widget"])
+def test_disconnected_synthetic_roots_fail_instead_of_hiding_a_branch(consumer):
+    from toponymy.plotting import construct_topic_hierarchy
+    from toponymy.topic_tree import topic_tree_html
+
+    tree = {(1, 0): [(0, 7)], (1, 1): [(0, 70)]}
+    names = [{7: "Apple", 70: "Banana"}]
+    sizes = [{7: 1, 70: 1}]
+    with pytest.raises(ValueError, match="root"):
+        if consumer == "topic_tree":
+            TopicTree(tree, names, sizes, 2)
+        elif consumer == "html":
+            topic_tree_html(tree, names, sizes, 2)
+        else:
+            clusterer = SimpleNamespace(
+                cluster_tree_=tree,
+                cluster_layers_=build_cluster_layers([np.array([7, 70])]),
+            )
+            construct_topic_hierarchy(clusterer, names)
+
+
+def test_one_legacy_display_root_remains_supported():
+    tree = TopicTree({(3, 8): [(0, 7)]}, [{7: "Apple"}], [{7: 2}], 2)
+    assert "Apple" in str(tree)
+    assert set(treemap_dataframe(tree)["id"]) == {"L3_C8", "L0_C7"}
+
+
+@pytest.mark.parametrize("name", ["IndentedTree", "RadialTidyTree", "CirclePacking"])
+def test_widget_defaults_are_owned_valid_empty_hierarchies(name):
+    pytest.importorskip("anywidget")
+    import toponymy.plotting as plotting
+
+    widget_type = getattr(plotting, name)
+    first, second = widget_type(), widget_type()
+    try:
+        assert first.data == second.data == {"name": "Root", "size": 0}
+        first.data["name"] = "Changed"
+        assert second.data == {"name": "Root", "size": 0}
+    finally:
+        first.close()
+        second.close()

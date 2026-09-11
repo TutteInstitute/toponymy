@@ -21,8 +21,10 @@ def _rooted_tree(tree, topics):
         if any(child[0] >= parent[0] for child in children):
             raise ValueError("Topic tree edges must lead to lower layers")
     synthetic = [node for node in result if node[0] >= len(topics)]
+    if len(synthetic) > 1:
+        raise ValueError("A topic display tree must have at most one synthetic root")
     if synthetic:
-        return result, max(synthetic)
+        return result, synthetic[0]
     nodes = set(result)
     children = {child for group in result.values() for child in group}
     nodes.update(children)

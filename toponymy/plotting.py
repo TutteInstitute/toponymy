@@ -116,7 +116,7 @@ def __getattr__(name):
         """
 
         _esm = pathlib.Path(__file__).parent / "widgets/indentedTree/dist/widget.js"
-        data = traitlets.Dict(default_value={}).tag(sync=True)
+        data = traitlets.Dict(default_value={"name": "Root", "size": 0}).tag(sync=True)
         width = traitlets.Int(default_value=1024).tag(sync=True)
         palette = traitlets.Unicode(default_value="latte").tag(sync=True)
 
@@ -143,7 +143,7 @@ def __getattr__(name):
 
         _esm = pathlib.Path(__file__).parent / "widgets/radialTidyTree/dist/widget.js"
         _css = pathlib.Path(__file__).parent / "widgets/radialTidyTree/dist/widget.css"
-        data = traitlets.Dict(default_value={}).tag(sync=True)
+        data = traitlets.Dict(default_value={"name": "Root", "size": 0}).tag(sync=True)
         width = traitlets.Int(default_value=1024).tag(sync=True)
         maxTextChars = traitlets.Int(default_value=30).tag(sync=True)
         palette = traitlets.Unicode(default_value="latte").tag(sync=True)
@@ -172,7 +172,7 @@ def __getattr__(name):
 
         _esm = pathlib.Path(__file__).parent / "widgets/circlePacking/dist/widget.js"
         _css = pathlib.Path(__file__).parent / "widgets/circlePacking/dist/widget.css"
-        data = traitlets.Dict(default_value={}).tag(sync=True)
+        data = traitlets.Dict(default_value={"name": "Root", "size": 0}).tag(sync=True)
         width = traitlets.Int(default_value=1024).tag(sync=True)
         maxTextChars = traitlets.Int(default_value=50).tag(sync=True)
         palette = traitlets.Unicode(default_value="latte").tag(sync=True)
