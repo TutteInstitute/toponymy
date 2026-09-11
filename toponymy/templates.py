@@ -26,13 +26,22 @@ class Prompt:
     system: str
     user: str
     _json_schema: dict[str, Any] | None = field(repr=False)
+    combined: str | None = None
 
     def __init__(
-        self, system: str, user: str, json_schema: dict[str, Any] | None = None
+        self,
+        system: str,
+        user: str,
+        json_schema: dict[str, Any] | None = None,
+        *,
+        combined: str | None = None,
     ):
+        if combined is not None and not isinstance(combined, str):
+            raise ValueError("Prompt combined rendering must be a string or None")
         object.__setattr__(self, "system", system)
         object.__setattr__(self, "user", user)
         object.__setattr__(self, "_json_schema", deepcopy(json_schema))
+        object.__setattr__(self, "combined", combined)
 
     @property
     def json_schema(self) -> dict[str, Any] | None:
@@ -40,11 +49,14 @@ class Prompt:
         return deepcopy(self._json_schema)
 
     def _asdict(self) -> dict[str, Any]:
-        return {
+        result = {
             "system": self.system,
             "user": self.user,
             "json_schema": self.json_schema,
         }
+        if self.combined is not None:
+            result["combined"] = self.combined
+        return result
 
 
 class Template(ABC):

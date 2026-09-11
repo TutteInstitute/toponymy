@@ -295,11 +295,7 @@ def llm_output_to_result(llm_output: str, regex: str = GET_TOPIC_NAME_REGEX) -> 
 def validate_prompt(prompt: Any, supports_system_prompts: bool) -> Dict[str, Any]:
     """Normalize canonical prompts and explicit legacy renderings at one boundary."""
     if isinstance(prompt, Prompt):
-        prompt = {
-            "system": prompt.system,
-            "user": prompt.user,
-            "json_schema": prompt.json_schema,
-        }
+        prompt = prompt._asdict()
     elif isinstance(prompt, str):
         prompt = {"system": "", "user": prompt, "combined": prompt}
     elif isinstance(prompt, dict):

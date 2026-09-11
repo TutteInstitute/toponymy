@@ -44,6 +44,7 @@ class Toponymy:
         text_embedding_model=None,
         clusterer=None,
         *,
+        reuse_clusterer=False,
         feature_extractors=None,
         feature_options=None,
         prompt_template=None,
@@ -71,6 +72,9 @@ class Toponymy:
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
         self.clusterer = PLSCANClusterer() if clusterer is None else clusterer
+        if not isinstance(reuse_clusterer, bool):
+            raise ValueError("reuse_clusterer must be a boolean")
+        self.reuse_clusterer = reuse_clusterer
         self.feature_extractors = (
             [TextExemplarExtractor()]
             if feature_extractors is None
@@ -156,7 +160,16 @@ class Toponymy:
             )
         self.stage_timings_ = {}
         started = perf_counter()
-        self.clusterer.fit(self.clusterable_vectors_)
+        if self.reuse_clusterer:
+            if not all(
+                hasattr(self.clusterer, name)
+                for name in ("cluster_layers_", "cluster_tree_")
+            ):
+                raise NotFittedError(
+                    "reuse_clusterer requires an already fitted clusterer"
+                )
+        else:
+            self.clusterer.fit(self.clusterable_vectors_)
         self.cluster_layers_ = tuple(self.clusterer.cluster_layers_)
         if any(len(layer.labels) != n_objects for layer in self.cluster_layers_):
             raise ValueError("Clustering output does not match the number of objects")
@@ -189,6 +202,7 @@ class Toponymy:
             object_description=self.object_description,
             corpus_description=self.corpus_description,
             disambiguation=self.disambiguate,
+            clustering_reused=self.reuse_clusterer,
             semantic_quality="NOT VALIDATED",
         )
         started = perf_counter()

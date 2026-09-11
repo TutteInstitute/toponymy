@@ -58,6 +58,14 @@ change membership. Empty input and all-noise partitions are valid results.
 layer. Its ``fit(vectors)`` validates the observation count. When labels were
 not supplied to the constructor, ``fit(label_layers)`` remains supported.
 
+Set ``Toponymy(..., reuse_clusterer=True)`` to consume an already fitted
+clusterer without refitting it. This keeps separately fitted metadata extractors
+aligned with that hierarchy. Reuse validates the layer row counts and tree, and
+captures the fitted structure for this pipeline. The caller must supply the same
+observations in the same order; matching row counts cannot establish identity.
+An unfitted clusterer is an error. The default ``False`` still fits on every
+``prepare``/``fit``.
+
 EVoC fitting
 ------------
 
@@ -100,6 +108,8 @@ Staged naming
 the naming provider. ``name_topics`` or ``await name_topics_async()`` completes
 naming. Upper-layer prompts are refreshed after layer-dependent extractors
 receive lower-layer names. Every new ``fit`` recomputes data-dependent stages.
+Explicit ``reuse_clusterer=True`` reuses clustering only; feature and naming
+state are fresh for each prepared fit.
 
 Disambiguation remains enabled. It detects duplicate names, and uses semantic
 name similarity when a text embedder is present. Use ``disambiguate=False``
@@ -116,10 +126,16 @@ configure those on ``Toponymy``. The unused ``next_cluster_size_quantile`` and
 Prompts and persistence
 -----------------------
 
-``Prompt(system, user, json_schema=None)`` separates provider-independent
+``Prompt(system, user, json_schema=None, *, combined=None)`` separates provider-independent
 messages. A template renders prompts and parses responses; it does not mutate
 the feature dictionaries. ``SummaryTemplate`` returns name, summary and
 explanation, stored on each topic.
+
+``combined=`` carries a separately authored rendering for providers without
+system messages. When absent, wrappers join system and user with two newlines;
+an explicitly empty combined string stays empty. The third positional argument
+remains the schema. All renderings stay on this one canonical Prompt and survive
+ZIP/Lance persistence.
 
 Embedding adapters
 ~~~~~~~~~~~~~~~~~~
