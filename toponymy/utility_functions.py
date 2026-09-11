@@ -2,15 +2,6 @@ import numpy as np
 import numba
 
 
-def _scale_vectors(vectors):
-    """Own a common-scale float64 matrix before computing cosine centroids."""
-    vectors = np.asarray(vectors, dtype=np.float64)
-    if vectors.ndim != 2 or not np.isfinite(vectors).all():
-        raise ValueError("vectors must be a finite two-dimensional matrix")
-    scale = np.max(np.abs(vectors), initial=0.0)
-    return vectors / scale if scale else vectors.copy()
-
-
 def _normalize_rows(vectors):
     """Unit directions without overflow or loss of tiny nonzero rows."""
     vectors = np.asarray(vectors, dtype=np.float64)
@@ -24,6 +15,20 @@ def _normalize_rows(vectors):
 def _mean_vector(vectors, weights=None):
     """A finite mean with independent coordinate scales and optional weights."""
     vectors = np.asarray(vectors, dtype=np.float64)
+    if vectors.ndim != 2 or not len(vectors) or not np.isfinite(vectors).all():
+        raise ValueError("vectors must be a nonempty finite two-dimensional matrix")
+    if weights is not None:
+        weights = np.asarray(weights)
+        if (
+            weights.shape != (len(vectors),)
+            or weights.dtype.kind not in "fiu"
+            or not np.isfinite(weights).all()
+            or np.any(weights < 0)
+            or not np.any(weights > 0)
+        ):
+            raise ValueError("weights must be finite, nonnegative, aligned and nonzero")
+        weights = weights.astype(np.float64)
+        weights = weights / weights.max()
     lower, upper = vectors.min(axis=0), vectors.max(axis=0)
     # Remove common offsets before averaging their much smaller differences.
     anchor = lower * 0.5 + upper * 0.5

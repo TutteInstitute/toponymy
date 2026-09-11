@@ -230,6 +230,27 @@ Use a cosine method for those extreme inputs instead of silently normalizing
 the dictionary objective. ``n_subtopics`` and ``diversify_alpha`` retain their
 selection cap and cosine diversification roles.
 
+Keyphrase and exemplar vectors
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``KeyphraseBuilder`` clears fitted attributes before a refit and installs its
+matrix, vocabulary and vectors together after successful validation. Empty input
+returns an empty CSR matrix, an empty vocabulary and no vectors without encoding.
+
+``TextKeyphraseExtractor`` treats supplied vectors as complete, including zero
+rows, and owns its working table. Low-level keyphrase functions retain on-demand
+encoding of zero rows when an embedder is supplied. Pass ``None`` as that argument
+for complete vectors, including read-only tables and genuine zero vectors.
+On-demand responses must match the requested count and dimension and be finite;
+the destination dtype must not overflow, erase nonzero components or truncate
+integer values. Invalid batches leave the caller's vector table unchanged.
+
+Central keyphrase selection resolves used missing vectors before computing the
+global center and uses the same centered coordinates for ranking and
+diversification. Central and submodular exemplar selection preserve small
+directional differences after large common offsets cancel. Keyphrase counts
+must be finite and nonnegative; central count weights are scaled before summing.
+
 Stored results
 ~~~~~~~~~~~~~~
 

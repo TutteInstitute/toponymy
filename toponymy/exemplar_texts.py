@@ -5,9 +5,9 @@ from sklearn.neighbors import KNeighborsTransformer
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
 from toponymy.utility_functions import (
-    centroids_from_labels,
     distance_to_vector,
-    _scale_vectors,
+    _mean_vector,
+    _center_vectors,
     _normalize_rows,
 )
 
@@ -31,10 +31,6 @@ sdtypes = [
     "void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
     "void(float32[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
 ]
-sieve_dtypes = (
-    "void(float64[:,:], int64, float64[:,:], int64[:,:],"
-    "float64[:,:], float64[:], float64[:], int64[:], int64[:])"
-)
 
 
 @numba.njit(dtypes, fastmath=True, cache=True)
@@ -387,8 +383,8 @@ def submodular_selection_exemplars(
     results = []
     indices = []
 
-    object_vectors = _scale_vectors(object_vectors)
-    null_topic_vector = np.mean(object_vectors, axis=0)
+    object_vectors = np.asarray(object_vectors, dtype=np.float64)
+    null_topic_vector = _mean_vector(object_vectors)
     if submodular_function == "facility_location":
         selector = FacilityLocationSelection(
             n_exemplars, metric="cosine", optimizer="lazy"
@@ -438,7 +434,7 @@ def submodular_selection_exemplars(
             continue
 
         cluster_object_vectors = _normalize_rows(
-            object_vectors[cluster_mask] - null_topic_vector
+            _center_vectors(object_vectors[cluster_mask], null_topic_vector)
         )
         cluster_indices = np.arange(cluster_object_vectors.shape[0])
 
@@ -600,12 +596,11 @@ def diverse_exemplars(
     # Compute centroid vectors
     if verbose:
         print("Computing centroid vectors")
-    object_vectors = _scale_vectors(object_vectors)
-    centroid_vectors = centroids_from_labels(cluster_label_vector, object_vectors)
+    object_vectors = np.asarray(object_vectors, dtype=np.float64)
 
     results = []
     indices = []
-    null_topic = np.mean(object_vectors, axis=0)
+    null_topic = _mean_vector(object_vectors)
 
     for cluster_num in tqdm(
         range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
@@ -631,11 +626,16 @@ def diverse_exemplars(
             indices.append([])
             continue
 
-        cluster_object_vectors = object_vectors[cluster_mask] - null_topic
+        centroid = _center_vectors(
+            _mean_vector(object_vectors[cluster_mask])[None, :], null_topic
+        )[0]
+        cluster_object_vectors = _center_vectors(
+            object_vectors[cluster_mask], null_topic
+        )
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
             exemplar_distances = distance_to_vector(
-                centroid_vectors[cluster_num] - null_topic,
+                centroid,
                 cluster_object_vectors,
             )
             exemplar_order = np.argsort(exemplar_distances.flatten())
@@ -656,7 +656,7 @@ def diverse_exemplars(
         )
 
         chosen_indices = diversify(
-            centroid_vectors[cluster_num] - null_topic,
+            centroid,
             candidate_vectors,
             n_exemplars,
             max_alpha=diversify_alpha,

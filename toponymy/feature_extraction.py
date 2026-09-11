@@ -324,7 +324,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                     matrix,
                     vocabulary,
                     vectors,
-                    model,
+                    None,  # This validated table is complete, including genuine zeros.
                     n_keyphrases=n_keyphrases,
                     **parameters,
                 )
