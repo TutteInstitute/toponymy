@@ -13,8 +13,8 @@ import shutil
 
 from toponymy.topic_tree import TopicTree
 
-_SERIAL_VERSION = "0.2"
-_READABLE_SERIAL_VERSIONS = {"0.1", "0.2"}
+_SERIAL_VERSION = "0.3"
+_READABLE_SERIAL_VERSIONS = {"0.1", "0.2", "0.3"}
 
 
 def _unique_json_pairs(pairs):
@@ -48,6 +48,154 @@ def _optional_text(value, context):
     if not isinstance(value, str):
         raise ValueError(f"{context} must be a string or null")
     return value
+
+
+def _prompt_from_data(data, context):
+    from .templates import Prompt
+
+    if data is None:
+        return None
+    if (
+        not isinstance(data, dict)
+        or any(not isinstance(data.get(key), str) for key in ("system", "user"))
+        or (
+            data.get("json_schema") is not None
+            and not isinstance(data["json_schema"], dict)
+        )
+    ):
+        raise ValueError(f"Invalid prompt fields for {context}")
+    try:
+        return Prompt(**data)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Invalid prompt for {context}") from error
+
+
+def _restore_name_vector(value):
+    if _missing_cell(value):
+        return None
+    data = _load_json(value, "name embedding")
+    if (
+        not isinstance(data, dict)
+        or set(data) != {"dtype", "values"}
+        or not isinstance(data["dtype"], str)
+    ):
+        raise ValueError("Name embedding must declare dtype and values")
+    try:
+        raw = np.asarray(data["values"])
+        dtype = np.dtype(data["dtype"])
+        if raw.ndim != 1 or raw.dtype.kind not in "fiu" or dtype.kind not in "fiu":
+            raise ValueError("expected a real vector")
+        vector = np.asarray(data["values"], dtype=dtype)
+        if vector.tolist() != data["values"]:
+            raise ValueError("name embedding dtype conversion would lose values")
+        return vector
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f"Invalid name embedding: {error}") from error
+
+
+def _validate_history(history, topics):
+    if not isinstance(history, list):
+        raise ValueError("Disambiguation history must be a list")
+    fields = {
+        "layer",
+        "group",
+        "topic_keys",
+        "input_names",
+        "input_name_embeddings",
+        "embedding_dtype",
+        "prompt",
+        "status",
+        "output_names",
+        "attempts",
+        "errors",
+    }
+    identities = set()
+    for record in history:
+        if not isinstance(record, dict) or set(record) != fields:
+            raise ValueError("Invalid disambiguation history record fields")
+        layer = _nonnegative_integer(record["layer"], "History layer")
+        group = _nonnegative_integer(record["group"], "History group")
+        attempts = _nonnegative_integer(record["attempts"], "History attempts")
+        if (layer, group) in identities:
+            raise ValueError("Duplicate disambiguation history group")
+        identities.add((layer, group))
+        keys = record["topic_keys"]
+        if not isinstance(keys, list) or len(keys) < 2:
+            raise ValueError("History groups require at least two topic keys")
+        validated = []
+        for key in keys:
+            if not isinstance(key, list) or len(key) != 2:
+                raise ValueError("Invalid history topic key")
+            pair = tuple(
+                _nonnegative_integer(part, "History topic key") for part in key
+            )
+            if pair[0] != layer or pair not in topics or pair in validated:
+                raise ValueError(
+                    "History topic keys must be distinct known topics in one layer"
+                )
+            validated.append(pair)
+        names = record["input_names"]
+        if (
+            not isinstance(names, list)
+            or len(names) != len(keys)
+            or any(not isinstance(name, str) or not name.strip() for name in names)
+        ):
+            raise ValueError("History input names must align with topic keys")
+        if _prompt_from_data(record["prompt"], "disambiguation history") is None:
+            raise ValueError("History record requires its request prompt")
+        status = record["status"]
+        if status not in ("pending", "succeeded", "failed", "cancelled"):
+            raise ValueError("Invalid disambiguation history status")
+        output = record["output_names"]
+        if status == "succeeded":
+            if (
+                attempts < 1
+                or not isinstance(output, list)
+                or len(output) != len(keys)
+                or any(not isinstance(name, str) or not name.strip() for name in output)
+            ):
+                raise ValueError("Successful history must contain aligned output names")
+        elif output is not None:
+            raise ValueError("Unfinished history cannot contain output names")
+        errors = record["errors"]
+        if not isinstance(errors, list) or any(
+            not isinstance(error, dict)
+            or set(error) != {"type", "message"}
+            or any(not isinstance(value, str) for value in error.values())
+            for error in errors
+        ):
+            raise ValueError("History errors must contain type and message strings")
+        if status in ("failed", "cancelled") and (attempts < 1 or not errors):
+            raise ValueError("Failed history requires an attempted request and error")
+        if len(errors) > attempts or (
+            status == "succeeded" and len(errors) >= attempts
+        ):
+            raise ValueError("History errors contradict the number of attempts")
+        values, dtype = record["input_name_embeddings"], record["embedding_dtype"]
+        if (values is None) != (dtype is None):
+            raise ValueError("History embeddings and dtype must be present together")
+        if values is not None:
+            try:
+                if not isinstance(dtype, str):
+                    raise ValueError("embedding dtype must be a string")
+                raw = np.asarray(values)
+                declared = np.dtype(dtype)
+                if (
+                    raw.ndim != 2
+                    or raw.shape[0] != len(keys)
+                    or raw.shape[1] == 0
+                    or raw.dtype.kind not in "fiu"
+                    or declared.kind not in "fiu"
+                    or not np.isfinite(raw).all()
+                ):
+                    raise ValueError("invalid numerical history embeddings")
+                converted = raw.astype(declared)
+                if not np.isfinite(converted).all() or converted.tolist() != values:
+                    raise ValueError("history embedding dtype conversion loses values")
+            except (TypeError, ValueError, OverflowError) as error:
+                raise ValueError(
+                    "History embeddings must align with topic keys"
+                ) from error
 
 
 def _nonnegative_integer(value, context):
@@ -203,6 +351,42 @@ class Topic:
     name: str | None = None
     summary: str | None = None
     explanation: str | None = None
+    name_embedding: np.ndarray | None = None
+    embedded_name: str | None = None
+
+    def __setattr__(self, key, value):
+        if key == "name":
+            if value is not None and not isinstance(value, str):
+                raise ValueError("Topic name must be a string or None")
+            if "name" in self.__dict__ and value != self.name:
+                object.__setattr__(self, "name_embedding", None)
+                object.__setattr__(self, "embedded_name", None)
+        object.__setattr__(self, key, value)
+
+    def __post_init__(self):
+        vector = self._validated_name_embedding()
+        if vector is not None:
+            self.name_embedding = vector.copy()
+            self.name_embedding.flags.writeable = False
+
+    def _validated_name_embedding(self):
+        if self.name_embedding is None:
+            if self.embedded_name is not None:
+                raise ValueError("An embedded name requires its numerical vector")
+            return
+        vector = np.asarray(self.name_embedding)
+        if (
+            not isinstance(self.embedded_name, str)
+            or self.embedded_name != self.name
+            or vector.ndim != 1
+            or vector.size == 0
+            or vector.dtype.kind not in "fiu"
+            or not np.isfinite(vector).all()
+        ):
+            raise ValueError(
+                "Name embedding must be a finite vector for the current name"
+            )
+        return vector
 
     @property
     def key(self):
@@ -229,6 +413,8 @@ class TopicModel:
         topics=None,
         metadata=None,
         clustering_graph=None,
+        name_embedding_context=None,
+        disambiguation_history=None,
     ):
         self._topic_df = topic_df.copy() if topic_df is not None else None
         self._topics = topics
@@ -247,6 +433,10 @@ class TopicModel:
         if metadata is not None and not isinstance(metadata, dict):
             raise ValueError("Runtime metadata must be an object")
         self.metadata = {} if metadata is None else dict(metadata)
+        self.name_embedding_context = deepcopy(name_embedding_context)
+        self.disambiguation_history = (
+            [] if disambiguation_history is None else deepcopy(disambiguation_history)
+        )
 
     def __repr__(self):
         return f"TopicModel(n_samples={len(self.embedding_vectors)}, n_topics={len(self.topics)})"
@@ -276,8 +466,6 @@ class TopicModel:
     @property
     def topics(self):
         if self._topics is None:
-            from .templates import Prompt
-
             topics = {}
             table = self._topic_df
             if (
@@ -383,36 +571,13 @@ class TopicModel:
                             if not _missing_cell(row.get("prompt_json"))
                             else None
                         )
-                        if not isinstance(features, dict) or (
-                            prompt_data is not None
-                            and not isinstance(prompt_data, dict)
-                        ):
+                        if not isinstance(features, dict):
                             raise ValueError(
-                                f"Topic {(layer_index, label)} features and prompt must be objects"
+                                f"Topic {(layer_index, label)} features must be an object"
                             )
-                        if prompt_data is not None and (
-                            any(
-                                not isinstance(prompt_data.get(field), str)
-                                for field in ("system", "user")
-                            )
-                            or (
-                                prompt_data.get("json_schema") is not None
-                                and not isinstance(prompt_data["json_schema"], dict)
-                            )
-                        ):
-                            raise ValueError(
-                                f"Invalid prompt fields for topic {(layer_index, label)}"
-                            )
-                        try:
-                            prompt = (
-                                Prompt(**prompt_data)
-                                if prompt_data is not None
-                                else None
-                            )
-                        except (TypeError, ValueError) as error:
-                            raise ValueError(
-                                f"Invalid prompt for topic {(layer_index, label)}"
-                            ) from error
+                        prompt = _prompt_from_data(
+                            prompt_data, f"topic {(layer_index, label)}"
+                        )
                         topics[(layer_index, label)] = Topic(
                             layer_index,
                             label,
@@ -422,6 +587,8 @@ class TopicModel:
                             _optional_text(row.get("name"), "Topic name"),
                             _optional_text(row.get("summary"), "Topic summary"),
                             _optional_text(row.get("explanation"), "Topic explanation"),
+                            _restore_name_vector(row.get("name_embedding_json")),
+                            _optional_text(row.get("embedded_name"), "Embedded name"),
                         )
             elif any(matrix.nnz for matrix in self.cluster_layers):
                 raise ValueError("Populated cluster matrices require a topic table")
@@ -452,13 +619,34 @@ class TopicModel:
                 parents
             ) != set(topics):
                 raise ValueError("Rooted cluster tree omits one or more topics")
+            _validate_history(self.disambiguation_history, topics)
             self._topics = topics
         return self._topics
+
+    def _validated_state(self):
+        for topic in self.topics.values():
+            topic._validated_name_embedding()
+        context = self.name_embedding_context
+        if context is not None and not isinstance(context, dict):
+            raise ValueError("Name embedding context must be an object or None")
+        _validate_history(self.disambiguation_history, self.topics)
+        state = {
+            "name_embedding_context": context,
+            "disambiguation_history": self.disambiguation_history,
+        }
+        try:
+            json.dumps(state, allow_nan=False)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Name embedding context and history must be JSON data"
+            ) from error
+        return state
 
     @property
     def topic_df(self):
         rows = []
         for key, topic in sorted(self.topics.items()):
+            vector = topic._validated_name_embedding()
             prompt = topic.prompt._asdict() if topic.prompt is not None else None
             rows.append(
                 {
@@ -474,6 +662,18 @@ class TopicModel:
                     ),
                     "summary": topic.summary,
                     "explanation": topic.explanation,
+                    "embedded_name": topic.embedded_name,
+                    "name_embedding_json": (
+                        json.dumps(
+                            {
+                                "dtype": str(vector.dtype),
+                                "values": vector.tolist(),
+                            },
+                            allow_nan=False,
+                        )
+                        if vector is not None
+                        else None
+                    ),
                 }
             )
         return pd.DataFrame(
@@ -489,6 +689,8 @@ class TopicModel:
                 "prompt_json",
                 "summary",
                 "explanation",
+                "embedded_name",
+                "name_embedding_json",
             ],
         )
 
@@ -516,6 +718,8 @@ class TopicModel:
                 model.document_df if document_df is None else document_df,
                 metadata=model.metadata,
                 clustering_graph=model.clustering_graph,
+                name_embedding_context=model.name_embedding_context,
+                disambiguation_history=model.disambiguation_history,
             )
         # Read the stable pre-0.6 fitted representation for migration.
         topics, matrices = {}, []
@@ -643,6 +847,8 @@ class TopicModel:
                 cluster_tree=cluster_tree,
                 cluster_layers=matrices,
                 metadata=metadata.get("runtime_metadata", {}),
+                name_embedding_context=metadata.get("name_embedding_context"),
+                disambiguation_history=metadata.get("disambiguation_history"),
                 clustering_graph=(
                     sp.load_npz(root / "clustering_graph.npz")
                     if metadata.get("has_clustering_graph", False)
@@ -650,10 +856,12 @@ class TopicModel:
                 ),
             )
             model.topics
+            model._validated_state()
             return model
 
     def to_file(self, path: str):
         path = Path(path)
+        state = self._validated_state()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "topic_model"
             matrices_dir = root / "cluster_matrices"
@@ -689,6 +897,7 @@ class TopicModel:
                 "has_reduced": has_reduced,
                 "runtime_metadata": self.metadata,
                 "has_clustering_graph": self.clustering_graph is not None,
+                **state,
             }
             with open(root / "metadata.json", "w") as f:
                 json.dump(metadata, f)
@@ -829,8 +1038,15 @@ class TopicModel:
                 config.get("runtime_metadata", "{}"), "runtime metadata"
             ),
             clustering_graph=clustering_graph,
+            name_embedding_context=_load_json(
+                config.get("name_embedding_context", "null"), "name embedding context"
+            ),
+            disambiguation_history=_load_json(
+                config.get("disambiguation_history", "[]"), "disambiguation history"
+            ),
         )
         model.topics
+        model._validated_state()
         return model
 
     def to_lance(self, path: str, overwrite: bool = False):
@@ -840,6 +1056,7 @@ class TopicModel:
 
         path = Path(path)
         # Validate before replacing an existing artifact or narrowing membership.
+        state = self._validated_state()
         topic_df = self.topic_df
         for matrix in self.cluster_layers:
             values = matrix.data
@@ -966,6 +1183,8 @@ class TopicModel:
                 "reduced_dim": [self.reduced_vectors.shape[1] if has_reduced else None],
                 "layer_columns": [[matrix.shape[1] for matrix in self.cluster_layers]],
                 "runtime_metadata": [json.dumps(self.metadata)],
+                "name_embedding_context": [json.dumps(state["name_embedding_context"])],
+                "disambiguation_history": [json.dumps(state["disambiguation_history"])],
                 "has_clustering_graph": [self.clustering_graph is not None],
                 "graph_dtype": [
                     (

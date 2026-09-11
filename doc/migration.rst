@@ -117,6 +117,25 @@ only when that functional change is intended; it can change request counts.
 Similarity groups use complete linkage and each rename request contains at most
 ``max_disambiguation_group_size`` topics (four by default).
 
+Each topic retains its current numerical ``name_embedding`` and the exact
+``embedded_name`` text when a naming stage needs them. These small vectors are
+owned and read-only; changing ``topic.name`` clears both fields. Exact current
+names reuse vectors within a prepared fit, including across layers. A changed
+name is encoded when next needed, and a new ``prepare`` starts fresh state.
+Keep the text embedder and its configuration fixed during a prepared fit;
+replacing it requires preparing again. ``name_embedding_context`` records the
+embedder class and descriptive model settings, not a portable model fingerprint.
+The existing ``topic_name_vectors_`` remains object-aligned text with
+``Unlabelled`` for noise; it is separate from numerical embeddings.
+
+``topic_model_.disambiguation_history`` retains each group's original names,
+input name vectors, prompt, outputs, status, attempts and errors. A failed or
+cancelled naming call leaves this evidence inspectable. Retrying on the same
+prepared pipeline resumes unfinished groups using their saved prompts and does
+not submit successful groups again. Original topic prompts also survive retries.
+Changing a pending group's names requires preparing again. Loaded archives are
+result snapshots; they do not reconstruct a provider or a resumable pipeline.
+
 The old ``create_cluster_layers`` and ``build_raw_cluster_layers`` engine helpers
 are removed. Fit a clusterer and read its ``cluster_layers_`` and ``cluster_tree_``.
 Clusterer fits no longer accept runtime layer classes or naming configuration;
@@ -183,11 +202,17 @@ Stored results
 ~~~~~~~~~~~~~~
 
 ``pipeline.topic_model_`` is the existing ``serialization.TopicModel``.
-``TopicModel.to_file`` writes format 0.2, and ``from_file`` reads 0.1 and 0.2.
+ZIP and Lance writers use format 0.3; readers accept 0.1, 0.2 and 0.3.
 Earlier files retain the information they originally stored; loading does not
 invent missing prompt or summary state. ``topic_df`` is a materialized view:
 edit a topic's state explicitly instead of expecting DataFrame edits to update
 the model.
+
+Format 0.3 preserves current name vectors with their exact dtype and text,
+embedding context and disambiguation history. Legacy results have no name vectors
+and an empty history. Writers validate these fields before replacing an existing
+artifact. Historical embedding dtypes must represent their recorded values
+exactly; use an array's ``tolist()`` when constructing a record manually.
 
 Both readers validate topic identities, membership alignment and topology before
 returning. Repeated JSON keys, colliding decoded IDs, duplicate topic rows and

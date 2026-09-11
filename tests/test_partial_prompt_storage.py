@@ -28,3 +28,6 @@ def test_partial_prompt_snapshot_keeps_absent_prompt(format, tmp_path):
         loaded = TopicModel.from_lance(path)
     assert loaded.topics[(0, 1)].prompt is None
     assert loaded.topics[(0, 0)].prompt == Prompt("S", "U")
+    assert loaded.topics[(0, 0)].name == "Ready"
+    assert loaded.topics[(0, 1)].name is None
+    assert all(topic.name_embedding is None for topic in loaded.topics.values())

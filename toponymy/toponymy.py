@@ -1,6 +1,7 @@
 """The staged topic modelling pipeline."""
 
 from copy import copy, deepcopy
+import asyncio
 from time import perf_counter
 
 import numpy as np
@@ -12,7 +13,7 @@ from sklearn.exceptions import NotFittedError
 from .clustering import PLSCANClusterer, validate_cluster_tree
 from .feature_extraction import TextExemplarExtractor, TextKeyphraseExtractor
 from .serialization import Topic, TopicModel
-from .templates import TextTemplate
+from .templates import Prompt, TextTemplate
 from .utility_functions import _normalize_rows
 
 
@@ -198,6 +199,20 @@ class Toponymy:
             None if clustering_graph is not None else self.clusterable_vectors_,
         )
         self.topic_model_.clustering_graph = clustering_graph
+        self._name_embedding_model = self.embedding_model
+        self._name_embedding_dimension = None
+        if self.embedding_model is not None:
+            self.topic_model_.name_embedding_context = {
+                "embedder_class": f"{type(self.embedding_model).__module__}.{type(self.embedding_model).__qualname__}",
+                "scope": "prepared_fit",
+                **{
+                    key: value
+                    for key in ("model", "model_name", "input_type", "task_type")
+                    if isinstance(
+                        value := getattr(self.embedding_model, key, None), str
+                    )
+                },
+            }
         self.topic_model_.metadata.update(
             object_description=self.object_description,
             corpus_description=self.corpus_description,
@@ -236,6 +251,8 @@ class Toponymy:
         self.stage_timings_["extraction"] = perf_counter() - started
         self.request_counts_ = {"naming": 0, "disambiguation": 0, "name_embeddings": 0}
         self._named_layers = set()
+        self._planned_disambiguation_layers = set()
+        self._prepared_naming_layers = {0}
         for layer in self.cluster_layers_:
             self._make_prompts(layer)
         self._prepared = True
@@ -273,14 +290,15 @@ class Toponymy:
             )
 
     def _prepare_layer(self, layer):
-        if layer.layer_index:
+        if layer.layer_index not in self._prepared_naming_layers:
             for extractor in self.feature_extractors:
                 if extractor.layer_dependent:
                     values = extractor.extract_layer(
                         layer.layer_index, self.topics_, self._fitted_clusterer
                     )
                     self._assign_features(extractor.feature_key, layer, values)
-        self._make_prompts(layer)
+            self._make_prompts(layer)
+            self._prepared_naming_layers.add(layer.layer_index)
         return [self.topics_[(layer.layer_index, cluster.label)] for cluster in layer]
 
     @staticmethod
@@ -299,6 +317,79 @@ class Toponymy:
             raise ValueError("A naming provider returned an empty topic name")
         topic.name, topic.summary, topic.explanation = name, summary, explanation
 
+    def _ensure_name_embeddings(self, topics):
+        """Reuse this prepared fit's name vectors; encode only missing exact texts."""
+        if not topics:
+            return np.empty((0, 0))
+        if self.embedding_model is None:
+            raise ValueError("Name embeddings require a text embedding model")
+        dimension = getattr(self, "_name_embedding_dimension", None)
+        available = {}
+        for topic in topics:
+            if not isinstance(topic.name, str) or not topic.name.strip():
+                raise ValueError("Name embeddings require nonempty topic names")
+        known_topics = self.topics_.values() if hasattr(self, "topics_") else topics
+        for topic in known_topics:
+            vector = getattr(topic, "name_embedding", None)
+            if (
+                vector is not None
+                and getattr(topic, "embedded_name", None) == topic.name
+            ):
+                vector = np.asarray(vector)
+                if (
+                    vector.ndim != 1
+                    or not vector.size
+                    or vector.dtype.kind not in "fiu"
+                    or not np.isfinite(vector).all()
+                ):
+                    raise ValueError("Stored topic name embedding is invalid")
+                if dimension is not None and len(vector) != dimension:
+                    raise ValueError(
+                        "Topic name embedding dimensions changed within a prepared fit"
+                    )
+                dimension = len(vector)
+                available.setdefault(topic.name, vector)
+        missing = [
+            topic
+            for topic in topics
+            if getattr(topic, "name_embedding", None) is None
+            or getattr(topic, "embedded_name", None) != topic.name
+        ]
+        texts = list(
+            dict.fromkeys(
+                topic.name for topic in missing if topic.name not in available
+            )
+        )
+        if texts:
+            self.request_counts_["name_embeddings"] += 1
+            vectors = _matrix(
+                self.embedding_model.encode(texts), len(texts), "topic name embeddings"
+            )
+            if dimension is not None and vectors.shape[1] != dimension:
+                raise ValueError(
+                    "Topic name embedding dimensions changed within a prepared fit"
+                )
+            dimension = vectors.shape[1]
+            available.update(zip(texts, vectors))
+        # Validate the complete response before installing any new topic state.
+        for topic in missing:
+            topic.name_embedding = np.array(available[topic.name], copy=True)
+            topic.name_embedding.flags.writeable = False
+            topic.embedded_name = topic.name
+        self._name_embedding_dimension = dimension
+        if (
+            hasattr(self, "topic_model_")
+            and self.topic_model_.name_embedding_context is not None
+        ):
+            self.topic_model_.name_embedding_context["dimension"] = dimension
+        return np.stack([topic.name_embedding for topic in topics])
+
+    def _check_name_embedding_context(self):
+        if self.embedding_model is not self._name_embedding_model:
+            raise ValueError(
+                "The text embedding model changed; call prepare again before naming"
+            )
+
     def _similar_groups(self, topics):
         n = len(topics)
         if n < 2:
@@ -308,10 +399,7 @@ class Toponymy:
         duplicates = np.array([[a == b for b in normalized] for a in normalized])
         distances = np.ones((n, n), dtype=float)
         if self.embedding_model is not None:
-            self.request_counts_["name_embeddings"] += 1
-            vectors = _matrix(
-                self.embedding_model.encode(names), n, "topic name embeddings"
-            )
+            vectors = self._ensure_name_embeddings(topics)
             scaled = _normalize_rows(vectors)
             distances = np.clip(1.0 - scaled @ scaled.T, 0, 2)
         distances[duplicates] = 0.0
@@ -350,8 +438,10 @@ class Toponymy:
 
     @staticmethod
     def _store_disambiguation(topics, names):
-        if len(names) != len(topics) or any(
-            not isinstance(name, str) or not name.strip() for name in names
+        if (
+            not isinstance(names, (list, tuple))
+            or len(names) != len(topics)
+            or any(not isinstance(name, str) or not name.strip() for name in names)
         ):
             raise ValueError(
                 "Disambiguation results must align with every requested topic"
@@ -359,9 +449,77 @@ class Toponymy:
         for topic, name in zip(topics, names):
             topic.name = name
 
+    def _disambiguation_records(self, topics, layer):
+        history = self.topic_model_.disambiguation_history
+        if layer.layer_index not in self._planned_disambiguation_layers:
+            records = []
+            for index, group in enumerate(self._similar_groups(topics)):
+                selected, names, prompt = self._disambiguation_prompt(
+                    topics, group, layer
+                )
+                vectors = (
+                    np.stack([topic.name_embedding for topic in selected])
+                    if all(topic.name_embedding is not None for topic in selected)
+                    else None
+                )
+                records.append(
+                    {
+                        "layer": layer.layer_index,
+                        "group": index,
+                        "topic_keys": [list(topic.key) for topic in selected],
+                        "input_names": list(names),
+                        "input_name_embeddings": (
+                            vectors.tolist() if vectors is not None else None
+                        ),
+                        "embedding_dtype": (
+                            str(vectors.dtype) if vectors is not None else None
+                        ),
+                        "prompt": prompt._asdict(),
+                        "status": "pending",
+                        "output_names": None,
+                        "attempts": 0,
+                        "errors": [],
+                    }
+                )
+            history.extend(records)
+            self._planned_disambiguation_layers.add(layer.layer_index)
+        return [
+            record
+            for record in history
+            if record["layer"] == layer.layer_index and record["status"] != "succeeded"
+        ]
+
+    def _begin_disambiguation(self, record):
+        selected = [self.topics_[tuple(key)] for key in record["topic_keys"]]
+        if [topic.name for topic in selected] != record["input_names"]:
+            raise ValueError("Pending disambiguation names changed; call prepare again")
+        prompt = Prompt(**record["prompt"])
+        record["attempts"] += 1
+        record["status"] = "pending"
+        self.request_counts_["disambiguation"] += 1
+        return selected, list(record["input_names"]), prompt
+
+    def _finish_disambiguation(self, record, selected, names):
+        self._store_disambiguation(selected, names)
+        record["output_names"] = list(names)
+        record["status"] = "succeeded"
+
+    @staticmethod
+    def _failed_disambiguation(record, error):
+        record["status"] = (
+            "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
+        )
+        record["errors"].append(
+            {
+                "type": f"{type(error).__module__}.{type(error).__qualname__}",
+                "message": str(error)[:1000],
+            }
+        )
+
     def name_topics(self):
         """Name prepared layers synchronously; errors leave inspectable partial state."""
         self._require_prepared()
+        self._check_name_embedding_context()
         started = perf_counter()
         for layer in self.cluster_layers_:
             if layer.layer_index in self._named_layers:
@@ -378,17 +536,18 @@ class Toponymy:
                         ),
                     )
             if self.disambiguate:
-                for group in self._similar_groups(topics):
-                    selected, names, prompt = self._disambiguation_prompt(
-                        topics, group, layer
-                    )
-                    self.request_counts_["disambiguation"] += 1
-                    renamed = self.llm_wrapper.generate_topic_cluster_names(
-                        prompt,
-                        names,
-                        response_parser=self.prompt_template.extract_disambiguated_names,
-                    )
-                    self._store_disambiguation(selected, renamed)
+                for record in self._disambiguation_records(topics, layer):
+                    selected, names, prompt = self._begin_disambiguation(record)
+                    try:
+                        renamed = self.llm_wrapper.generate_topic_cluster_names(
+                            prompt,
+                            names,
+                            response_parser=self.prompt_template.extract_disambiguated_names,
+                        )
+                        self._finish_disambiguation(record, selected, renamed)
+                    except BaseException as error:
+                        self._failed_disambiguation(record, error)
+                        raise
             self._named_layers.add(layer.layer_index)
         self.stage_timings_["naming"] = perf_counter() - started
         return self
@@ -396,6 +555,7 @@ class Toponymy:
     async def name_topics_async(self):
         """Name each layer through the asynchronous wrapper's bounded batch API."""
         self._require_prepared()
+        self._check_name_embedding_context()
         started = perf_counter()
         for layer in self.cluster_layers_:
             if layer.layer_index in self._named_layers:
@@ -420,19 +580,22 @@ class Toponymy:
                 if failures:
                     raise failures[0]
             if self.disambiguate:
-                for group in self._similar_groups(topics):
-                    selected, names, prompt = self._disambiguation_prompt(
-                        topics, group, layer
-                    )
-                    self.request_counts_["disambiguation"] += 1
-                    renamed = await self.llm_wrapper.generate_topic_cluster_names(
-                        [prompt],
-                        [names],
-                        response_parser=self.prompt_template.extract_disambiguated_names,
-                    )
-                    if len(renamed) != 1:
-                        raise ValueError("Disambiguation batch results do not align")
-                    self._store_disambiguation(selected, renamed[0])
+                for record in self._disambiguation_records(topics, layer):
+                    selected, names, prompt = self._begin_disambiguation(record)
+                    try:
+                        renamed = await self.llm_wrapper.generate_topic_cluster_names(
+                            [prompt],
+                            [names],
+                            response_parser=self.prompt_template.extract_disambiguated_names,
+                        )
+                        if len(renamed) != 1:
+                            raise ValueError(
+                                "Disambiguation batch results do not align"
+                            )
+                        self._finish_disambiguation(record, selected, renamed[0])
+                    except BaseException as error:
+                        self._failed_disambiguation(record, error)
+                        raise
             self._named_layers.add(layer.layer_index)
         self.stage_timings_["naming"] = perf_counter() - started
         return self
