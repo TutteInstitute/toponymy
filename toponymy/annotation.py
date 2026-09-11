@@ -1,7 +1,6 @@
 from typing import (
     Any,
     Dict,
-    Generic,
     Iterable,
     List,
     NamedTuple,
@@ -9,6 +8,7 @@ from typing import (
     Protocol,
     runtime_checkable,
     Self,
+    Sequence,
     Tuple,
     TypeVar,
 )
@@ -17,6 +17,8 @@ from collections import defaultdict
 from enum import Enum
 
 T = TypeVar("T")
+
+NODE_NODE = "node-node"
 
 
 class NodeId(NamedTuple):
@@ -56,8 +58,10 @@ class AnnotationTree:
     * Every non-root node has exactly one parent.
     * Edges may span more than one layer.
     * The root is a catch-all node, and will not be considered a cluster node or a part of a layer.
-    * Layer ids are 0-indexed and there are no empty layers (this assumption is used by the executor)
+    * Layer ids are 0-indexed and there are no empty layers
+    * Cluster ids are 0-indexed and the indices are contiguous within each layer
 
+    Note: the last two assumptions are for backwards compatibility with the list of lists representations.
     Parameters
     ----------
     cluster_tree : Mapping of parent-child adjacencies
@@ -135,11 +139,20 @@ class AnnotationTree:
                 f"expected a single root, found multiple roots: {roots}"
             )
 
-        self._children = children_dict
-        self._parent = parent_dict
+        self._root = roots[0]
+        self._root_children = children_dict.get(self._root, ())
+        self._parent = {
+            child: parent
+            for child, parent in parent_dict.items()
+            if parent not in roots
+        }
+        self._children = {
+            parent: children
+            for parent, children in children_dict.items()
+            if parent not in roots
+        }
         self._set_nodes = frozenset(nodes - set(roots))
         self._sorted_nodes = tuple(sorted(self._set_nodes))
-        self._root: Optional[NodeId] = roots[0]
 
         layers: Dict[int, List[NodeId]] = defaultdict(list)
         for node in self._set_nodes:
@@ -148,7 +161,31 @@ class AnnotationTree:
             layer_id: tuple(sorted(layer_nodes))
             for layer_id, layer_nodes in layers.items()
         }
+
+        for layer_id, layer_nodes in self._layers.items():
+            cluster_ids = [node.cluster for node in layer_nodes]
+
+            if cluster_ids and cluster_ids[0] != 0:
+                raise InvalidAnnotationTree(
+                    f"Cluster ids in layer {layer_id} must start at 0, got {cluster_ids[0]}"
+                )
+
+            expected = list(range(len(cluster_ids)))
+            if cluster_ids != expected:
+                raise InvalidAnnotationTree(
+                    f"Cluster ids in layer {layer_id} must be contiguous, got {cluster_ids}"
+                )
+
         self._layer_ids = tuple(sorted(self._layers))
+        if self._layer_ids[0] != 0:
+            raise InvalidAnnotationTree(
+                f"Layer ids must start at 0, got {self._layer_ids[0]}"
+            )
+
+        if len(self._layer_ids) != max(self._layer_ids) + 1:
+            raise InvalidAnnotationTree(
+                f"Layer ids must be contiguous, got {self._layer_ids}"
+            )
 
     @classmethod
     def from_clusterer(cls, clusterer: _HasClusterAnnotationTree, **kwargs) -> Self:
@@ -194,6 +231,16 @@ class AnnotationTree:
 
     def parent(self, node: NodeId) -> NodeId | None:
         return self._parent.get(node, None)
+
+    def check(self, node: NodeId) -> NodeId:
+        if not isinstance(node, NodeId):
+            try:
+                node = NodeId(*node)
+            except (TypeError, ValueError):
+                raise KeyError(f"Invalid node ID: {node!r}")
+        if node not in self._set_nodes:
+            raise KeyError(f"Node {node} is not in the annotation tree")
+        return node
 
     def descendants(
         self, node: NodeId, depth: Optional[int] = None
@@ -255,16 +302,16 @@ class Annotation(MutableMapping[NodeId, T]):
         }
 
     def __getitem__(self, node: NodeId) -> T:
-        node = self._check(node)
+        node = self.tree.check(node)
         return self._values[node]
 
     def __setitem__(self, node: NodeId, value: T) -> None:
-        node = self._check(node)
+        node = self.tree.check(node)
         self._values[node] = value
         self._states[node] = AnnotationState.COMPUTED
 
     def __delitem__(self, node: NodeId) -> None:
-        node = self._check(node)
+        node = self.tree.check(node)
         self._values.pop(node, None)
         self._states[node] = AnnotationState.EMPTY
 
@@ -279,16 +326,238 @@ class Annotation(MutableMapping[NodeId, T]):
         return self._states
 
     def fail(self, node: NodeId) -> None:
-        node = self._check(node)
+        node = self.tree.check(node)
         self._values.pop(node, None)
         self._states[node] = AnnotationState.FAILED
 
-    def _check(self, node: Any) -> NodeId:
-        if not isinstance(node, NodeId):
+    # def _check(self, node: Any) -> NodeId:
+    #     if not isinstance(node, NodeId):
+    #         try:
+    #             node = NodeId(*node)
+    #         except (TypeError, ValueError):
+    #             raise KeyError(f"Invalid node ID: {node!r}")
+    #     if node not in self.tree:
+    #         raise KeyError(f"{node} is not a node of the cluster tree")
+    #     return node
+
+    @classmethod
+    def from_layered_list(
+        cls, name: str, tree: AnnotationTree, layered_list: list[NodeId]
+    ) -> Self:
+        annotation = cls(name, tree)
+        for node in tree.nodes:
             try:
-                node = NodeId(*node)
-            except (TypeError, ValueError):
-                raise KeyError(f"Invalid node ID: {node!r}")
-        if node not in self.tree:
-            raise KeyError(f"{node} is not a node of the cluster tree")
-        return node
+                annotation[node] = layered_list[node.layer][node.cluster]
+            except IndexError:
+                raise IndexError(
+                    f"Layered list does not contain a value for node {node}"
+                )
+        return annotation
+
+    def to_layered_list(self) -> list[list[NodeId]]:
+        layered_list: list[list[NodeId]] = []
+        if not all(
+            state is AnnotationState.COMPUTED for state in self._states.values()
+        ):
+            raise ValueError("Not all nodes have computed values")
+        for layer_id in self.tree.layer_ids:
+            layer_nodes = [self._values[node] for node in self.tree.layer(layer_id)]
+            layered_list.append(layer_nodes)
+        return layered_list
+
+
+class AnnotationStore(Mapping[str, Annotation[Any]]):
+    """Annotations by name, for one tree.
+
+    The public collection interface is read-only. Annotations are added
+    through `add()`, which validates their identity and tree.
+    """
+
+    def __init__(
+        self,
+        tree: AnnotationTree,
+        annotations: Iterable[Annotation[Any]] = (),
+    ):
+        self.tree = tree
+        self._annotations: dict[str, Annotation[Any]] = {}
+
+        for annotation in annotations:
+            self.add(annotation)
+
+    def __getitem__(self, name: str) -> Annotation[Any]:
+        return self._annotations[name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._annotations)
+
+    def __len__(self) -> int:
+        return len(self._annotations)
+
+    def __getattr__(self, name: str) -> Annotation[Any]:
+        """
+        Return the annotation with the given name as an attribute.
+
+        Raises AttributeError if the annotation does not exist.
+        """
+        # Called only after normal attribute lookup fails.
+        annotations = self.__dict__.get("_annotations", {})
+
+        try:
+            return annotations[name]
+        except KeyError:
+            raise AttributeError(
+                f"{type(self).__name__} has no annotation " f"or attribute {name!r}"
+            ) from None
+
+    def add(
+        self,
+        annotation: Annotation[Any],
+        *,
+        replace: bool = False,
+    ) -> None:
+        if not isinstance(annotation, Annotation):
+            raise TypeError("annotation must be an Annotation")
+
+        name = annotation.name
+
+        if annotation.tree is not self.tree:
+            raise ValueError(f"annotation {name!r} is bound to a different tree")
+
+        if name in self._annotations and not replace:
+            raise ValueError(
+                f"annotation {name!r} is already in the store; "
+                "pass replace=True to replace it"
+            )
+
+        if hasattr(type(self), name) or name in self.__dict__:
+            raise ValueError(
+                f"annotation name {name!r} collides with "
+                "an AnnotationStore attribute; use store[{name!r}]"
+            )
+
+        self._annotations[name] = annotation
+
+    def node(self, node: NodeId) -> dict[str, Any]:
+        """Return computed annotation values for one node."""
+        node = self.tree.check(node)
+
+        return {
+            name: annotation[node]
+            for name, annotation in self._annotations.items()
+            if annotation.states[node] is AnnotationState.COMPUTED
+        }
+
+    def node_states(self, node: NodeId) -> dict[str, AnnotationState]:
+        """Return the state of every annotation for one node."""
+        node = self.tree.check(node)
+
+        return {
+            name: annotation.states[node]
+            for name, annotation in self._annotations.items()
+        }
+
+    def nodes(
+        self,
+        nodes: Iterable[NodeId],
+    ) -> dict[NodeId, dict[str, Any]]:
+        return {self.tree.check(node): self.node(node) for node in nodes}
+
+    def layer(self, layer_id: int) -> dict[NodeId, dict[str, Any]]:
+        return self.nodes(self.tree.layer(layer_id))
+
+    def __repr__(self) -> str:
+        if not self._annotations:
+            return "AnnotationStore(empty)"
+
+        total = len(self.tree)
+        parts = ", ".join(
+            f"{name}[{len(annotation)}/{total}]"
+            for name, annotation in self._annotations.items()
+        )
+        return f"AnnotationStore({parts})"
+
+
+@runtime_checkable
+class Annotator(Protocol):
+    """Structural contract for an annotation algorithm."""
+
+    inputs: Sequence[str]
+    outputs: Sequence[str]
+    algorithm_type: str
+
+    def annotate(
+        self,
+        node: NodeId,
+        **kwargs: Any,
+    ) -> Mapping[str, Any]: ...
+
+
+class Executor:
+
+    def run(
+        self,
+        annotator: Annotator,
+        store: AnnotationStore,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+    ) -> dict[NodeId, str]:
+        """Run one node-to-node annotator over selected nodes.
+
+        Return ``{node: reason}`` for nodes whose annotation failed."""
+
+        if not isinstance(annotator, Annotator):
+            raise TypeError(
+                "an Annotator needs inputs, outputs, algorithm_type, "
+                "and annotate(node, **kwargs)"
+            )
+
+        if annotator.algorithm_type != NODE_NODE:
+            raise NotImplementedError(
+                f"algorithm_type {annotator.algorithm_type!r} " "is not supported yet"
+            )
+
+        inputs = tuple(annotator.inputs)
+        outputs = tuple(annotator.outputs)
+
+        if len(set(inputs)) != len(inputs):
+            raise ValueError("annotator.inputs contains duplicate names")
+
+        if len(set(outputs)) != len(outputs):
+            raise ValueError("annotator.outputs contains duplicate names")
+
+        missing = [name for name in inputs if name not in store]
+        if missing:
+            raise KeyError(f"missing input annotation(s): {missing}")
+
+        selected_nodes = (
+            store.tree.nodes
+            if nodes is None
+            else tuple(store.tree.check(node) for node in nodes)
+        )
+
+        for name in outputs:
+            if name not in store:
+                store.add(Annotation(name, store.tree))
+
+        failures: dict[NodeId, str] = {}
+
+        for node in selected_nodes:
+            try:
+                values = {name: store[name][node] for name in inputs}
+                result = annotator.annotate(node, **values)
+            except Exception as error:
+                for name in outputs:
+                    store[name].fail(node)
+
+                failures[node] = f"{type(error).__name__}: {error}"
+                continue
+
+            if set(result) != set(outputs):
+                raise ValueError(
+                    f"expected outputs {outputs!r}, " f"got {tuple(result)!r}"
+                )
+
+            for name, value in result.items():
+                store[name][node] = value
+
+        return failures

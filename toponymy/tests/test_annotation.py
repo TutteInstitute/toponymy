@@ -11,13 +11,30 @@ from toponymy.annotation import (
 
 @pytest.fixture
 def valid_cluster_tree():
-    # Root is (2, 0); non-root nodes are layers 1 and 0
+    # Root is (2, 0)
     return {
         (1, 0): [(0, 0)],
         (1, 1): [(0, 1)],
         (1, 2): [(0, 7), (0, 6), (0, 5)],
         (1, 3): [(0, 4)],
         (2, 0): [(1, 0), (1, 1), (1, 2), (1, 3), (0, 2), (0, 3)],
+    }
+
+
+@pytest.fixture
+def deep_cluster_tree():
+    # Root is (4, 0)
+    return {
+        (4, 0): [(3, 0), (3, 1)],
+        (3, 0): [(2, 0), (2, 1)],
+        (3, 1): [(2, 2)],
+        (2, 0): [(1, 0), (1, 1)],
+        (2, 1): [(1, 2)],
+        (2, 2): [(1, 3), (1, 4)],
+        (1, 0): [(0, 0), (0, 1)],
+        (1, 1): [(0, 2)],
+        (1, 3): [(0, 3), (0, 4)],
+        (1, 4): [(0, 5)],
     }
 
 
@@ -41,6 +58,11 @@ def test_tree_n_layers(valid_cluster_tree):
     tree = AnnotationTree(valid_cluster_tree)
 
     assert tree.n_layers == 2
+
+
+def test_tree_nodes_is_tuple(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    assert isinstance(tree.nodes, tuple)
 
 
 def test_tree_nodes(valid_cluster_tree):
@@ -92,19 +114,26 @@ def test_tree_layer_has_no_root_layer(valid_cluster_tree):
 def test_tree_children(valid_cluster_tree):
     tree = AnnotationTree(valid_cluster_tree)
     for parent, children in valid_cluster_tree.items():
-        assert tree.children(parent) == sorted(children)
+        if parent != tree._root:
+            assert tree.children(parent) == sorted(children)
 
     for node in tree.layer(0):
         assert tree.children(node) is None
+
+    assert tree.children(tree._root) is None
 
 
 def test_tree_parent(valid_cluster_tree):
     tree = AnnotationTree(valid_cluster_tree)
     for parent, children in valid_cluster_tree.items():
         for child in children:
-            assert tree.parent(child) == parent
+            if child not in tree._root_children:
+                assert tree.parent(child) == parent
 
     assert tree.parent(tree._root) is None
+
+    for child in tree._root_children:
+        assert tree.parent(child) is None
 
 
 def test_tree_contains(valid_cluster_tree):
@@ -156,6 +185,37 @@ def test_tree_empty_raises_invalid_tre():
         AnnotationTree({})
 
 
+def test_tree_rejects_non_contiguous_cluster_ids_within_layer():
+    invalid_cluster_tree = {
+        (1, 0): [(0, 0), (0, 2)],  # gap: missing (0, 1)
+        (2, 0): [(1, 0)],
+    }
+
+    with pytest.raises(
+        InvalidAnnotationTree, match="Cluster ids in layer 0 must be contiguous"
+    ):
+        AnnotationTree(invalid_cluster_tree)
+
+
+def test_layer_ids_are_zero_indexed_and_contiguous(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layer_ids = tree.layer_ids
+
+    assert layer_ids[0] == 0
+    assert layer_ids == tuple(range(max(layer_ids) + 1))
+    assert len(layer_ids) == max(layer_ids) + 1
+
+
+def test_tree_rejects_non_contiguous_layer_ids():
+    invalid_cluster_tree = {
+        (3, 0): [(2, 0)],
+        (2, 0): [(0, 0)],
+    }
+
+    with pytest.raises(InvalidAnnotationTree, match="Layer ids must be contiguous"):
+        AnnotationTree(invalid_cluster_tree)
+
+
 def test_tree_layer_missing_raises_key_error(valid_cluster_tree):
     tree = AnnotationTree(valid_cluster_tree)
 
@@ -175,42 +235,47 @@ def test_tree_from_clusterer(valid_cluster_tree):
     assert tree.parent(NodeId(0, 0)) == NodeId(1, 0)
 
 
-def test_tree_descendants_root(valid_cluster_tree):
+def test_tree_descendants_root_children(valid_cluster_tree):
     tree = AnnotationTree(valid_cluster_tree)
 
-    descendants = tree.descendants(tree._root)
-    assert set(descendants) == set(tree.nodes)
+    descendants = []
+    for node in tree._root_children:
+        descendants.extend(tree.descendants(node))
+    assert set(descendants) == set(tree.nodes) - set(tree._root_children)
 
 
-def test_tree_descendants_depth_limited(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-    root = tree._root
+def test_tree_descendants_depth_limited_deep_tree(deep_cluster_tree):
+    tree = AnnotationTree(deep_cluster_tree)
 
-    depth_1 = tree.descendants(root, depth=1)
-    assert set(depth_1) == {
+    assert tree.descendants(tree._root) == []
+
+    start = NodeId(3, 0)
+
+    depth_1 = tree.descendants(start, depth=1)
+    assert set(depth_1) == {NodeId(2, 0), NodeId(2, 1)}
+
+    depth_2 = tree.descendants(start, depth=2)
+    assert set(depth_2) == {
+        NodeId(2, 0),
+        NodeId(2, 1),
         NodeId(1, 0),
         NodeId(1, 1),
         NodeId(1, 2),
-        NodeId(1, 3),
-        NodeId(0, 2),
-        NodeId(0, 3),
     }
 
-    depth_2 = tree.descendants(root, depth=2)
-    assert set(depth_2) == {
+    depth_3 = tree.descendants(start, depth=3)
+    assert set(depth_3) == {
+        NodeId(2, 0),
+        NodeId(2, 1),
         NodeId(1, 0),
         NodeId(1, 1),
         NodeId(1, 2),
-        NodeId(1, 3),
         NodeId(0, 0),
         NodeId(0, 1),
         NodeId(0, 2),
-        NodeId(0, 3),
-        NodeId(0, 4),
-        NodeId(0, 5),
-        NodeId(0, 6),
-        NodeId(0, 7),
     }
+
+    assert set(tree.descendants(start)) == set(depth_3)
 
 
 def test_tree_descendants_leaf_and_zero_depth(valid_cluster_tree):
@@ -223,6 +288,17 @@ def test_tree_descendants_negative_depth_raises(valid_cluster_tree):
     tree = AnnotationTree(valid_cluster_tree)
     with pytest.raises(ValueError, match="depth must be >= 0 or None"):
         tree.descendants(NodeId(1, 2), depth=-1)
+
+
+def test_tree_omits_root_links(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    root_children = tree._root_children
+    assert root_children is not None
+    assert len(root_children) > 0
+
+    for child in root_children:
+        assert tree.parent(child) is None
 
 
 def test_annotation_tree_equality_same_structure_different_input_order():
@@ -354,7 +430,7 @@ def test_annotation_invalid_node_format_raises_keyerror(annotation):
 
 
 def test_annotation_root_node_rejected(annotation):
-    with pytest.raises(KeyError, match="is not a node of the cluster tree"):
+    with pytest.raises(KeyError, match="is not in the annotation tree"):
         annotation[(2, 0)] = "RootLabel"
 
 
@@ -378,3 +454,66 @@ def test_annotation_update_uses_mapping_protocol(annotation):
     assert annotation[NodeId(0, 1)] == "Topic-2"
     assert annotation.states[NodeId(1, 0)] is AnnotationState.COMPUTED
     assert annotation.states[NodeId(0, 1)] is AnnotationState.COMPUTED
+
+
+def test_annotation_from_layered_list_populates_values_and_states(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layered_values = [
+        [f"L0-{i}" for i in range(8)],
+        [f"L1-{i}" for i in range(4)],
+    ]
+
+    annotation = Annotation.from_layered_list("topics", tree, layered_values)
+
+    assert len(annotation) == len(tree)
+    for node in tree.nodes:
+        assert annotation[node] == f"L{node.layer}-{node.cluster}"
+
+    assert all(
+        state is AnnotationState.COMPUTED for state in annotation.states.values()
+    )
+
+
+def test_annotation_to_layered_list_round_trip(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layered_values = [
+        [f"L0-{i}" for i in range(8)],
+        [f"L1-{i}" for i in range(4)],
+    ]
+
+    annotation = Annotation.from_layered_list("topics", tree, layered_values)
+
+    assert annotation.to_layered_list() == layered_values
+
+
+def test_annotation_to_layered_list_raises_when_not_fully_computed(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    annotation = Annotation("topics", tree)
+    annotation[NodeId(0, 0)] = "only-one"
+
+    with pytest.raises(ValueError, match="Not all nodes have computed values"):
+        annotation.to_layered_list()
+
+
+def test_annotation_to_layered_list_raises_when_any_failed(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layered_values = [
+        [f"L0-{i}" for i in range(8)],
+        [f"L1-{i}" for i in range(4)],
+    ]
+    annotation = Annotation.from_layered_list("topics", tree, layered_values)
+    annotation.fail(NodeId(0, 0))
+
+    with pytest.raises(ValueError, match="Not all nodes have computed values"):
+        annotation.to_layered_list()
+
+
+def test_annotation_from_layered_list_raises_on_incomplete_input(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    incomplete_layered_values = [
+        ["L0-0"],
+        ["L1-0"],
+    ]
+
+    with pytest.raises(IndexError):
+        Annotation.from_layered_list("topics", tree, incomplete_layered_values)
