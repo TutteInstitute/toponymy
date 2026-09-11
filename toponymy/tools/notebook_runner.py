@@ -126,8 +126,9 @@ def run_notebook(
     Execute a Jupyter notebook with optional logging instrumentation and log-line collection.
 
     Runs the notebook in a kernel, injects a logging capture cell to ensure stdlib logging
-    is routed to stdout, and optionally collects log-like lines from cell outputs. On exception,
-    partial notebook outputs and collected logs are re-emitted before re-raising.
+    is routed to stdout, and optionally collects log-like lines from cell outputs.
+    On execution failure, partial logs are re-emitted. Log-collection mode returns
+    those lines; otherwise the original exception is re-raised.
 
     Parameters
     ----------
@@ -153,10 +154,11 @@ def run_notebook(
     Raises
     ------
     Exception
-        Any exception raised by the notebook kernel during execution is re-raised after logging.
+        Kernel execution errors are re-raised after logging unless
+        ``return_log_lines=True`` requests partial logs instead.
     """
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
     _inject_logging_capture_cell(nb)

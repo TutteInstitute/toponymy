@@ -66,10 +66,14 @@ def _prompt_text(prompt):
     if prompt is None:
         return ""
     if isinstance(prompt, Mapping):
-        return prompt.get("combined") or "\n\n".join(
+        if prompt.get("combined") is not None:
+            return prompt["combined"]
+        return "\n\n".join(
             prompt.get(key, "") for key in ("system", "user") if prompt.get(key)
         )
     if hasattr(prompt, "system") and hasattr(prompt, "user"):
+        if getattr(prompt, "combined", None) is not None:
+            return prompt.combined
         return "\n\n".join(part for part in (prompt.system, prompt.user) if part)
     return str(prompt)
 

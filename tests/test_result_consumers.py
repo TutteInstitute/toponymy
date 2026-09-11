@@ -120,6 +120,22 @@ def test_document_sampling_zero_limit_and_alignment():
         get_cluster_details(model, 0, 99)
 
 
+@pytest.mark.parametrize("as_mapping", [False, True])
+@pytest.mark.parametrize("combined", [None, "", "Only orchard evidence."])
+def test_audit_preserves_explicit_combined_rendering(as_mapping, combined):
+    model = model_fixture()
+    prompt = Prompt("System apple", "User apple document", combined=combined)
+    model.topics[(0, 7)].prompt = prompt._asdict() if as_mapping else prompt
+    expected = "System apple\n\nUser apple document" if combined is None else combined
+    audit = create_cluster_audit_df(model).iloc[0]
+    assert audit["prompt_preview"] == expected
+    assert audit["prompt_length"] == len(expected)
+    analysis = create_prompt_analysis_df(model).iloc[0]
+    assert analysis["prompt_length"] == len(expected)
+    assert analysis["num_exemplars_in_prompt"] == (1 if combined is None else 0)
+    assert analysis["num_keyphrases_in_prompt"] == (0 if combined == "" else 1)
+
+
 def test_empty_audit_tables_have_stable_columns():
     empty = TopicModel.from_topics({}, [], {}, np.empty((0, 2)))
     assert create_audit_df(empty).empty

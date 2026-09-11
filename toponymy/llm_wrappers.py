@@ -1617,9 +1617,9 @@ class LiteLLMNamer(LLMWrapper):
         user identifiers, or other provider parameters without modifying the
         wrapper.
 
-        These values are merged into the completion call arguments but may be
-        overridden by core wrapper parameters such as `model`, `messages`,
-        `temperature`, and `max_tokens`.
+        Reserved core arguments such as ``model``, ``messages``, ``temperature``
+        and ``max_tokens`` must use their wrapper parameters. Conflicting keys
+        in ``provider_kwargs`` raise ``ValueError`` before a request is made.
 
     Attributes
     ----------
