@@ -3,11 +3,49 @@ import numpy as np
 from numpy.typing import NDArray
 from tqdm.auto import tqdm
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential, wait_fixed
 
 
 from typing import Optional, List, Protocol, Sequence
 from toponymy._utils import handle_verbose_params, resolve_api_key
+
+
+def _embedding_matrix(vectors, count):
+    result = np.asarray(vectors)
+    if (
+        result.ndim != 2
+        or result.shape[0] != count
+        or result.shape[1] == 0
+        or result.dtype.kind not in "fiu"
+        or not np.isfinite(result).all()
+    ):
+        raise ValueError("Embedding response must contain one finite vector per input")
+    return result.astype(np.float64, copy=False)
+
+
+def _ordered_embeddings(rows, count):
+    missing = object()
+    vectors = [missing] * count
+    for row in rows:
+        index = (
+            row.get("index") if isinstance(row, dict) else getattr(row, "index", None)
+        )
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, (int, np.integer))
+            or not 0 <= index < count
+            or vectors[index] is not missing
+        ):
+            raise ValueError(
+                "Embedding response has an invalid or duplicate input index"
+            )
+        vectors[index] = (
+            row.get("embedding")
+            if isinstance(row, dict)
+            else getattr(row, "embedding", None)
+        )
+    if any(vector is missing for vector in vectors):
+        raise ValueError("Embedding response is missing an input index")
+    return _embedding_matrix(vectors, count)
 
 
 class TextEmbedderProtocol(Protocol):
@@ -37,7 +75,12 @@ try:
             api_key = resolve_api_key(
                 api_key, env_new="COHERE_API_KEY", env_legacy="CO_API_KEY"
             )
-            self.co = cohere.ClientV2(api_key=api_key)
+            options = {}
+            if base_url is not None:
+                options["base_url"] = base_url
+            if httpx_client is not None:
+                options["httpx_client"] = httpx_client
+            self.co = cohere.ClientV2(api_key=api_key, **options)
             self.model = model
             self.base_url = base_url
             self.httpx_client = httpx_client
@@ -66,9 +109,13 @@ try:
                     input_type=self.input_type,
                     embedding_types=self.embedding_types,
                 )
-                result.append(np.asarray(response.embeddings.float_))
+                result.append(
+                    _embedding_matrix(
+                        response.embeddings.float_, len(texts[i : i + 96])
+                    )
+                )
 
-            return np.vstack(result)
+            return np.vstack(result) if result else np.empty((0, 0), dtype=float)
 
 except ImportError:
     pass
@@ -115,67 +162,31 @@ try:
                 response = self.client.embeddings.create(
                     input=texts[i : i + 96], model=self.model, encoding_format="float"
                 )
-                result.append(np.asarray([item.embedding for item in response.data]))
+                result.append(
+                    _ordered_embeddings(response.data, len(texts[i : i + 96]))
+                )
 
-            return np.vstack(result)
-
-except ImportError:
-    pass
-
-# Anthropic
-try:
-    import anthropic
-
-    class AnthropicEmbedder:
-        def __init__(
-            self,
-            api_key: str = None,
-            model: str = "claude-haiku-4-5-20251001",
-            base_url: str = None,
-            httpx_client: Optional[httpx.Client] = None,
-        ):
-            api_key = resolve_api_key(api_key, env_new="ANTHROPIC_API_KEY")
-            self.client = anthropic.Anthropic(api_key=api_key)
-            self.model = model
-            self.base_url = base_url
-            self.httpx_client = httpx_client
-
-        def encode(
-            self, texts: List[str], verbose: bool = None, show_progress_bar: bool = None
-        ) -> np.ndarray:
-            # Handle verbose parameters
-            show_progress_bar_val, _ = handle_verbose_params(
-                verbose=verbose,
-                show_progress_bar=show_progress_bar,
-                default_verbose=False,
-            )
-
-            result = []
-            for i in tqdm(
-                range(0, len(texts), 96),
-                desc="embedding texts",
-                disable=(not show_progress_bar_val),
-            ):
-                batch = texts[i : i + 96]
-                # Anthropic embeddings are done one at a time in the current API
-                batch_embeddings = []
-                for text in tqdm(
-                    batch,
-                    desc="embedding batch",
-                    disable=(not show_progress_bar),
-                    leave=False,
-                ):
-                    response = self.client.embeddings.create(
-                        model=self.model,
-                        input=text,
-                    )
-                    batch_embeddings.append(response.embedding)
-                result.append(np.array(batch_embeddings))
-
-            return np.vstack(result)
+            return np.vstack(result) if result else np.empty((0, 0), dtype=float)
 
 except ImportError:
     pass
+
+
+class AnthropicEmbedder:
+    """Retired embedding adapter; Anthropic has no native embeddings endpoint."""
+
+    def __init__(
+        self,
+        api_key: str = None,
+        model: str = "claude-haiku-4-5-20251001",
+        base_url: str = None,
+        httpx_client: Optional[httpx.Client] = None,
+    ):
+        raise NotImplementedError(
+            "Anthropic has no native embeddings API. Supply a text embedder such as "
+            "VoyageAIEmbedder or OpenAIEmbedder; Anthropic naming remains supported."
+        )
+
 
 # Microsoft Azure
 try:
@@ -205,25 +216,13 @@ try:
                     "(e.g., model='text-embedding-3-small')."
                 )
 
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-        )
         def _encode_batch(self, texts: list) -> np.ndarray:
             # Call the Azure AI Inference API
             response = self.client.embed(
                 model=self.model,
                 input=[str(x) if len(x) > 0 else "[NO_TEXT]" for x in texts],
             )
-            # Extract embeddings from the response
-            embeddings = [item.embedding for item in response.data]
-            if len(embeddings) != len(texts):
-                print(
-                    f"Warning: Expected {len(texts)} embeddings, but got {len(embeddings)}."
-                )
-                print(f"Texts: {texts}")
-            assert len(embeddings) == len(texts)
-            return np.array(embeddings)
+            return _ordered_embeddings(response.data, len(texts))
 
         def encode(
             self, texts: list, verbose: bool = None, show_progress_bar: bool = None
@@ -245,7 +244,7 @@ try:
                 embeddings = self._encode_batch(texts[i : i + 96])
                 result.append(embeddings)
 
-            return np.vstack(result)
+            return np.vstack(result) if result else np.empty((0, 0), dtype=float)
 
 except ImportError as e:
     pass
@@ -279,9 +278,11 @@ try:
                 response = self.client.embeddings.create(
                     model=self.model, inputs=texts[i : i + 96]
                 )
-                result.append(np.array([item.embedding for item in response.data]))
+                result.append(
+                    _ordered_embeddings(response.data, len(texts[i : i + 96]))
+                )
 
-            return np.vstack(result)
+            return np.vstack(result) if result else np.empty((0, 0), dtype=float)
 
 except ImportError:
     pass
@@ -325,12 +326,13 @@ try:
                         "input": texts[i : i + 96],
                         "encoding_format": "float",
                     },
+                    timeout=(10, 30),
                 )
                 response.raise_for_status()
                 data = response.json()
-                result.append(np.array([item["embedding"] for item in data["data"]]))
+                result.append(_ordered_embeddings(data["data"], len(texts[i : i + 96])))
 
-            return np.vstack(result)
+            return np.vstack(result) if result else np.empty((0, 0), dtype=float)
 
 except ImportError:
     pass

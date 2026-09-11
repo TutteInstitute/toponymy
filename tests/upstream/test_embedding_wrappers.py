@@ -63,8 +63,10 @@ class TestOpenAIEmbedder:
 
         mock_data_item1 = MagicMock()
         mock_data_item1.embedding = [0.1, 0.2]
+        mock_data_item1.index = 0
         mock_data_item2 = MagicMock()
         mock_data_item2.embedding = [0.3, 0.4]
+        mock_data_item2.index = 1
 
         mock_response = MagicMock()
         mock_response.data = [mock_data_item1, mock_data_item2]
@@ -87,29 +89,9 @@ class TestOpenAIEmbedder:
 class TestAnthropicEmbedder:
     @patch("anthropic.Anthropic")
     def test_encode(self, mock_anthropic, embedders):
-        # Set up mock response
-        mock_client = MagicMock()
-        mock_anthropic.return_value = mock_client
-
-        mock_response1 = MagicMock()
-        mock_response1.embedding = [0.1, 0.2]
-        mock_response2 = MagicMock()
-        mock_response2.embedding = [0.3, 0.4]
-
-        mock_client.embeddings.create.side_effect = [mock_response1, mock_response2]
-
-        # Create the embedder and call encode
-        embedder = embedders.AnthropicEmbedder(api_key="fake_key")
-        texts = ["sample text 1", "sample text 2"]
-        result = embedder.encode(texts)
-
-        # Verify the result
-        assert isinstance(result, np.ndarray)
-        assert result.shape == (2, 2)
-        np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
-
-        # Verify API was called correctly
-        assert mock_client.embeddings.create.call_count == 2
+        with pytest.raises(NotImplementedError, match="no native embeddings API"):
+            embedders.AnthropicEmbedder(api_key="fake_key")
+        mock_anthropic.assert_not_called()
 
 
 class TestAzureAIEmbedder:
@@ -122,8 +104,10 @@ class TestAzureAIEmbedder:
         # Create mock embedding results
         mock_embedding_result1 = MagicMock()
         mock_embedding_result1.embedding = [0.1, 0.2]
+        mock_embedding_result1.index = 0
         mock_embedding_result2 = MagicMock()
         mock_embedding_result2.embedding = [0.3, 0.4]
+        mock_embedding_result2.index = 1
 
         # Create mock response
         mock_response = MagicMock()
@@ -177,8 +161,10 @@ class TestMistralEmbedder:
 
         mock_data_item1 = MagicMock()
         mock_data_item1.embedding = [0.1, 0.2]
+        mock_data_item1.index = 0
         mock_data_item2 = MagicMock()
         mock_data_item2.embedding = [0.3, 0.4]
+        mock_data_item2.index = 1
 
         mock_response = MagicMock()
         mock_response.data = [mock_data_item1, mock_data_item2]
@@ -206,7 +192,10 @@ class TestVoyageAIEmbedder:
         # Set up mock response
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "data": [{"embedding": [0.1, 0.2]}, {"embedding": [0.3, 0.4]}]
+            "data": [
+                {"index": 0, "embedding": [0.1, 0.2]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
         }
         mock_post.return_value = mock_response
 

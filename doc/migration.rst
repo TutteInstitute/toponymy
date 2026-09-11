@@ -121,6 +121,21 @@ messages. A template renders prompts and parses responses; it does not mutate
 the feature dictionaries. ``SummaryTemplate`` returns name, summary and
 explanation, stored on each topic.
 
+Embedding adapters
+~~~~~~~~~~~~~~~~~~
+
+``AnthropicEmbedder`` now raises ``NotImplementedError`` at construction:
+the earlier implementation called an embeddings endpoint absent from the
+Anthropic SDK. Use an embedding provider's adapter or a local ``encode``
+implementation; Anthropic topic naming is still supported.
+
+Indexed embedding responses are aligned to input order and rejected if an
+index is duplicated or missing, or a vector is nonfinite or malformed.
+Empty input to the HTTP embedding adapters returns a ``(0, 0)`` float array
+without a request; the dimension is unknown until a nonempty response.
+Azure's SDK owns transport retries; the wrapper no longer retries authentication
+errors or malformed results. Voyage requests have bounded connect/read waits.
+
 Child summary evidence
 ~~~~~~~~~~~~~~~~~~~~~~
 
