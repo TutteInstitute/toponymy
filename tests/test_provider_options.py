@@ -53,7 +53,10 @@ def test_options_without_legacy_alias_are_owned_and_preserve_values(
 
 @pytest.fixture
 def validating_pipeline(monkeypatch):
-    import transformers
+    pytest.importorskip(
+        "torch", reason="Hugging Face generation checks require PyTorch"
+    )
+    transformers = pytest.importorskip("transformers")
     from transformers import GenerationConfig
     from transformers.generation.logits_process import TemperatureLogitsWarper
 
