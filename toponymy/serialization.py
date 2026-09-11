@@ -2,7 +2,7 @@ import json
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 import base64
 
@@ -15,6 +15,131 @@ from toponymy.topic_tree import TopicTree
 
 _SERIAL_VERSION = "0.2"
 _READABLE_SERIAL_VERSIONS = {"0.1", "0.2"}
+
+
+def _unique_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Duplicate JSON key {key!r} in topic archive")
+        result[key] = value
+    return result
+
+
+def _load_json(value, context):
+    try:
+        return json.loads(value, object_pairs_hook=_unique_json_pairs)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"Invalid {context}: {error}") from error
+
+
+def _missing_cell(value):
+    # Nullable pandas string columns use NaN; absent legacy columns use None.
+    return (
+        value is None
+        or value is pd.NA
+        or (isinstance(value, float) and np.isnan(value))
+    )
+
+
+def _optional_text(value, context):
+    if _missing_cell(value):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{context} must be a string or null")
+    return value
+
+
+def _nonnegative_integer(value, context):
+    if (
+        isinstance(value, (bool, np.bool_))
+        or not isinstance(value, (int, np.integer))
+        or value < 0
+    ):
+        raise ValueError(f"{context} must be a nonnegative integer")
+    return int(value)
+
+
+def _validate_config(config):
+    if not isinstance(config, dict):
+        raise ValueError("Archive configuration must be an object")
+    version = config.get("serial_version")
+    if not isinstance(version, str) or version not in _READABLE_SERIAL_VERSIONS:
+        raise ValueError(f"Unsupported topic archive serial version: {version!r}")
+    _nonnegative_integer(config.get("n_layers"), "Archive n_layers")
+    for key in ("has_reduced", "has_clustering_graph"):
+        if not isinstance(config.get(key, False), bool):
+            raise ValueError(f"Archive {key} must be a boolean")
+
+
+def _coo_integers(values, context):
+    array = np.asarray(values)
+    if array.ndim != 1 or (
+        array.size
+        and (
+            array.dtype.kind not in "iu"
+            or (array < 0).any()
+            or (array > np.iinfo(np.int64).max).any()
+        )
+    ):
+        raise ValueError(f"{context} must contain nonnegative integer values")
+    return array.astype(np.int64, copy=False)
+
+
+def _duplicate_coordinates(*coordinates):
+    order = np.lexsort(coordinates[::-1])
+    repeated = np.ones(max(0, len(order) - 1), dtype=bool)
+    for values in coordinates:
+        ordered = values[order]
+        repeated &= ordered[1:] == ordered[:-1]
+    return repeated.any()
+
+
+def _lance_dtype(declared, stored, context):
+    try:
+        actual = np.dtype(stored.to_pandas_dtype())
+        dtype = actual if declared is None else np.dtype(declared)
+        if dtype.kind not in "fiu" or dtype.newbyteorder("=") != actual.newbyteorder(
+            "="
+        ):
+            raise ValueError("declared dtype does not match the stored numeric type")
+        return dtype
+    except (TypeError, ValueError, NotImplementedError) as error:
+        raise ValueError(f"Invalid Lance {context} dtype: {error}") from error
+
+
+def _lance_vectors(rows, dtype, dimension, context):
+    try:
+        dtype = np.dtype(dtype)
+        if dtype.kind not in "fiu":
+            raise ValueError("expected a real numeric dtype")
+        vectors = np.asarray(rows, dtype=dtype)
+        if dimension is not None:
+            width = _nonnegative_integer(dimension, f"{context} dimension")
+            vectors = vectors.reshape(len(rows), width)
+        if vectors.ndim != 2 or not np.isfinite(vectors).all():
+            raise ValueError("expected a finite real matrix")
+        return vectors
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ValueError(f"Invalid Lance {context}: {error}") from error
+
+
+def _decode_tree(value):
+    raw_tree = _load_json(value, "cluster tree")
+    if not isinstance(raw_tree, dict):
+        raise ValueError("Archive cluster tree must be an object")
+    tree = {}
+    for key, values in raw_tree.items():
+        parent = uid_to_ints(key)
+        if parent in tree:
+            raise ValueError(f"Duplicate decoded tree parent {parent}")
+        if not isinstance(values, list):
+            raise ValueError(f"Tree children for {parent} must be a list")
+        children = [uid_to_ints(child) for child in values]
+        if len(set(children)) != len(children):
+            raise ValueError(f"Duplicate decoded tree child for {parent}")
+        tree[parent] = children
+    return tree
 
 
 def topic_uid(tup) -> str:
@@ -119,6 +244,8 @@ class TopicModel:
             if document_df is None
             else document_df.copy()
         )
+        if metadata is not None and not isinstance(metadata, dict):
+            raise ValueError("Runtime metadata must be an object")
         self.metadata = {} if metadata is None else dict(metadata)
 
     def __repr__(self):
@@ -153,35 +280,178 @@ class TopicModel:
 
             topics = {}
             table = self._topic_df
+            if (
+                not isinstance(self.embedding_vectors, np.ndarray)
+                or self.embedding_vectors.ndim != 2
+            ):
+                raise ValueError("Archive embedding_vectors must be a matrix")
+            n_documents = len(self.embedding_vectors)
+            for name, vectors in (
+                ("embedding_vectors", self.embedding_vectors),
+                ("reduced_vectors", self.reduced_vectors),
+            ):
+                if vectors is not None and (
+                    not isinstance(vectors, np.ndarray)
+                    or vectors.ndim != 2
+                    or len(vectors) != n_documents
+                    or vectors.dtype.kind not in "fiu"
+                    or not np.isfinite(vectors).all()
+                ):
+                    raise ValueError(
+                        f"Archive {name} must be a finite real matrix aligned with documents"
+                    )
+            if len(self.document_df) != n_documents:
+                raise ValueError("Archive document and embedding row counts differ")
+            if self.clustering_graph is not None and (
+                not sp.issparse(self.clustering_graph)
+                or self.clustering_graph.shape != (n_documents, n_documents)
+                or self.clustering_graph.dtype.kind not in "fiu"
+                or not np.isfinite(self.clustering_graph.data).all()
+                or (self.clustering_graph.data < 0).any()
+            ):
+                raise ValueError(
+                    "Clustering graph must be a finite nonnegative square matrix aligned with documents"
+                )
+            for layer_index, matrix in enumerate(self.cluster_layers):
+                if (
+                    not sp.issparse(matrix)
+                    or matrix.ndim != 2
+                    or matrix.shape[0] != n_documents
+                ):
+                    raise ValueError(
+                        f"Cluster matrix {layer_index} must align with documents"
+                    )
+                if (
+                    matrix.dtype.kind not in "fiu"
+                    or not np.isfinite(matrix.data).all()
+                    or (matrix.data < 0).any()
+                ):
+                    raise ValueError(
+                        f"Cluster matrix {layer_index} has invalid membership values"
+                    )
+                if hasattr(matrix, "check_format"):
+                    # SciPy validation rebinds/prunes arrays on its receiver.
+                    # A shallow container copy preserves the borrowed matrix.
+                    copy(matrix).check_format(full_check=True)
+                coo = matrix.tocoo()
+                if _duplicate_coordinates(coo.row, coo.col):
+                    raise ValueError(
+                        f"Cluster matrix {layer_index} has duplicate coordinates"
+                    )
+                if np.bincount(coo.row[coo.data != 0]).max(initial=0) > 1:
+                    raise ValueError(
+                        f"Cluster matrix {layer_index} assigns a document to multiple topics"
+                    )
             if table is not None:
+                if not {"layer", "cluster"}.issubset(table.columns):
+                    raise ValueError("Topic table requires layer and cluster columns")
+                keys = set()
+                for row in table.to_dict("records"):
+                    layer = _nonnegative_integer(row["layer"], "Topic layer")
+                    label = _nonnegative_integer(row["cluster"], "Topic cluster")
+                    key = (layer, label)
+                    if layer >= len(self.cluster_layers):
+                        raise ValueError(f"Topic {key} has no declared cluster layer")
+                    if key in keys:
+                        raise ValueError(f"Duplicate topic identity {key}")
+                    keys.add(key)
+                    if "uid" in row and uid_to_ints(row["uid"]) != key:
+                        raise ValueError(f"Topic UID does not match {key}")
                 for layer_index, matrix in enumerate(self.cluster_layers):
+                    matrix = matrix.tocsr(copy=False)
                     rows = table[table["layer"] == layer_index].sort_values("cluster")
+                    if len(rows) != matrix.shape[1]:
+                        labels = set(rows["cluster"])
+                        if any(label >= matrix.shape[1] for label in labels) or not set(
+                            matrix.nonzero()[1]
+                        ).issubset(labels):
+                            raise ValueError(
+                                f"Topic table does not describe cluster matrix {layer_index}"
+                            )
                     for ordinal, row in enumerate(rows.to_dict("records")):
                         label = int(row["cluster"])
                         column = ordinal if len(rows) == matrix.shape[1] else label
-                        members = matrix.getcol(column).nonzero()[0]
+                        members = matrix[:, [column]].nonzero()[0]
                         members.flags.writeable = False
                         features = (
-                            json.loads(row["features_json"])
-                            if row.get("features_json")
+                            _load_json(row["features_json"], "topic features")
+                            if not _missing_cell(row.get("features_json"))
                             else {"cluster_keywords": list(row.get("keyphrases", []))}
                         )
                         prompt_data = (
-                            json.loads(row["prompt_json"])
-                            if row.get("prompt_json")
+                            _load_json(row["prompt_json"], "topic prompt")
+                            if not _missing_cell(row.get("prompt_json"))
                             else None
                         )
-                        prompt = Prompt(**prompt_data) if prompt_data else None
+                        if not isinstance(features, dict) or (
+                            prompt_data is not None
+                            and not isinstance(prompt_data, dict)
+                        ):
+                            raise ValueError(
+                                f"Topic {(layer_index, label)} features and prompt must be objects"
+                            )
+                        if prompt_data is not None and (
+                            any(
+                                not isinstance(prompt_data.get(field), str)
+                                for field in ("system", "user")
+                            )
+                            or (
+                                prompt_data.get("json_schema") is not None
+                                and not isinstance(prompt_data["json_schema"], dict)
+                            )
+                        ):
+                            raise ValueError(
+                                f"Invalid prompt fields for topic {(layer_index, label)}"
+                            )
+                        try:
+                            prompt = (
+                                Prompt(**prompt_data)
+                                if prompt_data is not None
+                                else None
+                            )
+                        except (TypeError, ValueError) as error:
+                            raise ValueError(
+                                f"Invalid prompt for topic {(layer_index, label)}"
+                            ) from error
                         topics[(layer_index, label)] = Topic(
                             layer_index,
                             label,
                             members,
                             features,
                             prompt,
-                            row.get("name"),
-                            row.get("summary"),
-                            row.get("explanation"),
+                            _optional_text(row.get("name"), "Topic name"),
+                            _optional_text(row.get("summary"), "Topic summary"),
+                            _optional_text(row.get("explanation"), "Topic explanation"),
                         )
+            elif any(matrix.nnz for matrix in self.cluster_layers):
+                raise ValueError("Populated cluster matrices require a topic table")
+            parents = {}
+            for parent, children in self.cluster_tree.items():
+                if parent not in topics and parent != (len(self.cluster_layers), 0):
+                    raise ValueError(f"Unknown tree parent {parent}")
+                for child in children:
+                    if child not in topics or child[0] >= parent[0]:
+                        raise ValueError(
+                            f"Invalid descending tree edge {parent} -> {child}"
+                        )
+                    if child in parents:
+                        raise ValueError(f"Duplicate tree parent for child {child}")
+                    parents[child] = parent
+                    if (
+                        parent in topics
+                        and not np.isin(
+                            topics[child].members,
+                            topics[parent].members,
+                            assume_unique=True,
+                        ).all()
+                    ):
+                        raise ValueError(
+                            f"Tree parent {parent} does not contain child {child}"
+                        )
+            if (len(self.cluster_layers), 0) in self.cluster_tree and set(
+                parents
+            ) != set(topics):
+                raise ValueError("Rooted cluster tree omits one or more topics")
             self._topics = topics
         return self._topics
 
@@ -197,7 +467,7 @@ class TopicModel:
                     "cluster": key[1],
                     "name": topic.name,
                     "size": len(topic.members),
-                    "keyphrases": topic.features.get("cluster_keywords", []),
+                    "keyphrases": list(topic.features.get("cluster_keywords", [])),
                     "features_json": json.dumps(topic.features, ensure_ascii=False),
                     "prompt_json": (
                         json.dumps(prompt, ensure_ascii=False) if prompt else None
@@ -310,33 +580,40 @@ class TopicModel:
                     members.add(normalized)
                 z.extractall(root)
 
-            with open(root / "metadata.json", encoding="utf8") as f:
-                metadata = json.load(f)
-
-            serial_version = metadata["serial_version"]
-            if serial_version not in _READABLE_SERIAL_VERSIONS:
-                raise ValueError(
-                    f"The file's serial version ({serial_version}) does not match "
-                    f"the current version ({_SERIAL_VERSION})."
-                )
-
-            has_reduced = metadata["has_reduced"]
-            n_layers = metadata.get("n_layers")
-            if (
-                isinstance(n_layers, bool)
-                or not isinstance(n_layers, int)
-                or n_layers < 0
-            ):
-                raise ValueError("Archive n_layers must be a nonnegative integer")
-            layer_files = sorted(
-                (root / "cluster_matrices").glob("layer_*.npz"),
-                key=lambda p: int(p.stem.split("_")[1]),
+            if not (root / "metadata.json").is_file():
+                raise ValueError("Topic archive is missing metadata.json")
+            metadata = _load_json(
+                (root / "metadata.json").read_text(encoding="utf8"), "archive metadata"
             )
-            if len(layer_files) != n_layers or any(
-                file.name != f"layer_{index}.npz"
-                for index, file in enumerate(layer_files)
-            ):
+            _validate_config(metadata)
+            has_reduced = metadata.get("has_reduced", False)
+            n_layers = metadata["n_layers"]
+            layer_files = [
+                root / "cluster_matrices" / f"layer_{index}.npz"
+                for index in range(n_layers)
+            ]
+            if set((root / "cluster_matrices").glob("*")) != set(layer_files):
                 raise ValueError("Archive cluster matrices must match n_layers")
+            expected = {
+                "metadata.json",
+                "cluster_tree.json",
+                "document_df.parquet",
+                "topic_df.parquet",
+                "embedding_vectors.npy",
+            }
+            expected.update(
+                f"cluster_matrices/layer_{index}.npz" for index in range(n_layers)
+            )
+            if has_reduced:
+                expected.add("reduced_vectors.npy")
+            if metadata.get("has_clustering_graph", False):
+                expected.add("clustering_graph.npz")
+            if {
+                file.relative_to(root).as_posix()
+                for file in root.rglob("*")
+                if file.is_file()
+            } != expected:
+                raise ValueError("Topic archive files do not match declared inventory")
 
             # --- DataFrames ---
             document_df = pd.read_parquet(root / "document_df.parquet")
@@ -354,15 +631,11 @@ class TopicModel:
             matrices = [sp.load_npz(f) for f in layer_files]
 
             # --- Cluster tree topology ---
-            with open(root / "cluster_tree.json") as f:
-                raw_tree = json.load(f)
+            cluster_tree = _decode_tree(
+                (root / "cluster_tree.json").read_text(encoding="utf8")
+            )
 
-            cluster_tree = {
-                uid_to_ints(k): [uid_to_ints(child) for child in v]
-                for k, v in raw_tree.items()
-            }
-
-            return cls(
+            model = cls(
                 embedding_vectors=embedding_vectors,
                 reduced_vectors=reduced_vectors,
                 document_df=document_df,
@@ -376,6 +649,8 @@ class TopicModel:
                     else None
                 ),
             )
+            model.topics
+            return model
 
     def to_file(self, path: str):
         path = Path(path)
@@ -431,59 +706,85 @@ class TopicModel:
         path = Path(path)
 
         # --- config ---
-        config = lance.dataset(str(path / "config.lance")).to_table().to_pydict()
-        serial_version = config["serial_version"][0]
-        if serial_version not in _READABLE_SERIAL_VERSIONS:
-            raise ValueError(
-                f"The file's serial version ({serial_version}) does not match "
-                f"the current version ({_SERIAL_VERSION})."
-            )
-        n_layers = config["n_layers"][0]
-        has_reduced = config["has_reduced"][0]
-        raw_tree = json.loads(config["cluster_tree"][0])
+        config_table = lance.dataset(str(path / "config.lance")).to_table()
+        if config_table.num_rows != 1:
+            raise ValueError("Lance configuration must have exactly one row")
+        config = {key: values[0] for key, values in config_table.to_pydict().items()}
+        _validate_config(config)
+        n_layers = config["n_layers"]
+        has_reduced = config.get("has_reduced", False)
+        cluster_tree = _decode_tree(config.get("cluster_tree"))
 
-        cluster_tree = {
-            uid_to_ints(k): [uid_to_ints(child) for child in v]
-            for k, v in raw_tree.items()
-        }
+        document_table = lance.dataset(str(path / "documents.lance")).to_table()
+        n_docs = document_table.num_rows
+        doc_table = document_table.to_pydict()
+        import pyarrow as pa
 
-        doc_table = lance.dataset(str(path / "documents.lance")).to_table().to_pydict()
-        embedding_vectors = np.array(
-            doc_table.pop("embedding"),
-            dtype=config.get("embedding_dtype", ["float32"])[0],
+        def vector_dtype(column, config_key):
+            if column not in document_table.column_names:
+                raise ValueError(f"Lance documents are missing {column}")
+            stored = document_table.schema.field(column).type
+            if not (
+                pa.types.is_list(stored)
+                or pa.types.is_large_list(stored)
+                or pa.types.is_fixed_size_list(stored)
+            ):
+                raise ValueError(f"Lance {column} must contain vector rows")
+            return _lance_dtype(config.get(config_key), stored.value_type, column)
+
+        embedding_vectors = _lance_vectors(
+            doc_table.pop("embedding", None),
+            vector_dtype("embedding", "embedding_dtype"),
+            config.get("embedding_dim"),
+            "embedding vectors",
         )
-        if "embedding_dim" in config:
-            embedding_vectors = embedding_vectors.reshape(
-                -1, config["embedding_dim"][0]
-            )
         reduced_vectors = None
         if has_reduced:
-            reduced_vectors = np.array(
-                doc_table.pop("reduced_embedding"),
-                dtype=config.get("reduced_dtype", ["float32"])[0],
+            reduced_vectors = _lance_vectors(
+                doc_table.pop("reduced_embedding", None),
+                vector_dtype("reduced_embedding", "reduced_dtype"),
+                config.get("reduced_dim"),
+                "reduced vectors",
             )
-            if "reduced_dim" in config:
-                reduced_vectors = reduced_vectors.reshape(-1, config["reduced_dim"][0])
-        document_df = pd.DataFrame(doc_table)
+        document_df = pd.DataFrame(doc_table, index=range(n_docs))
 
         topic_dict = lance.dataset(str(path / "topics.lance")).to_table().to_pydict()
         topic_df = pd.DataFrame(topic_dict)
 
         coo_dict = lance.dataset(str(path / "clusters.lance")).to_table().to_pydict()
-        layers_arr = np.array(coo_dict["layer"], dtype=np.int64)
-        rows_arr = np.array(coo_dict["row_idx"], dtype=np.int64)
-        cols_arr = np.array(coo_dict["col_idx"], dtype=np.int64)
-        vals_arr = np.array(coo_dict["value"], dtype=np.uint8)  # safe: values are 0-255
-        n_docs = len(document_df)
+        if not {"layer", "row_idx", "col_idx", "value"}.issubset(coo_dict):
+            raise ValueError("Lance cluster table is missing COO columns")
+        layers_arr = _coo_integers(coo_dict["layer"], "COO layer")
+        rows_arr = _coo_integers(coo_dict["row_idx"], "COO row")
+        cols_arr = _coo_integers(coo_dict["col_idx"], "COO column")
+        vals_arr = _coo_integers(coo_dict["value"], "COO membership")
+        if (
+            (layers_arr >= n_layers).any()
+            or (rows_arr >= n_docs).any()
+            or (vals_arr > 255).any()
+        ):
+            raise ValueError(
+                "Lance COO rows exceed declared layers, documents or membership range 0..255"
+            )
+        if _duplicate_coordinates(layers_arr, rows_arr, cols_arr):
+            raise ValueError("Duplicate Lance COO coordinate")
+        vals_arr = vals_arr.astype(np.uint8)
+        widths = config.get("layer_columns")
+        if widths is not None:
+            if not isinstance(widths, list) or len(widths) != n_layers:
+                raise ValueError("Lance layer_columns must match n_layers")
+            widths = [_nonnegative_integer(width, "Layer width") for width in widths]
 
         matrices = []
         for layer_idx in range(n_layers):
             mask = layers_arr == layer_idx
             n_cols = (
-                config["layer_columns"][0][layer_idx]
-                if "layer_columns" in config
+                widths[layer_idx]
+                if widths is not None
                 else int(cols_arr[mask].max()) + 1 if mask.any() else 0
             )
+            if (cols_arr[mask] >= n_cols).any():
+                raise ValueError(f"Lance COO columns exceed layer {layer_idx} width")
             csr = sp.coo_matrix(
                 (vals_arr[mask], (rows_arr[mask], cols_arr[mask])),
                 shape=(n_docs, n_cols),
@@ -492,25 +793,45 @@ class TopicModel:
             matrices.append(csr)
 
         clustering_graph = None
-        if config.get("has_clustering_graph", [False])[0]:
-            edges = lance.dataset(str(path / "graph.lance")).to_table().to_pydict()
+        if config.get("has_clustering_graph", False):
+            edge_table = lance.dataset(str(path / "graph.lance")).to_table()
+            edges = edge_table.to_pydict()
+            graph_rows = _coo_integers(edges.get("row"), "Graph row")
+            graph_cols = _coo_integers(edges.get("column"), "Graph column")
+            if (
+                (graph_rows >= n_docs).any()
+                or (graph_cols >= n_docs).any()
+                or _duplicate_coordinates(graph_rows, graph_cols)
+            ):
+                raise ValueError("Invalid Lance graph coordinates")
             clustering_graph = sp.csr_matrix(
                 (
-                    np.asarray(edges["distance"], dtype=config["graph_dtype"][0]),
-                    (edges["row"], edges["column"]),
+                    np.asarray(
+                        edges["distance"],
+                        dtype=_lance_dtype(
+                            config.get("graph_dtype"),
+                            edge_table.schema.field("distance").type,
+                            "graph distances",
+                        ),
+                    ),
+                    (graph_rows, graph_cols),
                 ),
                 shape=(n_docs, n_docs),
             )
-        return cls(
+        model = cls(
             embedding_vectors=embedding_vectors,
             reduced_vectors=reduced_vectors,
             document_df=document_df,
             topic_df=topic_df,
             cluster_tree=cluster_tree,
             cluster_layers=matrices,
-            metadata=json.loads(config.get("runtime_metadata", ["{}"])[0]),
+            metadata=_load_json(
+                config.get("runtime_metadata", "{}"), "runtime metadata"
+            ),
             clustering_graph=clustering_graph,
         )
+        model.topics
+        return model
 
     def to_lance(self, path: str, overwrite: bool = False):
 
@@ -518,6 +839,18 @@ class TopicModel:
         import pyarrow as pa
 
         path = Path(path)
+        # Validate before replacing an existing artifact or narrowing membership.
+        topic_df = self.topic_df
+        for matrix in self.cluster_layers:
+            values = matrix.data
+            if (
+                values.dtype.kind not in "fiu"
+                or not np.isfinite(values).all()
+                or (values < 0).any()
+                or (values > 255).any()
+                or (values != np.floor(values)).any()
+            ):
+                raise ValueError("Lance membership values must be integers in 0..255")
 
         if path.exists():
             if not overwrite:
@@ -558,13 +891,19 @@ class TopicModel:
             )
 
         doc_schema = pa.schema(schema_fields)
-        doc_table = pa.table(doc_dict, schema=doc_schema)
+        doc_table = pa.table(
+            {
+                column: pa.array(
+                    values, type=doc_schema.field(column).type, from_pandas=True
+                )
+                for column, values in doc_dict.items()
+            },
+            schema=doc_schema,
+        )
         lance.write_dataset(doc_table, str(path / "documents.lance"))
 
         # --- topics.lance ---
-        topic_df = deepcopy(self.topic_df)
-        topic_dict = {col: topic_df[col].tolist() for col in topic_df.columns}
-        topic_table = pa.table(topic_dict)
+        topic_table = pa.Table.from_pandas(topic_df, preserve_index=False)
         lance.write_dataset(topic_table, str(path / "topics.lance"))
 
         # --- clusters.lance ---

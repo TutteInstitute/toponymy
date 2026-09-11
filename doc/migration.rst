@@ -172,3 +172,15 @@ Earlier files retain the information they originally stored; loading does not
 invent missing prompt or summary state. ``topic_df`` is a materialized view:
 edit a topic's state explicitly instead of expecting DataFrame edits to update
 the model.
+
+Both readers validate topic identities, membership alignment and topology before
+returning. Repeated JSON keys, colliding decoded IDs, duplicate topic rows and
+contradictory inventories are errors. Tree edges may skip layers, but must
+descend and preserve containment. An explicit synthetic root must reach every
+topic; rootless forests remain readable. Noise has no topic row.
+
+Legacy label-indexed membership matrices remain supported when unrepresented
+columns are empty. Lance membership values must be lossless integers in 0..255;
+fractional weights require ZIP storage. Lance dtype declarations must match the
+stored vector and graph types. Materializing a topic table copies exposed
+keyword lists and preserves borrowed sparse matrices.
