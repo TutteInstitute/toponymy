@@ -58,7 +58,7 @@ def create_tokenizers_ngrammer(
         return [
             tokenizer.decode(tokens[i : i + n])
             for n in range(ngram_range[0], ngram_range[1] + 1)
-            for i in range(len(tokens) - n)
+            for i in range(len(tokens) - n + 1)
         ]
 
     return ngrammer

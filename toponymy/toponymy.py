@@ -13,6 +13,7 @@ from .clustering import PLSCANClusterer, validate_cluster_tree
 from .feature_extraction import TextExemplarExtractor, TextKeyphraseExtractor
 from .serialization import Topic, TopicModel
 from .templates import TextTemplate
+from .utility_functions import _normalize_rows
 
 
 def _matrix(values, rows, name):
@@ -297,13 +298,7 @@ class Toponymy:
             vectors = _matrix(
                 self.embedding_model.encode(names), n, "topic name embeddings"
             )
-            norms = np.linalg.norm(vectors, axis=1)
-            scaled = np.divide(
-                vectors,
-                norms[:, None],
-                out=np.zeros_like(vectors, dtype=float),
-                where=norms[:, None] != 0,
-            )
+            scaled = _normalize_rows(vectors)
             distances = np.clip(1.0 - scaled @ scaled.T, 0, 2)
         distances[duplicates] = 0.0
         np.fill_diagonal(distances, 0.0)

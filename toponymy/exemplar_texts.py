@@ -1,11 +1,15 @@
 import numpy as np
 import numba
 from typing import List, Tuple, Callable, Any
-from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
-from toponymy.utility_functions import centroids_from_labels
+from toponymy.utility_functions import (
+    centroids_from_labels,
+    distance_to_vector,
+    _scale_vectors,
+    _normalize_rows,
+)
 
 
 from tqdm.auto import tqdm
@@ -383,6 +387,7 @@ def submodular_selection_exemplars(
     results = []
     indices = []
 
+    object_vectors = _scale_vectors(object_vectors)
     null_topic_vector = np.mean(object_vectors, axis=0)
     if submodular_function == "facility_location":
         selector = FacilityLocationSelection(
@@ -432,7 +437,9 @@ def submodular_selection_exemplars(
             indices.append([])
             continue
 
-        cluster_object_vectors = object_vectors[cluster_mask] - null_topic_vector
+        cluster_object_vectors = _normalize_rows(
+            object_vectors[cluster_mask] - null_topic_vector
+        )
         cluster_indices = np.arange(cluster_object_vectors.shape[0])
 
         if cluster_object_vectors.shape[0] > n_exemplars:
@@ -593,6 +600,7 @@ def diverse_exemplars(
     # Compute centroid vectors
     if verbose:
         print("Computing centroid vectors")
+    object_vectors = _scale_vectors(object_vectors)
     centroid_vectors = centroids_from_labels(cluster_label_vector, object_vectors)
 
     results = []
@@ -626,10 +634,9 @@ def diverse_exemplars(
         cluster_object_vectors = object_vectors[cluster_mask] - null_topic
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
-            exemplar_distances = pairwise_distances(
-                centroid_vectors[cluster_num].reshape(1, -1) - null_topic,
+            exemplar_distances = distance_to_vector(
+                centroid_vectors[cluster_num] - null_topic,
                 cluster_object_vectors,
-                metric="cosine",
             )
             exemplar_order = np.argsort(exemplar_distances.flatten())
         elif method == "random":

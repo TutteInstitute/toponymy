@@ -227,6 +227,7 @@ def test_invalid_subtopic_source_fails_before_naming(source):
 def test_centroid_means_ignore_noise_and_preserve_missing_label_rows(
     python_implementation,
 ):
+    from math import fsum
     from toponymy.utility_functions import centroids_from_labels
 
     implementation = (
@@ -244,14 +245,24 @@ def test_centroid_means_ignore_noise_and_preserve_missing_label_rows(
         expected = np.vstack(
             [
                 (
-                    vectors[labels == label].mean(axis=0)
+                    np.array(
+                        [
+                            fsum(column) / len(column)
+                            for column in vectors[labels == label].T
+                        ]
+                    )
                     if np.any(labels == label)
                     else np.zeros(vectors.shape[1])
                 )
                 for label in range(labels.max() + 1)
             ]
         )
-        np.testing.assert_array_equal(implementation(labels, vectors), expected)
+        np.testing.assert_allclose(
+            implementation(labels, vectors),
+            expected,
+            rtol=8 * np.finfo(float).eps,
+            atol=0,
+        )
 
 
 @pytest.mark.parametrize("custom_objects", [False, True])

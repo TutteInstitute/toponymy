@@ -2,6 +2,25 @@ import numpy as np
 import numba
 
 
+def _scale_vectors(vectors):
+    """Own a common-scale float64 matrix before computing cosine centroids."""
+    vectors = np.asarray(vectors, dtype=np.float64)
+    if vectors.ndim != 2 or not np.isfinite(vectors).all():
+        raise ValueError("vectors must be a finite two-dimensional matrix")
+    scale = np.max(np.abs(vectors), initial=0.0)
+    return vectors / scale if scale else vectors.copy()
+
+
+def _normalize_rows(vectors):
+    """Unit directions without overflow or loss of tiny nonzero rows."""
+    vectors = np.asarray(vectors, dtype=np.float64)
+    scales = np.max(np.abs(vectors), axis=1, keepdims=True, initial=0.0)
+    result = np.divide(vectors, scales, out=np.zeros_like(vectors), where=scales != 0)
+    norms = np.linalg.norm(result, axis=1, keepdims=True)
+    np.divide(result, norms, out=result, where=norms != 0)
+    return result
+
+
 @numba.njit(cache=True)
 def distance_to_vector(vector, other_vectors):
     """Cosine distances, including finite vectors at very small or large scales."""
@@ -76,9 +95,10 @@ def diversify_max_alpha(
         raise ValueError("alpha bounds must be finite and satisfy 0 <= min <= max")
     if n_results <= 0:
         return [i for i in range(0)]
-    mid_alpha = (max_alpha + min_alpha) / 2.0
-
-    while abs(max_alpha - min_alpha) > tolerance:
+    while max_alpha - min_alpha > tolerance:
+        mid_alpha = min_alpha + (max_alpha - min_alpha) / 2.0
+        if mid_alpha == min_alpha or mid_alpha == max_alpha:
+            break
         results = diversify_fixed_alpha(
             query_vector, candidate_neighbor_vectors, alpha=mid_alpha
         )
@@ -86,8 +106,6 @@ def diversify_max_alpha(
             min_alpha = mid_alpha
         else:
             max_alpha = mid_alpha
-
-        mid_alpha = (min_alpha + max_alpha) / 2.0
 
     return diversify_fixed_alpha(
         query_vector, candidate_neighbor_vectors, alpha=min_alpha
@@ -97,18 +115,31 @@ def diversify_max_alpha(
 @numba.njit(cache=True)
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
-) -> np.ndarray:  # pragma: no cover
+) -> np.ndarray:
     n_clusters = cluster_labels.max() + 1 if len(cluster_labels) else 0
     result = np.zeros((n_clusters, vector_data.shape[1]))
     counts = np.zeros(n_clusters)
+    scales = np.zeros((n_clusters, vector_data.shape[1]))
     for i in range(cluster_labels.shape[0]):
         cluster_num = cluster_labels[i]
         if cluster_num >= 0:
-            result[cluster_num] += vector_data[i]
             counts[cluster_num] += 1
+            for j in range(vector_data.shape[1]):
+                scales[cluster_num, j] = max(
+                    scales[cluster_num, j], abs(np.float64(vector_data[i, j]))
+                )
+
+    for i in range(cluster_labels.shape[0]):
+        cluster_num = cluster_labels[i]
+        if cluster_num >= 0:
+            for j in range(vector_data.shape[1]):
+                if scales[cluster_num, j] > 0:
+                    result[cluster_num, j] += (
+                        vector_data[i, j] / scales[cluster_num, j] / counts[cluster_num]
+                    )
 
     for i in range(result.shape[0]):
-        if counts[i] > 0:
-            result[i] /= counts[i]
+        # A mean stays inside the input range, including rounding at float max.
+        result[i] = np.minimum(1.0, np.maximum(-1.0, result[i])) * scales[i]
 
     return result
