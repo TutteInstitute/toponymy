@@ -72,6 +72,25 @@ Await async operations in the caller's event loop. Sync methods do not create
 hidden loops. Provider batch transports keep their own submission and result
 retrieval behavior; a batch can report per-item failure.
 
+Native batch status polling shares a budget of two retries for transient reads;
+submission is never retried by the wrapper. A failed remote job raises
+``BatchProtocolError`` with its identifier and status. Local wait expiry raises
+``TimeoutError`` through the managed naming API; the low-level wait returns
+``False``. Anthropic's ``canceling`` state is polled until ``ended`` so that
+successful partial results can still be read.
+
+Cancellation attempts to stop the owned job and preserves the original error
+if cleanup fails. It does not purge uploaded inputs, including an upload that
+finished before cancellation was observed. Provider retention remains an
+account policy. Local await deadlines do not forcibly stop synchronous SDK
+threads; SDK network timeouts bound their requests. Polling and result retrieval
+have separate waits, not one deadline covering the entire operation.
+
+Use ``await wrapper.close()`` to release native batch clients. Anthropic closes
+the client it constructs and closes result streams after reading them. Azure
+and Cohere also close an injected client; callers sharing one must coordinate
+that lifecycle.
+
 Convenience factories such as ``OpenAINamer``, ``AnthropicNamer`` and
 ``OllamaNamer`` configure the same wrapper interfaces. Local model integrations
 may require optional packages and separately provisioned model files. Model

@@ -873,6 +873,9 @@ async def test_status_outcomes_remain_distinct_from_request_expiry(
     if outcome == "unknown":
         with pytest.raises(BatchProtocolError, match="Unknown batch status"):
             await transport.wait_for_completion("batch")
+    elif outcome == "failed":
+        with pytest.raises(BatchProtocolError, match="Batch batch ended with status"):
+            await transport.wait_for_completion("batch")
     else:
         assert await transport.wait_for_completion("batch") is False
     assert client.calls == [("retrieve", "batch")]

@@ -2489,7 +2489,7 @@ def CohereNamer(
             FutureWarning,
             stacklevel=2,
         )
-        provider_kwargs = provider_kwargs or {}
+        provider_kwargs = dict(provider_kwargs or {})
         provider_kwargs["httpx_client"] = httpx_client
     return LiteLLMNamer(
         model=_cohere_model(model),
@@ -2603,7 +2603,7 @@ def AsyncCohereNamer(
             FutureWarning,
             stacklevel=2,
         )
-        provider_kwargs = provider_kwargs or {}
+        provider_kwargs = dict(provider_kwargs or {})
         provider_kwargs["httpx_client"] = httpx_client
     return AsyncLiteLLMNamer(
         model=_cohere_model(model),
@@ -2970,8 +2970,8 @@ class HuggingFaceNamer(LLMWrapper):
             ],
             return_full_text=False,
             max_new_tokens=max_tokens,
-            temperature=temperature,
-            do_sample=True,
+            **({"temperature": temperature} if temperature else {}),
+            do_sample=temperature > 0,
             pad_token_id=self.llm.tokenizer.eos_token_id,
         )
         result = response[0]["generated_text"]
@@ -2993,12 +2993,11 @@ class HuggingFaceNamer(LLMWrapper):
             ],
             return_full_text=False,
             max_new_tokens=max_tokens,
-            temperature=temperature,
-            do_sample=True,
+            **({"temperature": temperature} if temperature else {}),
+            do_sample=temperature > 0,
             pad_token_id=self.llm.tokenizer.eos_token_id,
         )
         result = response[0]["generated_text"]
-        print(result)
         return result
 
 
@@ -3039,8 +3038,8 @@ class AsyncHuggingFaceNamer(AsyncLLMWrapper):
                 ],
                 return_full_text=False,
                 max_new_tokens=max_tokens,
-                temperature=temperature,
-                do_sample=True,
+                **({"temperature": temperature} if temperature else {}),
+                do_sample=temperature > 0,
                 pad_token_id=self.llm.tokenizer.eos_token_id,
             )
             responses.append(response[0]["generated_text"])
@@ -3065,8 +3064,8 @@ class AsyncHuggingFaceNamer(AsyncLLMWrapper):
                 ],
                 return_full_text=False,
                 max_new_tokens=max_tokens,
-                temperature=temperature,
-                do_sample=True,
+                **({"temperature": temperature} if temperature else {}),
+                do_sample=temperature > 0,
                 pad_token_id=self.llm.tokenizer.eos_token_id,
             )
             responses.append(response[0]["generated_text"])
@@ -3537,7 +3536,7 @@ class BatchAnthropicNamer(AsyncLLMWrapper):
 
     timeout: int, optional
         The maximum time (in seconds) to wait for the batch job to complete. Default is 7200 seconds (2 hours). If
-        the job does not complete within this time, it will raise a RuntimeError. This is useful to prevent indefinite blocking
+        the job does not complete within this time, it will raise a TimeoutError. This is useful to prevent indefinite blocking
         if the batch job takes too long to process. You can adjust this based on your expected processing time.
 
     Attributes:
@@ -3555,6 +3554,8 @@ class BatchAnthropicNamer(AsyncLLMWrapper):
         Indicates whether the wrapper supports system prompts. For Anthropic, this is always True.
 
     """
+
+    _supports_debug_callback = True
 
     def __init__(
         self,
@@ -3647,28 +3648,43 @@ class BatchAnthropicNamer(AsyncLLMWrapper):
         return await _run_managed_batch(self, prompts, temperature, max_tokens)
 
     async def _wait_for_completion_async(self, batch_id: str) -> bool:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self.timeout
-        while loop.time() < deadline:
-            batch = await asyncio.to_thread(
-                self.client.messages.batches.retrieve, batch_id
-            )
-            if batch.processing_status == "ended":
-                return True
-            if batch.processing_status in ("canceling", "canceled", "expired"):
-                raise LLMBatchItemError(
-                    f"Batch {batch_id} ended with {batch.processing_status}"
-                )
-            await asyncio.sleep(
-                min(self.polling_interval, max(0, deadline - loop.time()))
-            )
-        return False
+        import anthropic
+        from .provider_batches import _wait_for_status
+
+        return await _wait_for_status(
+            self.get_batch_status,
+            batch_id,
+            timeout=self.timeout,
+            request_timeout=min(30, self.timeout),
+            interval=self.polling_interval,
+            retries=2,
+            errors=(anthropic.APIError, TimeoutError, asyncio.TimeoutError),
+            transient_errors=(anthropic.APIConnectionError,),
+            completed="ended",
+            pending={"in_progress", "canceling"},
+            failed={"canceled", "expired"},
+        )
 
     async def _retrieve_batch_results(self, batch_id: str):
-        def retrieve():
-            return list(self.client.messages.batches.results(batch_id))
+        from .provider_batches import _thread_call
 
-        return _ordered_anthropic_results(await asyncio.to_thread(retrieve))
+        def retrieve():
+            stream = self.client.messages.batches.results(batch_id)
+            try:
+                return list(stream)
+            finally:
+                close = getattr(stream, "close", None)
+                if close is not None:
+                    try:
+                        close()
+                    except Exception:
+                        logger.exception(
+                            "Failed to close Anthropic batch result stream"
+                        )
+
+        return _ordered_anthropic_results(
+            await _thread_call(retrieve, timeout=self.timeout)
+        )
 
     # Additional methods for non-blocking usage
     def submit_batch(self, prompts, temperature, max_tokens) -> str:
@@ -3724,6 +3740,12 @@ class BatchAnthropicNamer(AsyncLLMWrapper):
                 "prompts": normalized,
             }
         )
+        from .provider_batches import (
+            _check_submission_cancelled,
+            _submission_cancel_event,
+        )
+
+        _check_submission_cancelled(_submission_cancel_event.get())
         return self.client.messages.batches.create(requests=requests).id
 
     def get_batch_status(self, batch_id: str) -> str:
@@ -3737,6 +3759,9 @@ class BatchAnthropicNamer(AsyncLLMWrapper):
 
     def cancel_batch(self, batch_id: str):
         return self.client.messages.batches.cancel(batch_id)
+
+    async def close(self):
+        await asyncio.to_thread(self.client.close)
 
 
 # Ollama
@@ -4053,7 +4078,7 @@ def OpenAINamer(
             FutureWarning,
             stacklevel=2,
         )
-        provider_kwargs = provider_kwargs or {}
+        provider_kwargs = dict(provider_kwargs or {})
         provider_kwargs["http_client"] = http_client
     return LiteLLMNamer(
         model=_openai_model(model),
@@ -4177,7 +4202,7 @@ def AsyncOpenAINamer(
             FutureWarning,
             stacklevel=2,
         )
-        provider_kwargs = provider_kwargs or {}
+        provider_kwargs = dict(provider_kwargs or {})
         provider_kwargs["organization"] = organization
     return AsyncLiteLLMNamer(
         model=_openai_model(model),

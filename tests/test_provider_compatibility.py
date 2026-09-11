@@ -418,7 +418,13 @@ async def test_anthropic_batch_sdk_lifecycle_and_alignment(monkeypatch):
             )
         )
 
-    monkeypatch.setitem(sys.modules, "anthropic", SimpleNamespace(Anthropic=client))
+    monkeypatch.setitem(
+        sys.modules,
+        "anthropic",
+        SimpleNamespace(
+            Anthropic=client, APIError=Exception, APIConnectionError=ConnectionError
+        ),
+    )
     namer = wrappers.BatchAnthropicNamer("fixture", polling_interval=0.01, timeout=1)
     assert await namer.generate_topic_names(
         [Prompt("sys", "first"), Prompt("sys", "second")]

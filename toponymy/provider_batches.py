@@ -485,6 +485,7 @@ async def _wait_for_status(
     completed: str,
     pending: set[str],
     failed: set[str],
+    transient_errors: tuple[type[Exception], ...] = (),
 ) -> bool:
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -502,14 +503,20 @@ async def _wait_for_status(
                 isinstance(error, _ThreadCallTimeout) and remaining <= request_timeout
             ) or deadline <= loop.time():
                 return False
-            if not _transient(error) or remaining_retries == 0:
+            if remaining_retries == 0 or not (
+                _transient(error) or isinstance(error, transient_errors)
+            ):
                 raise
             remaining_retries -= 1
         else:
+            if deadline <= loop.time():
+                return False
             if status == completed:
                 return True
             if status in failed:
-                return False
+                raise BatchProtocolError(
+                    f"Batch {batch_id} ended with status {status!r}"
+                )
             if status not in pending:
                 raise BatchProtocolError(f"Unknown batch status {status!r}")
         await asyncio.sleep(min(interval, max(0, deadline - loop.time())))
@@ -826,6 +833,8 @@ class AzureBatchTransport:
     def submit_batch(
         self, prompts: Sequence[Prompt], temperature: float, max_tokens: int
     ) -> str:
+        event = _submission_cancel_event.get()
+        _check_submission_cancelled(event)
         rows = _requests(
             prompts,
             temperature,
@@ -837,9 +846,11 @@ class AzureBatchTransport:
             supports_json_schema=self.supports_json_schema,
         )
         with io.BytesIO(_jsonl(rows)) as data:
+            _check_submission_cancelled(event)
             data.name = "toponymy-batch.jsonl"
             uploaded = self.client.files.create(file=data, purpose="batch")
         file_id = _identifier(_field(uploaded, "id"), "Azure input file ID")
+        _check_submission_cancelled(event)
         batch = self.client.batches.create(
             input_file_id=file_id, endpoint="/chat/completions", completion_window="24h"
         )
