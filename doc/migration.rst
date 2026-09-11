@@ -67,22 +67,31 @@ same names and fields. Numba's process-wide runtime type cache can confuse
 these classes when both libraries fit in one process. Isolation keeps both
 algorithms usable without changing their kernels or suppressing failures.
 
-The adapter preserves EVoC's naturally selected layers and returns its actual
-fitted model as ``evoc_``. Input passes through a temporary memory-mapped file;
+The adapter preserves EVoC's naturally selected layers. ``evoc_`` contains its
+fitted data and constructor values in a ``types.SimpleNamespace``, including
+the native tree materialized inside the fit process. It is no longer an EVoC
+estimator: use the adapter's ``fit``/``fit_predict`` for refits and
+``get_params``/``set_params`` for configuration. This prevents copied or
+unpickled fitted state from accidentally executing native kernels in the parent.
+The adapter's ``fit_predict`` returns ``(layers, tree)``. For the selected label
+vector previously returned by native ``evoc_.fit_predict(X)``, use
+``adapter.fit(X).evoc_.labels_``.
+Input passes through a temporary memory-mapped file;
 the process and temporary files are cleaned up after completion or interruption.
 On Windows, interruption uses ``taskkill /T /F`` to stop the interpreter tree
 before removing the mapped input and inherited log. Waiting for a virtual
 environment's launcher alone can race those file handles. The adapter does not
 provide a total fit deadline or a guarantee about delivery of OS console signals.
-Failure of the system termination command is reported as a cleanup error.
+If termination or file cleanup fails, the initiating exception remains primary
+and the cleanup error is chained to it. Cleanup cannot be guaranteed when the
+operating system refuses termination or file removal.
 The additional interpreter startup, compilation, disk space and model handoff
 costs apply to every fit. Child failures propagate with their error output.
 The caller's environment and thread settings are inherited unchanged.
 
 ``EVoCClusterer(isolated=False)`` opts into direct fitting for a process where
-only EVoC executes clustering kernels. Accessing fitted attributes on ``evoc_``
-is supported; directly calling its kernel-executing methods bypasses isolation.
-Use the adapter's ``fit`` method when refitting alongside PLSCAN.
+only EVoC executes clustering kernels. It returns the same data-only ``evoc_``
+contract. Use the default isolated adapter when refitting alongside PLSCAN.
 
 Staged naming
 -------------

@@ -14,7 +14,7 @@ from toponymy import _evoc
 from toponymy.clustering import EVoCClusterer, PLSCANClusterer, validate_cluster_tree
 
 
-def test_evoc_default_isolation_preserves_external_model(monkeypatch):
+def test_evoc_default_isolation_preserves_fitted_data(monkeypatch):
     calls = []
     fitted = SimpleNamespace(
         cluster_layers_=[np.array([4, 4, 9, 9, -1, -1])],
@@ -226,6 +226,7 @@ class MappedExternalEVoC:
         assert vectors.flags.writeable
         vectors[0, 0] = 99
         self.cluster_layers_ = [np.zeros(len(vectors), dtype=np.int64)]
+        self.cluster_tree_ = {(1, 0): [(0, 0)]}
         return self
 
 
@@ -239,7 +240,9 @@ def test_child_uses_copy_on_write_mapped_input(monkeypatch, tmp_path):
     np.testing.assert_array_equal(np.load(tmp_path / "vectors.npy"), source)
     with (tmp_path / "model.pkl").open("rb") as stream:
         model = pickle.load(stream)
-    assert isinstance(model, MappedExternalEVoC)
+    assert isinstance(model, SimpleNamespace)
+    assert not hasattr(model, "fit")
+    assert model.cluster_tree_ == {(1, 0): [(0, 0)]}
     assert model.options == {"random_state": 31}
 
 
@@ -267,7 +270,10 @@ def test_real_adapters_coexist_in_both_fit_orders(evoc_first):
         assert adapter.cluster_layers_
         assert all(len(layer.labels) == len(vectors) for layer in adapter)
         validate_cluster_tree(adapter.cluster_tree_, adapter.cluster_layers_)
-    assert isinstance(evoc.evoc_, EVoC)
+    assert not isinstance(evoc.evoc_, EVoC)
+    assert isinstance(evoc.evoc_.cluster_tree_, dict)
+    assert not hasattr(evoc.evoc_, "fit")
+    assert not hasattr(evoc.evoc_, "fit_predict")
     assert hasattr(evoc.evoc_, "membership_strength_layers_")
     assert hasattr(evoc.evoc_, "nn_inds_")
     np.testing.assert_array_equal(vectors, original)

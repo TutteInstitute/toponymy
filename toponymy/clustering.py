@@ -552,7 +552,7 @@ class EVoCClusterer(Clusterer):
     isolated : bool, default=True
         Fit EVoC in a fresh Python process to avoid a Numba type-cache collision
         with fast_hdbscan. Input is handed off through a temporary memory-mapped
-        file, and the fitted EVoC object is returned. This adds process startup,
+        file, and the fitted EVoC data is returned. This adds process startup,
         compilation and disk I/O costs. Set False only when EVoC is the sole
         clustering library executing Numba kernels in this process.
 
@@ -564,11 +564,11 @@ class EVoCClusterer(Clusterer):
     cluster_tree_ : Dict[Tuple[int, int], List[Tuple[int, int]]]
         A dictionary representing the cluster tree.
 
-    evoc_ : EVoC
-        The fitted EVoC object. Algorithm specific attributes saved
-        during the fit process can be accessed here. Calling its methods that
-        execute EVoC kernels directly is not isolated; call this adapter's fit
-        method to fit again safely alongside fast_hdbscan.
+    evoc_ : types.SimpleNamespace or None
+        Fitted native data and constructor values, including the materialized
+        native cluster_tree_. This container has no estimator methods. Use this
+        adapter's fit or fit_predict to refit, and get_params or set_params to
+        manage configuration. None when the input is too small for EVoC.
 
     """
 
@@ -638,8 +638,9 @@ class EVoCClusterer(Clusterer):
 
             estimator = fit_isolated(vectors, options)
         else:
-            estimator = EVoC(**options)
-            estimator.fit(vectors)
+            from toponymy._evoc import _fitted_state
+
+            estimator = _fitted_state(EVoC(**options).fit(vectors))
         self._set_labels(estimator.cluster_layers_)
         self.evoc_ = estimator
         return self

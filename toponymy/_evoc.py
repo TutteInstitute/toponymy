@@ -12,6 +12,7 @@ import pickle
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -59,14 +60,16 @@ def _failure_output(path):
 
 
 def fit_isolated(vectors, options):
-    """Return the actual fitted EVoC object, or propagate a child failure.
+    """Return fitted EVoC data, or propagate a child failure.
 
     A fresh interpreter avoids the process-global Numba namedtuple fingerprint
     collision between EVoC and fast_hdbscan. The caller's environment and thread
     settings are inherited unchanged. No kernels or library globals are patched.
     """
-    with TemporaryDirectory(prefix="toponymy-evoc-") as directory:
-        work = Path(directory)
+    directory = TemporaryDirectory(prefix="toponymy-evoc-")
+    failure = None
+    try:
+        work = Path(directory.name)
         np.save(work / "vectors.npy", vectors, allow_pickle=False)
         with (work / "options.pkl").open("wb") as stream:
             pickle.dump(options, stream, protocol=pickle.HIGHEST_PROTOCOL)
@@ -88,8 +91,13 @@ def fit_isolated(vectors, options):
             )
             try:
                 returncode = process.wait()
-            except BaseException:
-                _stop_child(process)
+            except BaseException as error:
+                try:
+                    _stop_child(process)
+                except Exception as cleanup_error:
+                    if cleanup_error.__context__ is error:
+                        cleanup_error.__context__ = None
+                    raise error from cleanup_error
                 raise
         if returncode:
             output = _failure_output(work / "child.log")
@@ -99,6 +107,31 @@ def fit_isolated(vectors, options):
             ) from failure
         with (work / "model.pkl").open("rb") as stream:
             return pickle.load(stream)
+    except BaseException as error:
+        failure = error
+        raise
+    finally:
+        try:
+            directory.cleanup()
+        except OSError as cleanup_error:
+            if failure is not None:
+                # Keep the child/termination failure when file removal also fails.
+                previous = failure.__cause__
+                if previous is None and not failure.__suppress_context__:
+                    previous = failure.__context__
+                cleanup_error.__cause__ = previous
+                if cleanup_error.__context__ is failure:
+                    cleanup_error.__context__ = None
+                raise failure from cleanup_error
+            raise
+
+
+def _fitted_state(estimator):
+    # Evaluate the native lazy property while still inside the fit boundary.
+    tree = estimator.cluster_tree_
+    state = SimpleNamespace(**vars(estimator))
+    state.cluster_tree_ = tree
+    return state
 
 
 def _fit_child(directory):
@@ -112,7 +145,7 @@ def _fit_child(directory):
     vectors = np.load(work / "vectors.npy", mmap_mode="c", allow_pickle=False)
     estimator = EVoC(**options).fit(vectors)
     with (work / "model.pkl").open("wb") as stream:
-        pickle.dump(estimator, stream, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump(_fitted_state(estimator), stream, protocol=pickle.HIGHEST_PROTOCOL)
     # Process exit closes the mapping before the parent removes the directory.
 
 
