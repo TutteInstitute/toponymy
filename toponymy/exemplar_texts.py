@@ -626,12 +626,11 @@ def diverse_exemplars(
             indices.append([])
             continue
 
+        cluster_object_vectors = object_vectors[cluster_mask]
         centroid = _center_vectors(
-            _mean_vector(object_vectors[cluster_mask])[None, :], null_topic
+            _mean_vector(cluster_object_vectors)[None, :], null_topic
         )[0]
-        cluster_object_vectors = _center_vectors(
-            object_vectors[cluster_mask], null_topic
-        )
+        cluster_object_vectors = _center_vectors(cluster_object_vectors, null_topic)
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
             exemplar_distances = distance_to_vector(

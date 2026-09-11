@@ -8,7 +8,11 @@ import pytest
 from toponymy import Toponymy
 from toponymy.feature_extraction import TextExemplarExtractor
 from toponymy.keyphrases import create_tokenizers_ngrammer
-from toponymy.utility_functions import centroids_from_labels, diversify_max_alpha
+from toponymy.utility_functions import (
+    _mean_vector,
+    centroids_from_labels,
+    diversify_max_alpha,
+)
 
 
 @pytest.mark.parametrize("encoded_object", [False, True])
@@ -126,3 +130,44 @@ def test_centroid_coordinates_keep_independent_finite_scales():
     np.testing.assert_array_equal(
         centroids_from_labels(np.array([0, 0]), vectors), vectors[:1]
     )
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("weighted", [False, True])
+def test_stable_mean_preserves_independent_coordinates_and_readonly_inputs(
+    dtype, weighted
+):
+    largest = np.finfo(dtype).max
+    smallest = np.nextafter(dtype(0), dtype(1))
+    # Cancellation, constant extreme/subnormal coordinates, ordinary values and
+    # zero columns have independent analytic means. The view is non-contiguous.
+    storage = np.zeros((4, 12), dtype=dtype)
+    storage[:, ::2] = [
+        [-largest, largest, smallest, 2, 0, -0.0],
+        [largest, largest, smallest, 6, 0, -0.0],
+        [-largest, largest, smallest, 2, 0, -0.0],
+        [largest, largest, smallest, 6, 0, -0.0],
+    ]
+    vectors = storage[:, ::2]
+    vectors.flags.writeable = False
+    before = storage.tobytes()
+    weights = np.array([1.0, 3.0, 1.0, 3.0]) if weighted else None
+    if weights is not None:
+        weights.flags.writeable = False
+        weights_before = weights.tobytes()
+    expected = [
+        float(largest) * 0.5 if weighted else 0,
+        largest,
+        smallest,
+        5 if weighted else 4,
+        0,
+        0,
+    ]
+    result = _mean_vector(vectors, weights)
+    np.testing.assert_allclose(result, expected, rtol=2e-15, atol=0)
+    assert np.isfinite(result).all()
+    assert storage.tobytes() == before
+    assert not vectors.flags.writeable
+    if weights is not None:
+        assert weights.tobytes() == weights_before
+        assert not weights.flags.writeable

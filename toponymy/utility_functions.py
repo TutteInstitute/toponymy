@@ -33,9 +33,10 @@ def _mean_vector(vectors, weights=None):
     # Remove common offsets before averaging their much smaller differences.
     anchor = lower * 0.5 + upper * 0.5
     shifted = vectors - anchor
-    scales = np.max(np.abs(shifted), axis=0, initial=0.0)
-    scaled = np.divide(shifted, scales, out=np.zeros_like(shifted), where=scales != 0)
-    mean = np.average(scaled, axis=0, weights=weights)
+    # The largest deviation lies at an endpoint; avoid another matrix temporary.
+    scales = np.maximum(np.abs(lower - anchor), np.abs(upper - anchor))
+    np.divide(shifted, scales, out=shifted, where=scales != 0)
+    mean = np.average(shifted, axis=0, weights=weights)
     with np.errstate(over="ignore"):
         return np.clip(anchor + np.clip(mean, -1.0, 1.0) * scales, lower, upper)
 
