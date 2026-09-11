@@ -21,6 +21,31 @@ def _normalize_rows(vectors):
     return result
 
 
+def _mean_vector(vectors, weights=None):
+    """A finite mean with independent coordinate scales and optional weights."""
+    vectors = np.asarray(vectors, dtype=np.float64)
+    lower, upper = vectors.min(axis=0), vectors.max(axis=0)
+    # Remove common offsets before averaging their much smaller differences.
+    anchor = lower * 0.5 + upper * 0.5
+    shifted = vectors - anchor
+    scales = np.max(np.abs(shifted), axis=0, initial=0.0)
+    scaled = np.divide(shifted, scales, out=np.zeros_like(shifted), where=scales != 0)
+    mean = np.average(scaled, axis=0, weights=weights)
+    with np.errstate(over="ignore"):
+        return np.clip(anchor + np.clip(mean, -1.0, 1.0) * scales, lower, upper)
+
+
+def _center_vectors(vectors, center):
+    """Center cosine inputs, scaling only rows whose subtraction overflows."""
+    vectors = np.asarray(vectors, dtype=np.float64)
+    with np.errstate(over="ignore"):
+        centered = vectors - center
+    overflow = ~np.isfinite(centered).all(axis=1)
+    if np.any(overflow):
+        centered[overflow] = vectors[overflow] * 0.5 - center * 0.5
+    return centered
+
+
 @numba.njit(cache=True)
 def distance_to_vector(vector, other_vectors):
     """Cosine distances, including finite vectors at very small or large scales."""

@@ -11,7 +11,11 @@ from scipy.spatial.distance import squareform
 from sklearn.exceptions import NotFittedError
 
 from .clustering import PLSCANClusterer, validate_cluster_tree
-from .feature_extraction import TextExemplarExtractor, TextKeyphraseExtractor
+from .feature_extraction import (
+    TextExemplarExtractor,
+    TextKeyphraseExtractor,
+    SubtopicExtractor,
+)
 from .serialization import Topic, TopicModel
 from .templates import Prompt, TextTemplate
 from .utility_functions import _normalize_rows
@@ -227,6 +231,17 @@ class Toponymy:
                     extractor.fit(self.objects_, self._fitted_clusterer)
                 else:
                     extractor.predict()
+                if (
+                    isinstance(extractor, SubtopicExtractor)
+                    and self.embedding_model is None
+                ):
+                    if any(
+                        extractor._name_embedding_keys(i, self._fitted_clusterer)
+                        for i in range(1, len(self.cluster_layers_))
+                    ):
+                        raise ValueError(
+                            "Semantic subtopics require a text embedding model"
+                        )
                 continue
             options = {"embedding_vectors": self.embedding_vectors_}
             if isinstance(extractor, TextKeyphraseExtractor):
@@ -293,8 +308,21 @@ class Toponymy:
         if layer.layer_index not in self._prepared_naming_layers:
             for extractor in self.feature_extractors:
                 if extractor.layer_dependent:
+                    options = {}
+                    if isinstance(extractor, SubtopicExtractor):
+                        keys = extractor._name_embedding_keys(
+                            layer.layer_index, self._fitted_clusterer
+                        )
+                        if keys:
+                            vectors = self._ensure_name_embeddings(
+                                [self.topics_[key] for key in keys]
+                            )
+                            options["topic_name_embeddings"] = dict(zip(keys, vectors))
                     values = extractor.extract_layer(
-                        layer.layer_index, self.topics_, self._fitted_clusterer
+                        layer.layer_index,
+                        self.topics_,
+                        self._fitted_clusterer,
+                        **options,
                     )
                     self._assign_features(extractor.feature_key, layer, values)
             self._make_prompts(layer)

@@ -198,6 +198,38 @@ the parent naming request. It does not fall back to the child's name.
 The selectable source replaces the former summary-layer ownership of child
 summaries and explanations; it selects one field for each extractor.
 
+Semantic subtopics
+~~~~~~~~~~~~~~~~~
+
+Set ``SubtopicExtractor(selection_method="central")`` to rank base-layer topic
+names by their centered cosine direction within each parent. The other semantic
+methods are ``information_weighted``, ``facility_location`` and
+``saturated_coverage``. They use the pipeline's retained name embeddings and
+require a text embedding model when an upper layer has base-topic evidence.
+Empty, all-noise and single-layer workflows need no extra model. The default
+``selection_method="size"`` retains the direct-child behavior above.
+
+Semantic candidates are base topics overlapping a parent, with sparse original
+IDs preserved. Their selection order populates ``cluster_subtopics["misc"]``;
+``major`` and ``minor`` are empty. ``source`` chooses the selected topic's name,
+summary or explanation, while ranking always uses name vectors. Duplicate output
+text appears once. Information weighting requires a base topic to overlap at
+most one non-noise parent per layer; ``prepare`` rejects crossing assignments
+before naming. Central and submodular methods permit such shared evidence.
+
+The retained low-level ``subtopics`` functions still use parent labels as list
+indices and child labels as vocabulary indices. Empty parent slots are lists
+for name functions and strings for summary functions. Summary bundles preserve
+``name + "\n" + summary + "\n" + explanation``, joined with ``"\n--\n"``.
+Central cosine-distance ties and information-score ties use increasing child ID;
+submodular ties follow the installed selector. Information weighting uses central
+representatives when there is no contrast or no usable information score;
+it does not invent a placeholder topic. Dictionary learning keeps the raw L1
+objective and rejects magnitudes whose squared objective exceeds float64 range.
+Use a cosine method for those extreme inputs instead of silently normalizing
+the dictionary objective. ``n_subtopics`` and ``diversify_alpha`` retain their
+selection cap and cosine diversification roles.
+
 Stored results
 ~~~~~~~~~~~~~~
 

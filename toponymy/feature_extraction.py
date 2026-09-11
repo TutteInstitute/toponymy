@@ -340,7 +340,7 @@ KeyphraseExtractor = TextKeyphraseExtractor
 
 
 class SubtopicExtractor(FeatureExtractorBase):
-    """Use direct children's evidence, ordered by size and stable key.
+    """Select lower-topic evidence by size or the semantics of base-topic names.
 
     The validated containment tree supplies children even when crossing
     partitions cause an edge to skip a layer. Naming the lower layers first is
@@ -348,34 +348,161 @@ class SubtopicExtractor(FeatureExtractorBase):
     ``source`` selects each child's ``name`` (the default), ``summary`` or
     ``explanation``. The selected field must be available and nonempty;
     summary evidence therefore requires a summary-producing naming template.
+    Semantic methods rank base topics overlapping each parent, using name vectors
+    even when another evidence field is selected. Information weighting requires
+    each base topic to overlap at most one non-noise parent in a layer.
     """
 
     feature_key = "cluster_subtopics"
     feature_return_type = dict
     layer_dependent = True
 
-    def __init__(self, n_subtopics=64, *, source="name"):
+    def __init__(
+        self,
+        n_subtopics=64,
+        *,
+        source="name",
+        selection_method="size",
+        diversify_alpha=1.0,
+    ):
         self.n_subtopics = n_subtopics
         self.source = source
+        self.selection_method = selection_method
+        self.diversify_alpha = diversify_alpha
+
+    @property
+    def requires_name_embeddings(self):
+        return self.selection_method != "size"
 
     def _validate_configuration(self):
         _positive_integer(self.n_subtopics, "n_subtopics")
         if self.source not in ("name", "summary", "explanation"):
             raise ValueError("source must be 'name', 'summary' or 'explanation'")
+        if self.selection_method not in (
+            "size",
+            "central",
+            "information_weighted",
+            "facility_location",
+            "saturated_coverage",
+        ):
+            raise ValueError("Unknown subtopic selection_method")
+        if not np.isfinite(self.diversify_alpha) or self.diversify_alpha < 0:
+            raise ValueError("diversify_alpha must be finite and nonnegative")
+
+    def _name_embedding_keys(self, layer_index, clusterer):
+        """Base vocabulary needed by this semantic layer, including background topics."""
+        layers = list(clusterer)
+        if not self.requires_name_embeddings or not layer_index:
+            return []
+        if not np.any((layers[0].labels >= 0) & (layers[layer_index].labels >= 0)):
+            return []
+        return [(0, cluster.label) for cluster in layers[0]]
+
+    @staticmethod
+    def _semantic_groups(layer_index, layers):
+        from .subtopics import _subtopic_groups
+
+        n_objects = len(layers[0].labels)
+        base, base_ids = _dense_labels(layers[0].labels, n_objects)
+        parents, _ = _dense_labels(layers[layer_index].labels, n_objects)
+        return _subtopic_groups(parents, base, len(base_ids)), base_ids
 
     def fit(self, objects, clusterer, **configuration):
         self._validate_configuration()
+        layers = list(clusterer)
+        if self.selection_method == "information_weighted":
+            from .subtopics import _parent_classes
+
+            for layer_index in range(1, len(layers)):
+                groups, base_ids = self._semantic_groups(layer_index, layers)
+                _parent_classes(groups, len(base_ids))
         self.features_ = [
-            [{"major": [], "minor": [], "misc": []} for _ in layer]
-            for layer in clusterer
+            [{"major": [], "minor": [], "misc": []} for _ in layer] for layer in layers
         ]
         return self
 
-    def extract_layer(self, layer_index, topics, clusterer):
+    def extract_layer(
+        self, layer_index, topics, clusterer, *, topic_name_embeddings=None
+    ):
         self._validate_configuration()
         layers = list(clusterer)
         if not 0 <= layer_index < len(layers):
             raise ValueError("Invalid layer index")
+        if self.requires_name_embeddings:
+            features = self._semantic_features(
+                layer_index, topics, layers, topic_name_embeddings
+            )
+        else:
+            features = self._size_features(layer_index, topics, clusterer, layers)
+        if self.features is None or len(self.features_) != len(layers):
+            self.fit([], layers)
+        self.features_[layer_index] = features
+        return features
+
+    def _semantic_features(self, layer_index, topics, layers, embeddings):
+        from .subtopics import (
+            _central_selections,
+            _submodular_selections,
+            _information_selections,
+            _parent_classes,
+        )
+
+        groups, base_ids = self._semantic_groups(layer_index, layers)
+        if not layer_index or not any(len(ids) for ids in groups):
+            return [{"major": [], "minor": [], "misc": []} for _ in layers[layer_index]]
+        classes = (
+            _parent_classes(groups, len(base_ids))
+            if self.selection_method == "information_weighted"
+            else None
+        )
+        keys = [(0, int(label)) for label in base_ids]
+        if embeddings is None or any(key not in embeddings for key in keys):
+            raise ValueError("Semantic subtopics require base topic name embeddings")
+        for key in keys:
+            topic = topics.get(key)
+            name = (
+                topic.get("name")
+                if isinstance(topic, dict)
+                else getattr(topic, "name", None)
+            )
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError(
+                    f"Subtopic {key} must be named before semantic selection"
+                )
+        vectors = _vectors(np.stack([embeddings[key] for key in keys]), len(keys))
+        if self.selection_method == "central":
+            selections = _central_selections(
+                groups, vectors, self.n_subtopics, self.diversify_alpha
+            )
+        elif self.selection_method == "information_weighted":
+            selections = _information_selections(
+                groups, classes, vectors, self.n_subtopics, self.diversify_alpha
+            )
+        else:
+            selections = _submodular_selections(
+                groups, vectors, self.n_subtopics, self.selection_method
+            )
+        features = []
+        for indices in selections:
+            values = []
+            for index in indices:
+                key = keys[index]
+                topic = topics[key]
+                value = (
+                    topic.get(self.source)
+                    if isinstance(topic, dict)
+                    else getattr(topic, self.source, None)
+                )
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"Subtopic {key} requires a nonempty {self.source} before extracting layer {layer_index}"
+                    )
+                if value not in values:
+                    values.append(value)
+            features.append({"major": [], "minor": [], "misc": values})
+        return features
+
+    def _size_features(self, layer_index, topics, clusterer, layers):
         tree = clusterer.cluster_tree_
         cluster_lookup = {
             (i, cluster.label): cluster
@@ -417,9 +544,6 @@ class SubtopicExtractor(FeatureExtractorBase):
                 if len(values) == self.n_subtopics:
                     break
             features.append({"major": values, "minor": [], "misc": []})
-        if self.features is None or len(self.features_) != len(layers):
-            self.fit([], layers)
-        self.features_[layer_index] = features
         return features
 
 
