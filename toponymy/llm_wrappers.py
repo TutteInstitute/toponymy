@@ -13,7 +13,7 @@ from toponymy.tools.notebook_test_helpers import (
 )
 from toponymy._utils import resolve_api_key
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
+from typing import List, Optional, Dict, Generic, TypeVar, Callable, Any
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -204,31 +204,6 @@ class LLMErrorHandlingMixin:
                 str(e)[:200],
             )
             return CallResult(error=e)
-
-    def _raise_fail_fast_from_batch_error(self, error) -> None:
-        """
-        Handle a provider-level error surfaced from a batch response item.
-
-        Some provider batch APIs return errors inline as response fields rather than raising.
-        This method provides a hook for subclasses to inspect those inline errors
-        and raise FailFastLLMError if appropriate.
-
-        A subclass that uses a batch API should override this method to handle
-        provider-specific error formats. Subclasses that do not use a batch API
-        do not need to override this method.
-
-        Parameters:
-        -----------
-        error:
-            The provider-specific error object from a batch response item.
-            If None, the method returns immediately.
-        """
-        if error is None:
-            return
-        warn(
-            f"{self.__class__.__name__} received a batch item error but did not "
-            f"override _raise_fail_fast_from_batch_error: {error}"
-        )
 
 
 class DebugCallbackMixin:
@@ -1060,32 +1035,6 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return await asyncio.gather(*tasks)
 
-    async def _call_llm_batch_for_prompts(
-        self,
-        prompts: List[Dict[str, Any]],
-        temperature: float,
-        max_tokens: int,
-    ) -> List[CallResult[str]]:
-        """
-        Send a batch of prompts using whichever rendering this wrapper's provider
-        supports.
-
-        This is the single point at which a prompt's renderings are resolved down to
-        one provider call, so that everything upstream of the wrapper can stay
-        provider agnostic.
-        """
-        supports_system_prompts = self.supports_system_prompts
-        prompts = [
-            validate_prompt(prompt, supports_system_prompts) for prompt in prompts
-        ]
-
-        if supports_system_prompts:
-            return await self._call_llm_with_system_prompt_batch(
-                prompts, temperature, max_tokens=max_tokens
-            )
-
-        return await self._call_llm_batch(prompts, temperature, max_tokens=max_tokens)
-
     async def generate_topic_names(
         self,
         prompts: List[Prompt | str | dict],
@@ -1253,13 +1202,6 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             if result.error is not None:
                 raise result.error
         return [result.value for result in results]
-
-    def _parse_cluster_response(
-        self, response, old_names, extract_topic_names_function, get_topic_names_regex
-    ):
-        return extract_topic_names_function(
-            llm_output_to_result(response, get_topic_names_regex), old_names, response
-        )
 
     @property
     def supports_system_prompts(self) -> bool:
@@ -1728,7 +1670,6 @@ class LiteLLMNamer(LLMWrapper):
             "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
         )
         self.use_json_object = use_json_object  # set by user
-        self._resolved_use_json_object: bool | None = None  # set internally
         self.disable_system_prompts = disable_system_prompts
         self._system_prompt_capability: bool | None = None
         self.max_tokens_topic_name = max_tokens_topic_name
@@ -2008,7 +1949,6 @@ class AsyncLiteLLMNamer(AsyncLLMWrapper):
         self.semaphore = asyncio.Semaphore(max_concurrent_requests)
 
         self.use_json_object = use_json_object
-        self._resolved_use_json_object: bool | None = None
         self.disable_system_prompts = disable_system_prompts
         self._system_prompt_capability: bool | None = None
         self.max_tokens_topic_name = max_tokens_topic_name

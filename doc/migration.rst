@@ -230,6 +230,17 @@ Use a cosine method for those extreme inputs instead of silently normalizing
 the dictionary objective. ``n_subtopics`` and ``diversify_alpha`` retain their
 selection cap and cosine diversification roles.
 
+Custom provider subclasses
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The unused private hooks ``_raise_fail_fast_from_batch_error``,
+``_call_llm_batch_for_prompts`` and ``_parse_cluster_response`` are removed.
+They no longer participate in generation. Implement the existing
+``_call_single_llm*`` methods or a concrete ``_call_llm*batch`` transport;
+use ``response_parser`` for structured-result customization. Managed batch
+transports associate item errors with their results. The small LiteLLM
+``_should_use_json_object`` compatibility queries remain available.
+
 Keyphrase and exemplar vectors
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
