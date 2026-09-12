@@ -142,6 +142,28 @@ Clusterer fits no longer accept runtime layer classes or naming configuration;
 configure those on ``Toponymy``. The unused ``next_cluster_size_quantile`` and
 ``show_progress_bar`` adapter options are removed; use ``verbose`` for progress.
 
+Prepared extractor ownership
+----------------------------
+
+``feature_extractors`` contains the configured extractors; ``feature_extractors_``
+contains those used by the current prepared run. Layer-dependent extractors run
+later, so automatically fitted instances are cloned with scikit-learn and
+separately fitted instances are deep copied with their learned state. Independent
+prepared pipelines can therefore reuse a configured extractor without replacing
+one another's deferred inputs. Custom extractors that own resources can implement
+``__sklearn_clone__`` or ``__deepcopy__`` while preserving this isolation. A copy
+failure is reported before clustering. Immediate extractors keep their existing
+fit behavior; their completed feature outputs are copied into topic state.
+
+A custom extractor can declare ``requires_embedder = True`` for an unconditional
+text-embedding requirement. ``Toponymy`` then validates ``text_embedding_model``
+at construction and passes it as ``embedder=`` when automatically fitting the
+extractor. Built-in keyphrase and subtopic requirements still depend on supplied
+features and fitted hierarchy, and are checked before naming. Precomputed
+keyphrase vectors and workflows that need no new name vectors remain supported.
+
+Use ``TextKeyphraseExtractor`` as the public text-keyphrase extractor name.
+
 Prompts and persistence
 -----------------------
 
@@ -243,6 +265,10 @@ transports associate item errors with their results. The small LiteLLM
 
 Keyphrase and exemplar vectors
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The low-level ``diverse_exemplars`` function no longer accepts
+``centroid_vectors``. It computes centroids internally from the supplied
+object vectors and cluster membership.
 
 ``KeyphraseBuilder`` clears fitted attributes before a refit and installs its
 matrix, vocabulary and vectors together after successful validation. Empty input

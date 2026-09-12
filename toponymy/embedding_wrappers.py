@@ -1,12 +1,12 @@
 import os
 import numpy as np
-from numpy.typing import NDArray
 from tqdm.auto import tqdm
 import httpx
 
 
-from typing import Optional, List, Protocol, Sequence
+from typing import Optional, List
 from toponymy._utils import handle_verbose_params, resolve_api_key
+from toponymy.types import TextEmbedderProtocol
 
 
 def _embedding_matrix(vectors, count):
@@ -46,18 +46,6 @@ def _ordered_embeddings(rows, count):
     if any(vector is missing for vector in vectors):
         raise ValueError("Embedding response is missing an input index")
     return _embedding_matrix(vectors, count)
-
-
-class TextEmbedderProtocol(Protocol):
-    """Protocol defining the minimal interface required by a text embedder."""
-
-    def encode(
-        self,
-        texts: Sequence[str],
-        show_progress_bar: Optional[bool],
-        *args,
-        **kwargs,
-    ) -> NDArray[np.floating]: ...
 
 
 # Cohere

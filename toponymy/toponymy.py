@@ -8,6 +8,7 @@ import numpy as np
 from scipy import sparse
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
+from sklearn.base import clone
 from sklearn.exceptions import NotFittedError
 
 from .clustering import PLSCANClusterer, validate_cluster_tree
@@ -35,7 +36,7 @@ def _matrix(values, rows, name):
 class Toponymy:
     """Cluster objects, extract evidence, then name topics layer by layer.
 
-    Call prepare to inspect features and initial prompts without provider
+    Call prepare to inspect features and initial prompts without naming provider
     requests. name_topics completes naming, including dependent layers.
     Each fit owns fresh topic state; matrices are borrowed read-only views.
     Callers must not mutate those matrices while fitting or using the result.
@@ -90,6 +91,15 @@ class Toponymy:
             raise ValueError("Every feature extractor needs a nonempty feature_key")
         if len(keys) != len(set(keys)):
             raise ValueError("Feature extractors must have distinct feature_key values")
+        for extractor in self.feature_extractors:
+            if (
+                getattr(extractor, "requires_embedder", False)
+                and self.embedding_model is None
+            ):
+                raise ValueError(
+                    f"Extractor {extractor.feature_key!r} requires a text embedding "
+                    "model; pass text_embedding_model or remove the extractor"
+                )
         self.feature_options = (
             {}
             if feature_options is None
@@ -123,7 +133,14 @@ class Toponymy:
         *,
         object_vectors=None,
     ):
-        """Build inspectable topic evidence without calling the naming provider."""
+        """Build inspectable topic evidence without calling the naming provider.
+
+        Layer-dependent extractors are owned by this prepared fit: automatically
+        fitted estimators are cloned, and separately fitted estimators are deep
+        copied with their learned state. Custom resource owners can implement
+        ``__sklearn_clone__`` or ``__deepcopy__`` to preserve that isolation.
+        Ordinary extractors run immediately and their feature results are copied.
+        """
         self._prepared = False
         if embedding_vectors is not None and object_vectors is not None:
             raise ValueError("Supply embedding_vectors or object_vectors, not both")
@@ -132,6 +149,22 @@ class Toponymy:
         self.__dict__.pop("topic_model_", None)
         self.objects_ = tuple(objects)
         n_objects = len(self.objects_)
+        prepared_extractors = []
+        for extractor in self.feature_extractors:
+            if extractor.layer_dependent:
+                try:
+                    extractor = (
+                        clone(extractor)
+                        if extractor.can_fit_from_objects()
+                        else deepcopy(extractor)
+                    )
+                except (TypeError, ValueError, RuntimeError) as error:
+                    raise TypeError(
+                        "Layer-dependent extractors must support sklearn cloning "
+                        "when fitted from objects, or deep copying when pre-fitted"
+                    ) from error
+            prepared_extractors.append(extractor)
+        self.feature_extractors_ = prepared_extractors
         self.embedding_vectors_ = _matrix(
             embedding_vectors, n_objects, "embedding_vectors"
         )
@@ -222,13 +255,17 @@ class Toponymy:
             corpus_description=self.corpus_description,
             disambiguation=self.disambiguate,
             clustering_reused=self.reuse_clusterer,
-            semantic_quality="NOT VALIDATED",
         )
         started = perf_counter()
-        for extractor in self.feature_extractors:
+        for extractor in self.feature_extractors_:
             if extractor.layer_dependent:
                 if extractor.can_fit_from_objects():
-                    extractor.fit(self.objects_, self._fitted_clusterer)
+                    options = (
+                        {"embedder": self.embedding_model}
+                        if getattr(extractor, "requires_embedder", False)
+                        else {}
+                    )
+                    extractor.fit(self.objects_, self._fitted_clusterer, **options)
                 else:
                     extractor.predict()
                 if (
@@ -247,6 +284,8 @@ class Toponymy:
             if isinstance(extractor, TextKeyphraseExtractor):
                 options = {"embedder": self.embedding_model}
             options.update(self.feature_options.get(extractor.feature_key, {}))
+            if getattr(extractor, "requires_embedder", False):
+                options["embedder"] = self.embedding_model
             features = (
                 extractor.fit_predict(self.objects_, self._fitted_clusterer, **options)
                 if extractor.can_fit_from_objects()
@@ -306,7 +345,7 @@ class Toponymy:
 
     def _prepare_layer(self, layer):
         if layer.layer_index not in self._prepared_naming_layers:
-            for extractor in self.feature_extractors:
+            for extractor in self.feature_extractors_:
                 if extractor.layer_dependent:
                     options = {}
                     if isinstance(extractor, SubtopicExtractor):

@@ -22,6 +22,9 @@ class FeatureExtractorBase(ABC, BaseEstimator):
     feature_key = ""
     feature_return_type = str
     layer_dependent = False
+    # Declare unconditional text-embedder requirements before the pipeline runs.
+    # Auto-fitted extractors receive the validated model through embedder=.
+    requires_embedder = False
 
     @property
     def features(self) -> list[list[ClusterFeatures]]:
@@ -300,7 +303,7 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
                     "Keyphrase extraction requires an embedder or keyphrase_vectors"
                 )
             vectors = model.encode(vocabulary, show_progress_bar=False)
-        # Existing selectors fill missing embeddings in place; own this small array.
+        # Retain an owned fitted vector table, independent of caller/builder state.
         vectors = _vectors(vectors, len(vocabulary)).copy()
         helpers = {
             "information_weighted": keyphrases.information_weighted_keyphrases,
@@ -333,10 +336,6 @@ class TextKeyphraseExtractor(FeatureExtractorBase):
         self.keyphrase_list_, self.keyphrase_vectors_ = vocabulary, vectors
         self.features_ = features
         return self
-
-
-# The shorter name is convenient when mixing text and layer-dependent extractors.
-KeyphraseExtractor = TextKeyphraseExtractor
 
 
 class SubtopicExtractor(FeatureExtractorBase):
