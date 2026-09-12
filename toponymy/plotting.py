@@ -8,7 +8,7 @@ def construct_topic_hierarchy(clusterer, topic_names, root_name="Root"):
     Constructs a hierarchical representation of topics based on clustering results.
 
     Args:
-        clusterer: A ToponymyClusterer with a cluster_tree_ attribute representing the hierarchy.
+        clusterer: A fitted clusterer, Toponymy pipeline, or TopicModel.
         topic_names: A nested list or structure of topic names corresponding to cluster labels.
         root_name: Name to use for the root node in the hierarchy (default 'Root').
 

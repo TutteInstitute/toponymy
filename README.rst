@@ -115,8 +115,9 @@ objects in each layer, with ``"Unlabelled"`` for noise.
    saved = TopicModel.from_file("topics.toponymy")
    print(saved.topic_names)
 
-The existing ``TopicModel`` is the results and persistence interface. Version
-0.2 files retain topic features and prompts; version 0.1 files remain readable.
+The existing ``TopicModel`` is the results and persistence interface. Format
+0.3 retains topic features, prompts, name embeddings and disambiguation history;
+formats 0.1 and 0.2 remain readable.
 For summaries, configure ``SummaryTemplate`` rather than a cluster layer class.
 
 If you have a two-dimensional document map, the optional DataMapPlot library

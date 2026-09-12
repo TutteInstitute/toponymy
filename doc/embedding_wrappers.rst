@@ -6,9 +6,11 @@ exemplar extractor uses those vectors and needs no additional text embedder.
 Optional ``clusterable_vectors`` are used for clustering alone and may have a
 different dimension.
 
-``text_embedding_model`` is required when the pipeline includes
-``TextKeyphraseExtractor``. It also enables semantic comparisons of generated
-names during disambiguation. Exact duplicate detection works without it.
+``text_embedding_model`` is required when ``TextKeyphraseExtractor`` must generate
+keyphrase embeddings. Precomputed counts, vocabulary and vectors can instead be
+supplied through ``feature_options``. The embedder also enables semantic
+comparisons of generated names during disambiguation. Exact duplicate detection
+works without it.
 A compatible provider exposes ``encode(texts, ...)`` and returns a finite
 numeric matrix with one row per supplied text.
 

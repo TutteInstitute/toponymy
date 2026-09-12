@@ -4,13 +4,20 @@ The audit module provides transparency into how Toponymy generates topic names b
 
 ## Installation
 
-The audit functionality is included in the main Toponymy package. No additional installation required.
+The audit tables are included in the main Toponymy package. Excel export requires
+the optional `openpyxl` package (`pip install openpyxl`).
 
 ## Basic Usage
 
 ```python
 from toponymy import Toponymy
-from toponymy.audit import create_audit_df, create_comparison_df, export_audit_excel
+from toponymy.audit import (
+    create_audit_df,
+    create_comparison_df,
+    create_keyphrase_analysis_df,
+    create_layer_summary_df,
+    export_audit_excel,
+)
 
 # After fitting your Toponymy model
 topic_model = Toponymy(...)
