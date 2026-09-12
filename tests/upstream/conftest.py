@@ -159,18 +159,6 @@ def test_object_cluster_label_vector():
 
 
 @pytest.fixture(scope="session")
-def test_object_centroid_vectors(test_object_cluster_label_vector, topic_vectors):
-    from toponymy.utility_functions import centroids_from_labels
-
-    return centroids_from_labels(test_object_cluster_label_vector, topic_vectors)
-
-
-@pytest.fixture(scope="session")
-def premade_topic_model_path():
-    return DATA / "mock-20ng.tm.zip"
-
-
-@pytest.fixture(scope="session")
 def notebook_output_dir(tmp_path_factory):
     return tmp_path_factory.mktemp("nb_outputs")
 

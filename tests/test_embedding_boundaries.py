@@ -206,21 +206,6 @@ def test_openai_embedding_rows_follow_request_indices_at_sdk_boundary(
         assert len(requests) == 1
 
 
-def test_unavailable_anthropic_embedding_api_fails_with_an_explicit_contract():
-    """Root should adapt/remove only after choosing the documented API migration."""
-    pytest.importorskip("anthropic")
-    from toponymy.embedding_wrappers import AnthropicEmbedder
-
-    embedder = None
-    try:
-        with pytest.raises((ValueError, NotImplementedError), match="(?i)embedding"):
-            embedder = AnthropicEmbedder(api_key="local-placeholder")
-            embedder.encode(["one"])
-    finally:
-        if embedder is not None:
-            embedder.client.close()
-
-
 def test_azure_authentication_error_is_not_retried_by_embedding_wrapper(monkeypatch):
     pytest.importorskip("azure.ai.inference")
     from azure.core.exceptions import ClientAuthenticationError

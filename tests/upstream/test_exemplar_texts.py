@@ -43,7 +43,6 @@ def test_diverse_exemplar_result_sizes(
     test_object_cluster_label_vector,
     all_topic_objects,
     topic_vectors,
-    test_object_centroid_vectors,
 ):
     exemplar_results, exemplar_indices = diverse_exemplars(
         cluster_label_vector=test_object_cluster_label_vector,
@@ -67,7 +66,6 @@ def test_empty_cluster_diverse_centroid(
     test_object_cluster_label_vector,
     all_topic_objects,
     topic_vectors,
-    test_object_centroid_vectors,
 ):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
@@ -88,7 +86,6 @@ def test_empty_cluster_diverse(
     test_object_cluster_label_vector,
     all_topic_objects,
     topic_vectors,
-    test_object_centroid_vectors,
 ):
     new_clustering = test_object_cluster_label_vector.copy()
     new_clustering[new_clustering == 0] = 9
