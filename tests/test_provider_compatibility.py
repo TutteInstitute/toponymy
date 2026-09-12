@@ -247,8 +247,11 @@ async def test_async_request_limits_renderings_and_diagnostic_status(
     await namer.close()
 
 
-def test_role_fallback_uses_shared_retry_budget_and_preserves_temperature(
-    monkeypatch, immediate_retries
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True], ids=["sync", "async"])
+@pytest.mark.parametrize("combined", [None, "Distinct combined rendering", ""])
+async def test_role_fallback_preserves_rendering_and_shared_retry_budget(
+    monkeypatch, immediate_retries, asynchronous, combined
 ):
     class UnsupportedRole(Exception):
         status_code = 400
@@ -259,19 +262,41 @@ def test_role_fallback_uses_shared_retry_budget_and_preserves_temperature(
             TimeoutError(),
             '{"topic_name":"Transit"}',
             '{"topic_name":"Cached"}',
+            '{"status":"ok"}',
         ]
     )
     monkeypatch.setattr(wrappers, "_get_litellm", lambda: provider)
-    namer = wrappers.LiteLLMNamer(temperature_override=0.1)
-    assert namer.generate_topic_name(Prompt("sys", "user")) == "Transit"
+    wrapper = wrappers.AsyncLiteLLMNamer if asynchronous else wrappers.LiteLLMNamer
+    namer = wrapper(temperature_override=0.1, llm_specific_instructions="extra")
+
+    async def generate(prompt):
+        if asynchronous:
+            return (await namer.generate_topic_names([prompt]))[0]
+        return namer.generate_topic_name(prompt)
+
+    assert await generate(Prompt("sys", "user", combined=combined)) == "Transit"
     assert len(provider.calls) == 3
     assert provider.calls[0]["messages"][0]["role"] == "system"
+    expected = "sys\n\nuser" if combined is None else combined
     assert all(
-        request["messages"][0]["role"] == "user" for request in provider.calls[1:]
+        request["messages"] == [{"role": "user", "content": expected + "\n\nextra"}]
+        for request in provider.calls[1:]
     )
     assert all(request["temperature"] == 0.1 for request in provider.calls)
-    assert namer.generate_topic_name(Prompt("sys", "next")) == "Cached"
+    assert await generate(Prompt("sys", "next", combined=combined)) == "Cached"
     assert len(provider.calls) == 4
+    expected = "sys\n\nnext" if combined is None else combined
+    assert provider.calls[-1]["messages"] == [
+        {"role": "user", "content": expected + "\n\nextra"}
+    ]
+    status = namer.connectivity_status("probe", system_prompt="probe system")
+    if asynchronous:
+        status = await status
+    assert status["success"]
+    assert len(provider.calls) == 5
+    assert provider.calls[-1]["messages"] == [
+        {"role": "user", "content": "probe system\n\nprobe\n\nextra"}
+    ]
 
 
 def test_unexpected_error_mentioning_system_role_does_not_probe(

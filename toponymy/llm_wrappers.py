@@ -556,15 +556,10 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             routine=routine,
         )
 
-    @staticmethod
-    def _topic_name_error_callback(retry_state):
-        raise retry_state.outcome.exception()
-
-    # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=1, min=4, max=10),
-        retry_error_callback=_topic_name_error_callback,
+        reraise=True,
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_name(
@@ -592,15 +587,10 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             else string_field(info, "topic_name")
         )
 
-    @staticmethod
-    def _topic_cluster_names_error_callback(retry_state):
-        raise retry_state.outcome.exception()
-
-    # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=1, min=4, max=10),
-        retry_error_callback=_topic_cluster_names_error_callback,
+        reraise=True,
         retry=retry_if_exception(_should_retry),
     )
     def generate_topic_cluster_names(
@@ -690,7 +680,11 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 )
             else:
                 response = self._call_llm_with_system_prompt(
-                    {"system": system_prompt, "user": prompt},
+                    {
+                        "system": system_prompt,
+                        "user": prompt,
+                        "combined": system_prompt + "\n\n" + prompt,
+                    },
                     temperature=0.4,
                     max_tokens=128,
                 )
@@ -1269,7 +1263,11 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         raise RuntimeError("Connectivity probe returned no responses")
                     response = responses[0]
             else:
-                probe_prompt = {"system": system_prompt, "user": prompt}
+                probe_prompt = {
+                    "system": system_prompt,
+                    "user": prompt,
+                    "combined": system_prompt + "\n\n" + prompt,
+                }
                 try:
                     response = await self._call_single_llm_with_system(
                         probe_prompt,
@@ -1594,8 +1592,8 @@ class LiteLLMNamer(LLMWrapper):
 
     disable_system_prompts: bool, False
         Set to True to override to use plain calls instead of system prompts.
-        If False (default), system prompt support is detected automatically and will flatten system prompts
-        if unsupported for a given model.
+        If False (default), a provider rejection of system prompts switches later
+        attempts to the prompt's combined rendering.
 
     max_tokens_topic_name: int, optional
         Default maximum number of tokens for topic name generation. Default is 128.
@@ -1702,18 +1700,6 @@ class LiteLLMNamer(LLMWrapper):
             )
         )
 
-    def _flatten_system_into_user(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> list[dict[str, str]]:
-        return [
-            {
-                "role": "user",
-                "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
-            }
-        ]
-
     def _detect_json_object_support(self) -> bool:
         supported = _get_litellm().get_supported_openai_params(model=self.model)
         return "response_format" in (supported or [])
@@ -1774,6 +1760,8 @@ class LiteLLMNamer(LLMWrapper):
         temperature: float,
         max_tokens: int,
     ) -> str:
+        if self._system_prompt_capability is False:
+            return self._call_llm(prompt, temperature, max_tokens)
         system_prompt = prompt["system"]
         user_prompt = prompt["user"]
         effective_temperature = (
@@ -1781,13 +1769,10 @@ class LiteLLMNamer(LLMWrapper):
             if self.temperature_override is not None
             else temperature
         )
-        if self._system_prompt_capability is False:
-            messages = self._flatten_system_into_user(system_prompt, user_prompt)
-        else:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt + self.extra_prompting},
-            ]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt + self.extra_prompting},
+        ]
 
         try:
             result = self._completion_with_messages(
@@ -1859,8 +1844,8 @@ class AsyncLiteLLMNamer(AsyncLLMWrapper):
 
     disable_system_prompts: bool, False
         Set to True to override to use plain calls instead of system prompts.
-        If False (default), system prompt support is detected automatically and will flatten system prompts
-        if unsupported for a given model.
+        If False (default), a provider rejection of system prompts switches later
+        attempts to the prompt's combined rendering.
 
     use_json_object: bool, optional
         Whether to request JSON object output via response_format={"type": "json_object"}.
@@ -1888,9 +1873,9 @@ class AsyncLiteLLMNamer(AsyncLLMWrapper):
         user identifiers, or other provider parameters without modifying the
         wrapper.
 
-        These values are merged into the completion call arguments but may be
-        overridden by core wrapper parameters such as `model`, `messages`,
-        `temperature`, and `max_tokens`.
+        Reserved core arguments such as ``model``, ``messages``, ``temperature``
+        and ``max_tokens`` must use their wrapper parameters. Conflicting keys
+        in ``provider_kwargs`` raise ``ValueError`` before a request is made.
 
     Attributes:
     -----------
@@ -1981,18 +1966,6 @@ class AsyncLiteLLMNamer(AsyncLLMWrapper):
             )
         )
 
-    def _flatten_system_into_user(
-        self,
-        system_prompt: str,
-        user_prompt: str,
-    ) -> list[dict[str, str]]:
-        return [
-            {
-                "role": "user",
-                "content": f"System: {system_prompt}\n\nUser: {user_prompt + self.extra_prompting}",
-            }
-        ]
-
     def _detect_json_object_support(self) -> bool:
         supported = _get_litellm().get_supported_openai_params(model=self.model)
         return "response_format" in (supported or [])
@@ -2057,6 +2030,8 @@ class AsyncLiteLLMNamer(AsyncLLMWrapper):
         temperature: float,
         max_tokens: int,
     ) -> str:
+        if self._system_prompt_capability is False:
+            return await self._call_single_llm(prompt, temperature, max_tokens)
         system_prompt = prompt["system"]
         user_prompt = prompt["user"]
         effective_temperature = (
@@ -2064,13 +2039,10 @@ class AsyncLiteLLMNamer(AsyncLLMWrapper):
             if self.temperature_override is not None
             else temperature
         )
-        if self._system_prompt_capability is False:
-            messages = self._flatten_system_into_user(system_prompt, user_prompt)
-        else:
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt + self.extra_prompting},
-            ]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt + self.extra_prompting},
+        ]
         try:
             # If the model doesn't support system prompts, this will raise an error which we
             # catch to disable system prompt usage for future calls. Everything else raises as normal.
@@ -2135,7 +2107,7 @@ def AnthropicNamer(
     api_base : str, optional
         Override the Anthropic API endpoint. Useful for proxies or Anthropic-compatible
         local servers (e.g. vLLM, LM Studio). Can use the ANTHROPIC_API_BASE environment variable.
-        Default is the standard OpenAI endpoint.
+        Default is the standard Anthropic endpoint.
     llm_specific_instructions : str, optional
         Additional instructions appended to every prompt. This can be used to provide
         model-specific instructions or context that may help improve the quality of the generated text.
@@ -2367,7 +2339,7 @@ def CohereNamer(
     api_base : str, optional
         Override the Cohere API endpoint. Useful for proxies or Cohere-compatible
         local servers (e.g. vLLM, LM Studio). Can use the COHERE_API_BASE environment variable.
-        Default is the standard OpenAI endpoint.
+        Default is the standard Cohere endpoint.
     llm_specific_instructions : str, optional
         Additional instructions appended to every prompt. This can be used to provide
         model-specific instructions or context that may help improve the quality of the generated text.
@@ -2585,7 +2557,7 @@ def TogetherNamer(
         Together AI API key. Falls back to the TOGETHERAI_API_KEY environment variable.
     api_base : str, optional
         Override the Together AI API endpoint. Can use the TOGETHERAI_API_BASE environment variable.
-        Default is the standard OpenAI endpoint.
+        Default is the standard Together AI endpoint.
     llm_specific_instructions : str, optional
         Additional instructions appended to every prompt. This can be used to provide
         model-specific instructions or context that may help improve the quality of the generated text.
@@ -2765,7 +2737,7 @@ class LlamaCppNamer(LLMWrapper):
     to use local models, rather than requiring a service API key. However this does require you to have the model
     and suitable hardware to run it.
 
-    Note: This wrapper does not support system prompts, as LlamaCpp does not support them.
+    This wrapper sends the combined prompt through LlamaCpp's completion interface.
 
     Parameters:
     -----------
@@ -3033,14 +3005,14 @@ class VLLMNamer(LLMWrapper):
     model: str
         The name of the Huggingface model to use.
 
-    llm: transformers.pipeline
+    llm: vllm.LLM
         The vLLM model instance.
 
     extra_prompting: str
         Additional instructions specific to the LLM, appended to the prompt.
 
     supports_system_prompts: bool
-        Indicates whether the wrapper supports system prompts. For Huggingface, this is always True.
+        Indicates whether the wrapper supports system prompts. For vLLM, this is always True.
     """
 
     def __init__(
@@ -4288,8 +4260,8 @@ def AsyncAzureAINamer(
         Additional instructions appended to every prompt. This can be used to provide
         model-specific instructions or context that may help improve the quality of the generated text.
     max_concurrent_requests: int, optional
-        The maximum number of concurrent requests to the Anthropic API. Default is 10. This can be adjusted based on your
-        application's needs and the rate limits of the Anthropic API. Higher values may improve throughput but could lead to rate limiting.
+        The maximum number of concurrent requests to Azure AI. Default is 10. This can be adjusted based on your
+        application's needs and the rate limits of Azure AI. Higher values may improve throughput but could lead to rate limiting.
     max_tokens_topic_name: int, optional
         Default maximum number of tokens for topic name generation. Default is 128.
         Can be overridden per-call in generate_topic_name().
@@ -4504,12 +4476,12 @@ def GoogleGeminiNamer(
     ----------
     model : str, optional
         Google Gemini model to use. Default is "gemini-2.5-flash-lite".
-        May be in LiteLLM format ("google/gemini-2.5-flash-lite")
+        May be in LiteLLM format ("gemini/gemini-2.5-flash-lite")
     api_key : str, optional
         Google Gemini API key. Falls back to the GEMINI_API_KEY environment variable.
     api_base : str, optional
         Override the Google Gemini API endpoint. Can use the GEMINI_API_BASE environment variable.
-        Default is the standard OpenAI endpoint.
+        Default is the standard Google AI Studio endpoint.
     llm_specific_instructions : str, optional
         Additional instructions appended to every prompt. This can be used to provide
         model-specific instructions or context that may help improve the quality of the generated text.
@@ -4548,9 +4520,9 @@ def GoogleGeminiNamer(
 
         namer = GoogleGeminiNamer(model="gemini-2.5-flash-lite",api_key="my-api-key")
 
-    Using an Anthropic-compatible local server::
+    Using a Gemini-compatible endpoint::
 
-        namer = GoogleGeminiNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+        namer = GoogleGeminiNamer(model="hosted-model", api_base="https://example.invalid", api_key="my-api-key")
 
     See Also
     --------
@@ -4602,7 +4574,7 @@ def AsyncGoogleGeminiNamer(
     Parameters
     ----------
     model : str, optional
-        Google Gemini model to use. Default is "gemini-2.5-flash-lite", Must be in LiteLLM format ("google/gemini-2.5-flash-lite")
+        Google Gemini model to use. Default is "gemini-2.5-flash-lite", Must be in LiteLLM format ("gemini/gemini-2.5-flash-lite")
         or bare Google Gemini format ("gemini-2.5-flash-lite") — both are accepted.
     api_key : str, optional
         Google Gemini API key. Falls back to the GEMINI_API_KEY environment variable.
@@ -4649,9 +4621,9 @@ def AsyncGoogleGeminiNamer(
 
         namer = AsyncGoogleGeminiNamer(model="gemini-2.5-flash-lite",api_key="my-api-key")
 
-    Using an Anthropic-compatible local server::
+    Using a Gemini-compatible endpoint::
 
-        namer = AsyncGoogleGeminiNamer(model="hosted-model", api_base="http://localhost:8000/v1", api_key="none")
+        namer = AsyncGoogleGeminiNamer(model="hosted-model", api_base="https://example.invalid", api_key="my-api-key")
 
     See Also
     --------
