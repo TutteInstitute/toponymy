@@ -92,6 +92,25 @@ def test_no_exemplar_metadata_requires_explicit_decision():
         WayfindingLineup.from_topic_model(model, documents, vectors)
 
 
+@pytest.mark.parametrize("shared_coordinate", [0.0, 1.0])
+def test_tiny_centroid_distances_preserve_nearest_order(shared_coordinate):
+    model = SimpleNamespace(
+        topics={(0, i): SimpleNamespace(members=[i]) for i in range(3)}
+    )
+    vectors = np.array(
+        [
+            [0.0, shared_coordinate],
+            [3e-200, shared_coordinate],
+            [1e-200, shared_coordinate],
+        ]
+    )
+    lineup = WayfindingLineup.from_topic_model(
+        model, ["target", "far", "near"], vectors, exemplar_indices={}, candidates=2
+    )
+    target = next(trial for trial in lineup.trials if trial.topic == (0, 0))
+    assert set(target.candidates) == {(0, 0), (0, 2)}
+
+
 def test_topics_without_held_out_data_or_distractors_are_explicit():
     model, documents, vectors, names = fixture_data()
     lineup = WayfindingLineup.from_topic_model(

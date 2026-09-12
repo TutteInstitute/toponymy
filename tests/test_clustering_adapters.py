@@ -86,9 +86,13 @@ def test_invalid_kmeans_parameters(options):
         KMeansClusterer(**options).fit(np.ones((3, 2)))
 
 
-def test_plscan_forwards_options_and_detaches_returned_labels(monkeypatch):
+@pytest.mark.parametrize("native_probabilities", [False, True])
+def test_plscan_forwards_options_and_detaches_returned_labels(
+    monkeypatch, native_probabilities
+):
     calls = []
     emitted_labels = [np.array([81, 81, -1, 4, 4, 4])]
+    probabilities = np.array([0.8, 0.9, 0.0, 0.4, 0.7, 0.6])
 
     class ExternalPLSCAN:
         def __init__(self, **options):
@@ -97,6 +101,8 @@ def test_plscan_forwards_options_and_detaches_returned_labels(monkeypatch):
         def fit(self, vectors):
             calls.append(vectors)
             self.cluster_layers_ = emitted_labels
+            if native_probabilities:
+                self.membership_strength_layers_ = [probabilities]
             return self
 
     monkeypatch.setitem(
@@ -113,6 +119,10 @@ def test_plscan_forwards_options_and_detaches_returned_labels(monkeypatch):
     assert [cluster.label for cluster in estimator.cluster_layers_[0]] == [4, 81]
     np.testing.assert_array_equal(
         estimator.cluster_layers_[0].labels, [81, 81, -1, 4, 4, 4]
+    )
+    np.testing.assert_array_equal(
+        estimator.cluster_probabilities_[0],
+        probabilities if native_probabilities else np.ones(6),
     )
 
 

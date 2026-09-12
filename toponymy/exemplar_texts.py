@@ -111,11 +111,9 @@ class FacilityLocationSelection(BaseGraphSelection):
             'euclidean'.
 
     initial_subset : list, numpy.ndarray or None, optional
-            If provided, this should be a list of indices into the data matrix
-            to use as the initial subset, or a group of examples that may not be
-            in the provided data should beused as the initial subset. If indices,
-            the provided array should be one-dimensional. If a group of examples,
-            the data should be 2 dimensional. Default is None.
+            Indices or a boolean mask of examples already selected. Their
+            coverage is included when choosing additional examples. The array
+            must be one-dimensional. Default is None.
 
     optimizer : string or optimizers.BaseOptimizer, optional
             The optimization approach to use for the selection. Default is
@@ -221,8 +219,8 @@ class FacilityLocationSelection(BaseGraphSelection):
         of the original apricot code to make it more suitable for
         selection of exemplars for clusters in a cluster layer.
 
-        Note that this version is specialized and does no support sparse
-        input, nor does it support streaming via sieve greedy.
+        Sparse input must be a precomputed similarity matrix. Streaming via
+        sieve greedy is not supported.
 
         Run submodular optimization to select the examples.
 
@@ -285,6 +283,15 @@ class FacilityLocationSelection(BaseGraphSelection):
 
     def _initialize(self, X_pairwise):
         super(FacilityLocationSelection, self)._initialize(X_pairwise)
+
+        if self.initial_subset is not None:
+            if self.initial_subset.ndim != 1:
+                raise ValueError("initial_subset must be a one-dimensional array")
+            for index in self.initial_subset:
+                row = X_pairwise[index]
+                if self.sparse:
+                    row = row.toarray()[0]
+                self.current_values = np.maximum(row, self.current_values)
 
         self.current_values_sum = self.current_values.sum()
 

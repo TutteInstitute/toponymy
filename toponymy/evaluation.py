@@ -233,7 +233,7 @@ class WayfindingLineup:
                 continue
             peers.sort(
                 key=lambda other: (
-                    float(np.linalg.norm(centroids[key] - centroids[other])),
+                    float(np.hypot.reduce(centroids[key] - centroids[other])),
                     other,
                 )
             )

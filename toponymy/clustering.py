@@ -441,13 +441,12 @@ class PLSCANClusterer(Clusterer):
         if self.max_layers is not None:
             labels = labels[: self.max_layers]
         self._set_labels(labels)
+        try:
+            probabilities = estimator.membership_strength_layers_
+        except AttributeError:
+            probabilities = [np.ones_like(layer, dtype=float) for layer in labels]
         self.cluster_probabilities_ = [
-            np.asarray(probability)
-            for probability in getattr(
-                estimator,
-                "membership_strength_layers_",
-                [np.ones_like(layer, dtype=float) for layer in labels],
-            )
+            np.asarray(probability) for probability in probabilities
         ][: len(labels)]
         self.cluster_persistence_scores_ = list(
             getattr(estimator, "layer_persistence_scores_", [1.0 for _ in labels])

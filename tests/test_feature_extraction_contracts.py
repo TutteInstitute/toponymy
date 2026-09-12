@@ -236,6 +236,21 @@ def test_sparse_facility_gains_match_dense_marginal_coverage():
         )
 
 
+@pytest.mark.parametrize("sparse", [False, True])
+@pytest.mark.parametrize("initial_subset", [[0], [True, False, False]])
+def test_facility_selection_extends_initial_coverage(sparse, initial_subset):
+    from toponymy.exemplar_texts import FacilityLocationSelection
+
+    similarities = np.array([[1.0, 0.9, 0.0], [0.9, 1.0, 0.0], [0.0, 0.0, 1.0]])
+    matrix = sp.csr_matrix(similarities) if sparse else similarities
+    selector = FacilityLocationSelection(
+        1, metric="precomputed", initial_subset=initial_subset
+    ).fit(matrix)
+    # Item 0 already covers item 1; item 2 adds the greatest new coverage.
+    np.testing.assert_array_equal(selector.ranking, [2])
+    np.testing.assert_allclose(selector.gains, [1.0])
+
+
 def test_keyphrase_refit_clears_previous_vocabulary_for_empty_data():
     extractor = TextKeyphraseExtractor("central", n_keyphrases=1)
     extractor.fit_predict(
