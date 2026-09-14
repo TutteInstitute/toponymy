@@ -120,11 +120,17 @@ function render({ model, el }) {
                 format, 
                 x: maxX + 25
             },
+            ...(Object.hasOwn(data, 'match_count') ? [{
+                label: "Matches",
+                value: 'match_count',
+                format,
+                x: maxX + 85
+            }] : []),
             {
                 label: "Sublabels", 
                 value: 'value', 
                 format: (value, d) => d.children ? format(value) : "-", 
-                x: maxX + 115
+                x: maxX + (Object.hasOwn(data, 'match_count') ? 175 : 115)
             }
         ];
 

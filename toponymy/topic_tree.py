@@ -207,6 +207,7 @@ def topic_tree_html_recursion(
     cluster_size: bool = False,
     cluster_percentage: bool = False,
     show_topic_id: bool = False,
+    document_children: Dict[Tuple[int, int], List[str]] = None,
 ) -> str:
     """
     Recursively traverses the topic tree and constructs an HTML representation of the topics.
@@ -231,6 +232,8 @@ def topic_tree_html_recursion(
         If True, include the percentage of each cluster in the output.
     show_topic_id : bool
         If True, include the topic ID in the output.
+    document_children : dict, optional
+        Document labels to append below leaf topics, keyed by topic ID.
 
     Returns
     -------
@@ -282,8 +285,23 @@ def topic_tree_html_recursion(
 
     children = tree_dict.get(root_node, [])  # Get children, default to empty list
 
+    document_labels = (document_children or {}).get(root_node, [])
+
     # Leaf Node
     if not children:
+        if document_labels:
+            documents_html = "".join(
+                f'<li class="document-node">{html.escape(label)}</li>\n'
+                for label in document_labels
+            )
+            return f"""
+            <li class="branch-node document-branch">
+                <details>
+                    <summary style="{combined_style}">{topic_name}</summary>
+                    <ul>{documents_html}</ul>
+                </details>
+            </li>
+            """
         return f'<li class="leaf-node" style="{combined_style}">{topic_name}</li>\n'
 
     # Node with Children
@@ -299,6 +317,10 @@ def topic_tree_html_recursion(
                 max_layer=max_layer,
                 variable_color=variable_color,
                 variable_weight=variable_weight,
+                cluster_size=cluster_size,
+                cluster_percentage=cluster_percentage,
+                show_topic_id=show_topic_id,
+                document_children=document_children,
             )
 
         html_content = f"""
@@ -324,6 +346,7 @@ def topic_tree_html(
     cluster_size: bool = False,
     cluster_percentage: bool = False,
     show_topic_id: bool = False,
+    document_children: Dict[Tuple[int, int], List[str]] = None,
 ) -> str:
     """
     Converts a topic tree into an HTML representation.
@@ -345,6 +368,8 @@ def topic_tree_html(
         If True, include the percentage of each cluster in the output.
     show_topic_id : bool
         If True, include the topic ID in the output.
+    document_children : dict, optional
+        Document labels to append below leaf topics, keyed by topic ID.
 
     Returns
     -------
@@ -368,6 +393,7 @@ def topic_tree_html(
         cluster_size=cluster_size,
         cluster_percentage=cluster_percentage,
         show_topic_id=show_topic_id,
+        document_children=document_children,
     )
     root_html += "</ul>"
 
@@ -431,6 +457,21 @@ def topic_tree_html(
     </style>
     """
 
+    # Inject document-specific CSS into the main style block.
+    # This approach allows document styling to be scoped only when needed.
+    if document_children:
+        document_style = """
+        .topic-tree li.document-node {
+            color: #555;
+            font-size: 0.9em;
+            padding-left: 0;
+        }
+        .topic-tree li.document-node::before {
+            content: '';
+        }
+        """
+        style = style.replace("    </style>", "        " + document_style + "    </style>")
+
     result = f'<div class="topic-tree">{style}{root_html}</div>'
 
     return result
@@ -468,12 +509,14 @@ class TopicTree:
         topic_sizes: List[List[int]],
         n_objects: int,
         prune_duplicates: bool = True,
+        document_children: Dict[Tuple[int, int], List[str]] = None,
     ) -> None:
         self.tree = tree
         self.topics = topics
         self.topic_sizes = topic_sizes
         self.n_objects = n_objects
         self.prune_duplicates = prune_duplicates
+        self.document_children = document_children
         if prune_duplicates:
             self.tree = prune_duplicate_children(tree, topics)
 
@@ -499,6 +542,7 @@ class TopicTree:
             self.n_objects,
             variable_color=False,
             variable_weight=True,
+            document_children=self.document_children,
         )
 
     def print(
@@ -543,6 +587,7 @@ class TopicTree:
         cluster_size: bool = True,
         cluster_percentage: bool = False,
         show_topic_id: bool = False,
+        document_children: Dict[Tuple[int, int], List[str]] = None,
     ) -> str:
         """
         Returns an HTML representation of the topic tree.
@@ -559,6 +604,9 @@ class TopicTree:
             If True, include the percentage of each cluster in the output.
         show_topic_id : bool
             If True, include the topic ID in the output.
+        document_children : dict, optional
+            Document labels to append below leaf topics. Defaults to the labels
+            supplied when constructing the TopicTree.
 
         Returns
         -------
@@ -575,6 +623,11 @@ class TopicTree:
             cluster_size=cluster_size,
             cluster_percentage=cluster_percentage,
             show_topic_id=show_topic_id,
+            document_children=(
+                self.document_children
+                if document_children is None
+                else document_children
+            ),
         )
 
     def treemap(self, margin: dict = None):
