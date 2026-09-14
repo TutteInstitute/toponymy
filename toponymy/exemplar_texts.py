@@ -584,68 +584,143 @@ def diverse_exemplars(
         leave=False,
         position=1,
     ):
-
-        # Get mask for current cluster
         cluster_mask = cluster_label_vector == cluster_num
 
-        # Store original indices for this cluster
-        original_indices = np.where(cluster_mask)[0]
+        def get_cluster_objects(cluster_mask, objects):
+            original_indices = np.where(cluster_mask)[0]
+            return [objects[i] for i in original_indices]
+
+        def get_cluster_object_vectors(cluster_mask, object_vectors, null_topic):
+            return object_vectors[cluster_mask] - null_topic
+
+        def get_original_indices(cluster_mask, exemplar_order, chosen_indices):
+
+            # Store original indices for this cluster
+            original_indices = np.where(cluster_mask)[0]
+
+            # Map chosen indices back to original object list indices
+            chosen_original_indices = [
+                original_indices[exemplar_order[i]] for i in chosen_indices
+            ]
 
         # Index objects by integer position — no np.array(objects) needed
-        cluster_objects = [objects[i] for i in original_indices]
+        cluster_objects = get_cluster_objects(cluster_mask, objects)
 
-        # If there is an empty cluster emit empty lists
-        if len(cluster_objects) == 0:
-            results.append([])
-            indices.append([])
-            continue
+        cluster_centroid = centroid_vectors[cluster_num]
 
-        cluster_object_vectors = object_vectors[cluster_mask] - null_topic
-        if method == "centroid":
-            # Select the central exemplars as the objects to each centroid
-            exemplar_distances = pairwise_distances(
-                centroid_vectors[cluster_num].reshape(1, -1) - null_topic,
-                cluster_object_vectors,
-                metric="cosine",
-            )
-            exemplar_order = np.argsort(exemplar_distances.flatten())
-        elif method == "random":
-            exemplar_order = np.random.permutation(len(cluster_objects))
-        else:
-            raise ValueError(
-                f"method={method} is not a valid selection. Please choose one of (centroid,random)"
-            )
-
-        # We need more exemplars than we want in case we drop some via diversify
-        n_exemplars_to_take = max((n_exemplars**2), 16)
-        exemplar_candidates = [
-            cluster_objects[i] for i in exemplar_order[:n_exemplars_to_take]
-        ]
-        candidate_vectors = np.asarray(
-            [cluster_object_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
+        cluster_object_vectors = get_cluster_object_vectors(
+            cluster_mask, object_vectors, null_topic
         )
 
-        chosen_indices = diversify(
-            centroid_vectors[cluster_num] - null_topic,
-            candidate_vectors,
-            n_exemplars,
-            max_alpha=diversify_alpha,
-            tolerance=0.01,
-        )[:n_exemplars]
+        chosen_exemplars, exemplar_order, chosen_indices = diverse_exemplars_by_cluster(
+            cluster_objects=cluster_objects,
+            cluster_centroid=cluster_centroid,
+            cluster_object_vectors=cluster_object_vectors,
+            null_topic=null_topic,
+            n_exemplars=n_exemplars,
+            diversify_alpha=diversify_alpha,
+            object_to_text_function=object_to_text_function,
+            method=method,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+        )
 
-        if object_to_text_function is None:
-            chosen_exemplars = [exemplar_candidates[i] for i in chosen_indices]
-        else:
-            chosen_exemplars = object_to_text_function(
-                [exemplar_candidates[i] for i in chosen_indices]
-            )
-
-        # Map chosen indices back to original object list indices
-        chosen_original_indices = [
-            original_indices[exemplar_order[i]] for i in chosen_indices
-        ]
+        chosen_original_indices = get_original_indices(
+            cluster_mask, exemplar_order, chosen_indices
+        )
 
         results.append(chosen_exemplars)
         indices.append(chosen_original_indices)
 
     return results, indices
+
+
+def diverse_exemplars_by_cluster(
+    cluster_objects: List[str],
+    cluster_centroid: np.ndarray,
+    cluster_object_vectors: np.ndarray,
+    null_topic: np.ndarray,
+    n_exemplars: int = 4,
+    diversify_alpha: float = 1.0,
+    object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
+    method: str = "centroid",
+    verbose: bool = None,
+    show_progress_bar: bool = None,
+) -> Tuple[List[str], List[int], List[int]]:
+    """Generates a list of exemplar text for each cluster in a cluster layer.
+    These exemplars are selected to be the closest vectors to the cluster centroid while retaining
+    sufficient diversity.
+
+    Parameters
+    ----------
+    cluster_label_vector : np.ndarray
+        A vector of cluster labels for each object.
+    objects : List[str]
+        A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
+    object_vectors = np.ndarray
+        An ndarray of topic vectors for each object.
+    centroid_vectors : np.ndarray
+        An ndarray of centroid vectors for each cluster.
+    n_exemplars : int, optional
+        The number of exemplars to sample for each cluster, by default 4.
+    diversify_alpha : float, optional
+        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
+    object_to_text_function: Callable[List[Any], List[str]]
+        A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
+    method : str, optional
+        The sampling method for selecting exemplars 'centroid' or 'random', by default it is 'centroid'.
+    show_progress_bar : bool, optional
+        Whether to show a progress bar, by default False.
+
+    Returns
+    -------
+    Tuple[List[List[str]], List[List[int]]]
+        A tuple containing:
+        - A list of lists of exemplar texts for each cluster
+        - A list of lists of indices indicating the position of each exemplar in the original object list
+    """
+
+    # If there is an empty cluster emit empty lists
+    if len(cluster_objects) == 0:
+        return [], [], []
+
+    if method == "centroid":
+        # Select the central exemplars as the objects to each centroid
+        exemplar_distances = pairwise_distances(
+            cluster_centroid.reshape(1, -1) - null_topic,
+            cluster_object_vectors,
+            metric="cosine",
+        )
+        exemplar_order = np.argsort(exemplar_distances.flatten())
+    elif method == "random":
+        exemplar_order = np.random.permutation(len(cluster_objects))
+    else:
+        raise ValueError(
+            f"method={method} is not a valid selection. Please choose one of (centroid,random)"
+        )
+
+    # We need more exemplars than we want in case we drop some via diversify
+    n_exemplars_to_take = max((n_exemplars**2), 16)
+    exemplar_candidates = [
+        cluster_objects[i] for i in exemplar_order[:n_exemplars_to_take]
+    ]
+    candidate_vectors = np.asarray(
+        [cluster_object_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
+    )
+
+    chosen_indices = diversify(
+        cluster_centroid - null_topic,
+        candidate_vectors,
+        n_exemplars,
+        max_alpha=diversify_alpha,
+        tolerance=0.01,
+    )[:n_exemplars]
+
+    if object_to_text_function is None:
+        chosen_exemplars = [exemplar_candidates[i] for i in chosen_indices]
+    else:
+        chosen_exemplars = object_to_text_function(
+            [exemplar_candidates[i] for i in chosen_indices]
+        )
+
+    return chosen_exemplars, exemplar_order, chosen_indices
