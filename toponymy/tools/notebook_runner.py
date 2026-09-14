@@ -93,6 +93,13 @@ def collect_log_lines(
     return collected
 
 
+def _log_lines(collected: list[tuple[str, str]]) -> None:
+    for level, line in collected:
+        logger.log(
+            getattr(logging, level.upper(), logging.INFO), "Notebook log line: %s", line
+        )
+
+
 class InstrumentedNotebookClient(NotebookClient):
     """
     A NotebookClient that logs the start and end of each cell execution, as well as the total execution time of the notebook.
@@ -190,16 +197,7 @@ def run_notebook(
         logger.info(
             "Collected %s logging lines from failed notebook %s", len(collected), path
         )
-        for level, line in collected:
-            normalized = level.lower()
-            log_fn = {
-                "debug": logger.debug,
-                "info": logger.info,
-                "warning": logger.warning,
-                "error": logger.error,
-                "critical": logger.critical,
-            }.get(normalized, logger.info)
-            log_fn("Notebook log line: %s", line)
+        _log_lines(collected)
 
         if return_log_lines:
             return collected
@@ -210,16 +208,7 @@ def run_notebook(
     # success path: collect and log normally
     collected = collect_log_lines(executed_nb, ignore_litellm=ignore_litellm)
     logger.info("Collected %s logging lines from notebook %s", len(collected), path)
-    for level, line in collected:
-        normalized = level.lower()
-        log_fn = {
-            "debug": logger.debug,
-            "info": logger.info,
-            "warning": logger.warning,
-            "error": logger.error,
-            "critical": logger.critical,
-        }.get(normalized, logger.info)
-        log_fn("Notebook log line: %s", line)
+    _log_lines(collected)
 
     if return_log_lines:
         return collected
