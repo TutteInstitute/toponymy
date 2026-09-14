@@ -52,6 +52,12 @@ you are fixing a known issue please add the issue number to the PR message. If y
 are fixing a new issue feel free to file an issue and then reference it in the PR.
 You can [browse open issues](https://github.com/TutteInstitute/topicnameing/issues).
 
+### Pull Requests
+
+Keep code and PR descriptions concise. Be considerate of reviewers: AI can be a
+wonderful tool, but avoid overly verbose PRs. A PR description should never be
+longer than the code it describes.
+
 ### Code formatting
 
 This project uses [black](https://github.com/python/black) for code formatting (version pinned in `pyproject.toml`). 

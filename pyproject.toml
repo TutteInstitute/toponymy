@@ -79,6 +79,7 @@ dev = [
     "evoc",
     "huggingface-hub<1.0",
     "ipykernel",
+    "ipywidgets",
     "isort",
     "matplotlib",
     "mistralai",
@@ -104,6 +105,9 @@ doc = [
     "sphinx",
     "sphinx-autobuild",
     "sphinx-rtd-theme>=3.1.0",
+]
+interactive = [
+    "ipywidgets",
 ]
 llama = [
     "llama-cpp-python",

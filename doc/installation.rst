@@ -22,7 +22,27 @@ the ``dev`` extra:
 
 .. code-block:: shell
 
+    pip install toponymy[dev]
+
+Or from source:
+
+.. code-block:: shell
+
     pip install .[dev]
+
+
+If you want to use interactive features like the topic tree explorer in Jupyter notebooks,
+install Toponymy with the ``interactive`` extra:
+
+.. code-block:: shell
+
+    pip install toponymy[interactive]
+
+Or from source:
+
+.. code-block:: shell
+
+    pip install .[interactive]
 
 
 This provides the basics to get started, but Toponymy makes use of LLMs and embedding models as well. Instead 
