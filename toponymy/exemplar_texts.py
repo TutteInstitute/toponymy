@@ -6,6 +6,7 @@ from sklearn.metrics import pairwise_distances
 from sklearn.neighbors import KNeighborsTransformer
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy._utils import handle_verbose_params
+from toponymy.annotation import NodeId
 
 from tqdm.auto import tqdm
 import math
@@ -523,118 +524,6 @@ def random_exemplars(
     return results, indices
 
 
-def diverse_exemplars(
-    cluster_label_vector: np.ndarray,
-    objects: List[str],
-    object_vectors: np.ndarray,
-    centroid_vectors: np.ndarray,
-    n_exemplars: int = 4,
-    diversify_alpha: float = 1.0,
-    object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
-    method: str = "centroid",
-    verbose: bool = None,
-    show_progress_bar: bool = None,
-) -> Tuple[List[List[str]], List[List[int]]]:
-    """Generates a list of exemplar text for each cluster in a cluster layer.
-    These exemplars are selected to be the closest vectors to the cluster centroid while retaining
-    sufficient diversity.
-
-    Parameters
-    ----------
-    cluster_label_vector : np.ndarray
-        A vector of cluster labels for each object.
-    objects : List[str]
-        A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
-    object_vectors = np.ndarray
-        An ndarray of topic vectors for each object.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
-    n_exemplars : int, optional
-        The number of exemplars to sample for each cluster, by default 4.
-    diversify_alpha : float, optional
-        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
-    object_to_text_function: Callable[List[Any], List[str]]
-        A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
-    method : str, optional
-        The sampling method for selecting exemplars 'centroid' or 'random', by default it is 'centroid'.
-    show_progress_bar : bool, optional
-        Whether to show a progress bar, by default False.
-
-    Returns
-    -------
-    Tuple[List[List[str]], List[List[int]]]
-        A tuple containing:
-        - A list of lists of exemplar texts for each cluster
-        - A list of lists of indices indicating the position of each exemplar in the original object list
-    """
-    # Handle verbose parameters
-    show_progress_bar_val, _ = handle_verbose_params(
-        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
-    )
-
-    results = []
-    indices = []
-    null_topic = np.mean(object_vectors, axis=0)
-
-    for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
-        desc="Selecting central exemplars",
-        disable=not show_progress_bar_val,
-        unit="cluster",
-        leave=False,
-        position=1,
-    ):
-        cluster_mask = cluster_label_vector == cluster_num
-
-        def get_cluster_objects(cluster_mask, objects):
-            original_indices = np.where(cluster_mask)[0]
-            return [objects[i] for i in original_indices]
-
-        def get_cluster_object_vectors(cluster_mask, object_vectors, null_topic):
-            return object_vectors[cluster_mask] - null_topic
-
-        def get_original_indices(cluster_mask, exemplar_order, chosen_indices):
-
-            # Store original indices for this cluster
-            original_indices = np.where(cluster_mask)[0]
-
-            # Map chosen indices back to original object list indices
-            chosen_original_indices = [
-                original_indices[exemplar_order[i]] for i in chosen_indices
-            ]
-
-        # Index objects by integer position — no np.array(objects) needed
-        cluster_objects = get_cluster_objects(cluster_mask, objects)
-
-        cluster_centroid = centroid_vectors[cluster_num]
-
-        cluster_object_vectors = get_cluster_object_vectors(
-            cluster_mask, object_vectors, null_topic
-        )
-
-        chosen_exemplars, exemplar_order, chosen_indices = diverse_exemplars_by_cluster(
-            cluster_objects=cluster_objects,
-            cluster_centroid=cluster_centroid,
-            cluster_object_vectors=cluster_object_vectors,
-            null_topic=null_topic,
-            n_exemplars=n_exemplars,
-            diversify_alpha=diversify_alpha,
-            object_to_text_function=object_to_text_function,
-            method=method,
-            verbose=verbose,
-            show_progress_bar=show_progress_bar,
-        )
-
-        chosen_original_indices = get_original_indices(
-            cluster_mask, exemplar_order, chosen_indices
-        )
-
-        results.append(chosen_exemplars)
-        indices.append(chosen_original_indices)
-
-    return results, indices
-
-
 def diverse_exemplars_by_cluster(
     cluster_objects: List[str],
     cluster_centroid: np.ndarray,
@@ -724,3 +613,170 @@ def diverse_exemplars_by_cluster(
         )
 
     return chosen_exemplars, exemplar_order, chosen_indices
+
+
+class DiverseExemplarAnnotator:
+    inputs = (
+        "cluster_objects",
+        "cluster_centroids",
+        "cluster_object_vectors",
+    )
+    outputs = ("exemplars", "exemplar_original_indices")
+    algorithm_type = "node-node"
+
+    def __init__(
+        self,
+        null_topic=None,
+        n_exemplars: int = 4,
+        diversify_alpha=None,
+        object_to_text_function=None,
+        cluster_label_vector=None,
+        method="centroid",
+    ):
+        self.null_topic = null_topic
+        self.n_exemplars = n_exemplars
+        self.diversify_alpha = diversify_alpha
+        self.object_to_text_function = object_to_text_function
+        self.cluster_label_vector = cluster_label_vector
+        self.method = method
+
+    def annotate(
+        self,
+        node,
+        *,
+        cluster_objects,
+        cluster_centroid,
+        cluster_object_vectors,  # has to match inputs name
+    ):
+
+        node_result = diverse_exemplars_by_cluster(
+            cluster_objects=cluster_objects,
+            cluster_centroid=cluster_centroid,
+            cluster_object_vectors=cluster_object_vectors,
+            null_topic=self.null_topic,
+            n_exemplars=self.n_exemplars,
+            diversify_alpha=self.diversify_alpha,
+            object_to_text_function=self.object_to_text_function,
+            method=self.method,
+        )
+        chosen_exemplars, exemplar_order, chosen_indices = node_result
+        cluster_mask = self.cluster_label_vector == node.cluster
+        original_indices = np.where(cluster_mask)[0]
+        chosen_original_indices = [
+            original_indices[exemplar_order[i]] for i in chosen_indices
+        ]
+        return {
+            "exemplars": chosen_exemplars,
+            "exemplar_original_indices": chosen_original_indices,
+        }  # keys have to match outputs
+
+
+def diverse_exemplars(
+    cluster_label_vector: np.ndarray,
+    objects: List[str],
+    object_vectors: np.ndarray,
+    centroid_vectors: np.ndarray,
+    n_exemplars: int = 4,
+    diversify_alpha: float = 1.0,
+    object_to_text_function: Callable[List[Any], List[str]] = lambda x: x,
+    method: str = "centroid",
+    verbose: bool = None,
+    show_progress_bar: bool = None,
+) -> Tuple[List[List[str]], List[List[int]]]:
+    """Generates a list of exemplar text for each cluster in a cluster layer.
+    These exemplars are selected to be the closest vectors to the cluster centroid while retaining
+    sufficient diversity.
+
+    Parameters
+    ----------
+    cluster_label_vector : np.ndarray
+        A vector of cluster labels for each object.
+    objects : List[str]
+        A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
+    object_vectors = np.ndarray
+        An ndarray of topic vectors for each object.
+    centroid_vectors : np.ndarray
+        An ndarray of centroid vectors for each cluster.
+    n_exemplars : int, optional
+        The number of exemplars to sample for each cluster, by default 4.
+    diversify_alpha : float, optional
+        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
+    object_to_text_function: Callable[List[Any], List[str]]
+        A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
+    method : str, optional
+        The sampling method for selecting exemplars 'centroid' or 'random', by default it is 'centroid'.
+    show_progress_bar : bool, optional
+        Whether to show a progress bar, by default False.
+
+    Returns
+    -------
+    Tuple[List[List[str]], List[List[int]]]
+        A tuple containing:
+        - A list of lists of exemplar texts for each cluster
+        - A list of lists of indices indicating the position of each exemplar in the original object list
+    """
+    # Handle verbose parameters
+    show_progress_bar_val, _ = handle_verbose_params(
+        verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
+    )
+
+    results = []
+    indices = []
+    null_topic = np.mean(object_vectors, axis=0)
+
+    annotator = DiverseExemplarAnnotator(
+        null_topic=null_topic,
+        n_exemplars=n_exemplars,
+        diversify_alpha=diversify_alpha,
+        object_to_text_function=object_to_text_function,
+        cluster_label_vector=cluster_label_vector,
+    )
+
+    for cluster_num in tqdm(
+        range(cluster_label_vector.max() + 1),
+        desc="Selecting central exemplars",
+        disable=not show_progress_bar_val,
+        unit="cluster",
+        leave=False,
+        position=1,
+    ):
+        cluster_mask = cluster_label_vector == cluster_num
+        original_indices = np.where(cluster_mask)[0]
+        cluster_objects = [objects[i] for i in original_indices]
+        cluster_centroid = centroid_vectors[cluster_num]
+        cluster_object_vectors = object_vectors[cluster_mask] - null_topic
+
+        # TODO: layer=0 is a placeholder. Once integrated with Executor and full tree context,
+        # this will the be node object that is passed to the annotator.
+        node = NodeId(layer=0, cluster=cluster_num)
+
+        result = annotator.annotate(
+            node=node,
+            cluster_objects=cluster_objects,
+            cluster_centroid=cluster_centroid,
+            cluster_object_vectors=cluster_object_vectors,
+        )
+        chosen_exemplars = result["exemplars"]
+        chosen_original_indices = result["exemplar_original_indices"]
+
+        # chosen_exemplars, exemplar_order, chosen_indices = diverse_exemplars_by_cluster(
+        #     cluster_objects=cluster_objects,
+        #     cluster_centroid=cluster_centroid,
+        #     cluster_object_vectors=cluster_object_vectors,
+        #     null_topic=null_topic,
+        #     n_exemplars=n_exemplars,
+        #     diversify_alpha=diversify_alpha,
+        #     object_to_text_function=object_to_text_function,
+        #     method=method,
+        #     verbose=verbose,
+        #     show_progress_bar=show_progress_bar,
+        # )
+
+        # chosen_original_indices = get_original_indices(
+        #     cluster_mask, exemplar_order, chosen_indices
+        # )
+
+        results.append(chosen_exemplars)
+        indices.append(chosen_original_indices)
+
+    return results, indices
