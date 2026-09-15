@@ -60,6 +60,7 @@ and a tour of some of the richer functionality and uses cases.
    keyphrases
    exemplar_texts
    topic_summaries
+   tree_search
    llm_wrappers
    embedding_wrappers
    cluster_layers

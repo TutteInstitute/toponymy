@@ -71,6 +71,16 @@ NOTEBOOK_CONFIG = {
         "run_in_pr": False,
         "timeout": 600,
     },
+    "tree_search.ipynb": {
+        "has_openainamer": False,
+        "run_in_pr": True,
+        "timeout": 60,
+    },
+    "semantic_search_newsgroups.ipynb": {
+        "has_openainamer": False,
+        "run_in_pr": True,
+        "timeout": 300,
+    },
 }
 
 
