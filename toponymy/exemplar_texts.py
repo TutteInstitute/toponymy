@@ -497,51 +497,6 @@ def submodular_selection_exemplars(
         results.append(chosen_exemplars)
         indices.append(chosen_original_indices)
 
-        # # Get mask for current cluster
-        # cluster_mask = cluster_label_vector == cluster_num
-        # # subsample if it is too large
-        # if np.sum(cluster_mask) > 16384:
-        #     cluster_mask = np.random.choice(
-        #         np.where(cluster_mask)[0], size=16384, replace=False
-        #     )
-        #     cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
-        # # Get the objects in this cluster
-
-        # # Store original indices for this cluster
-        # original_indices = np.where(cluster_mask)[0]
-
-        # # Index objects by integer position — no np.array(objects) needed
-        # cluster_objects = [objects[i] for i in original_indices]
-
-        # # If there is an empty cluster emit empty lists
-        # if len(cluster_objects) == 0:
-        #     results.append([])
-        #     indices.append([])
-        #     continue
-
-        # cluster_object_vectors = object_vectors[cluster_mask] - null_topic_vector
-        # cluster_indices = np.arange(cluster_object_vectors.shape[0])
-
-        # if cluster_object_vectors.shape[0] >= n_exemplars:
-        #     _, candidate_indices = selector.fit_transform(
-        #         cluster_object_vectors, y=cluster_indices
-        #     )
-        # else:
-        #     candidate_indices = cluster_indices
-
-        # if object_to_text_function is None:
-        #     chosen_exemplars = [cluster_objects[i] for i in candidate_indices]
-        # else:
-        #     chosen_exemplars = object_to_text_function(
-        #         [cluster_objects[i] for i in candidate_indices]
-        #     )
-
-        # # Map chosen indices back to original object list indices
-        # chosen_original_indices = [original_indices[i] for i in candidate_indices]
-
-        # results.append(chosen_exemplars)
-        # indices.append(chosen_original_indices)
-
     return results, indices
 
 
