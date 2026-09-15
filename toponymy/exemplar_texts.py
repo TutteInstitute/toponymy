@@ -324,6 +324,93 @@ class FacilityLocationSelection(BaseGraphSelection):
 ###################################################################################################
 
 
+class SubmodularExemplarAnnotator:
+    inputs = ("cluster_objects", "cluster_label_vector", "cluster_object_vectors")
+    outputs = ("exemplars", "exemplar_original_indices")
+    algorithm_type = "node-node"
+
+    def __init__(
+        self,
+        n_exemplars: int = 4,
+        object_to_text_function=None,
+        cluster_label_vector: np.ndarray = None,
+        submodular_function: str = "facility_location",
+    ):
+        self.n_exemplars = n_exemplars
+        self.object_to_text_function = object_to_text_function
+        self.cluster_label_vector = cluster_label_vector
+        self.submodular_function = submodular_function
+        if submodular_function == "facility_location":
+            self.selector = FacilityLocationSelection(
+                n_exemplars, metric="cosine", optimizer="lazy"
+            )
+        elif submodular_function == "saturated_coverage":
+            self.selector = SaturatedCoverageSelection(
+                n_exemplars, metric="cosine", optimizer="lazy"
+            )
+        else:
+            raise ValueError(
+                f"selection_function={submodular_function} is not a valid selection. Please choose one of (facility_location,saturated_coverage)"
+            )
+
+    def annotate(
+        self,
+        node,
+        *,
+        cluster_objects,
+        cluster_object_vectors,
+    ):
+        if len(cluster_objects) == 0:
+            return {"exemplars": [], "exemplar_original_indices": []}
+
+        # Subsample if cluster is too large
+        subsample_indices = None
+        if len(cluster_objects) > 16384:
+            subsample_indices = np.random.choice(
+                len(cluster_objects), size=16384, replace=False
+            )
+            subsampled_objects = [cluster_objects[i] for i in subsample_indices]
+            subsampled_vectors = cluster_object_vectors[subsample_indices]
+        else:
+            subsampled_objects = cluster_objects
+            subsampled_vectors = cluster_object_vectors
+
+        # Compute null topic for this cluster
+        null_topic_vector = np.mean(subsampled_vectors, axis=0)
+        centered_vectors = subsampled_vectors - null_topic_vector
+        cluster_indices = np.arange(centered_vectors.shape[0])
+
+        # Select exemplars
+        if centered_vectors.shape[0] >= self.n_exemplars:
+            _, candidate_indices = self.selector.fit_transform(
+                centered_vectors, y=cluster_indices
+            )
+        else:
+            candidate_indices = cluster_indices
+
+        # Extract exemplars from subsampled set
+        chosen_exemplars = [subsampled_objects[i] for i in candidate_indices]
+        if self.object_to_text_function is not None:
+            chosen_exemplars = self.object_to_text_function(chosen_exemplars)
+
+        # Remap indices: subsampled indices to cluster-relative indices
+        # (these will be mapped to global indices in the next step)
+        if subsample_indices is not None:
+            chosen_original_indices = subsample_indices[candidate_indices]
+        else:
+            chosen_original_indices = candidate_indices
+
+        # Map cluster-relative to global indices
+        cluster_mask = self.cluster_label_vector == node.cluster
+        original_indices = np.where(cluster_mask)[0]
+        chosen_original_indices = [original_indices[i] for i in chosen_original_indices]
+
+        return {
+            "exemplars": chosen_exemplars,
+            "exemplar_original_indices": chosen_original_indices,
+        }  # keys have to match outputs
+
+
 def submodular_selection_exemplars(
     cluster_label_vector: np.ndarray,
     objects: List[str],
@@ -369,19 +456,12 @@ def submodular_selection_exemplars(
     results = []
     indices = []
 
-    null_topic_vector = np.mean(object_vectors, axis=0)
-    if submodular_function == "facility_location":
-        selector = FacilityLocationSelection(
-            n_exemplars, metric="cosine", optimizer="lazy"
-        )
-    elif submodular_function == "saturated_coverage":
-        selector = SaturatedCoverageSelection(
-            n_exemplars, metric="cosine", optimizer="lazy"
-        )
-    else:
-        raise ValueError(
-            f"selection_function={submodular_function} is not a valid selection. Please choose one of (facility_location,saturated_coverage)"
-        )
+    submodular_annotator = SubmodularExemplarAnnotator(
+        n_exemplars=n_exemplars,
+        object_to_text_function=object_to_text_function,
+        cluster_label_vector=cluster_label_vector,
+        submodular_function=submodular_function,
+    )
 
     # Handle verbose parameters
     show_progress_bar_val, _ = handle_verbose_params(
@@ -396,52 +476,116 @@ def submodular_selection_exemplars(
         leave=False,
         position=1,
     ):
-        # Get mask for current cluster
+
         cluster_mask = cluster_label_vector == cluster_num
-        # subsample if it is too large
-        if np.sum(cluster_mask) > 16384:
-            cluster_mask = np.random.choice(
-                np.where(cluster_mask)[0], size=16384, replace=False
-            )
-            cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
-        # Get the objects in this cluster
-
-        # Store original indices for this cluster
         original_indices = np.where(cluster_mask)[0]
-
-        # Index objects by integer position — no np.array(objects) needed
         cluster_objects = [objects[i] for i in original_indices]
+        cluster_object_vectors = object_vectors[cluster_mask]
 
-        # If there is an empty cluster emit empty lists
-        if len(cluster_objects) == 0:
-            results.append([])
-            indices.append([])
-            continue
+        # TODO: layer=0 is a placeholder. Once integrated with Executor and full tree context,
+        # this will the be node object that is passed to the annotator.
+        node = NodeId(layer=0, cluster=cluster_num)
 
-        cluster_object_vectors = object_vectors[cluster_mask] - null_topic_vector
-        cluster_indices = np.arange(cluster_object_vectors.shape[0])
-
-        if cluster_object_vectors.shape[0] >= n_exemplars:
-            _, candidate_indices = selector.fit_transform(
-                cluster_object_vectors, y=cluster_indices
-            )
-        else:
-            candidate_indices = cluster_indices
-
-        if object_to_text_function is None:
-            chosen_exemplars = [cluster_objects[i] for i in candidate_indices]
-        else:
-            chosen_exemplars = object_to_text_function(
-                [cluster_objects[i] for i in candidate_indices]
-            )
-
-        # Map chosen indices back to original object list indices
-        chosen_original_indices = [original_indices[i] for i in candidate_indices]
+        result = submodular_annotator.annotate(
+            node=node,
+            cluster_objects=cluster_objects,
+            cluster_object_vectors=cluster_object_vectors,
+        )
+        chosen_exemplars = result["exemplars"]
+        chosen_original_indices = result["exemplar_original_indices"]
 
         results.append(chosen_exemplars)
         indices.append(chosen_original_indices)
 
+        # # Get mask for current cluster
+        # cluster_mask = cluster_label_vector == cluster_num
+        # # subsample if it is too large
+        # if np.sum(cluster_mask) > 16384:
+        #     cluster_mask = np.random.choice(
+        #         np.where(cluster_mask)[0], size=16384, replace=False
+        #     )
+        #     cluster_mask = np.isin(np.arange(len(cluster_label_vector)), cluster_mask)
+        # # Get the objects in this cluster
+
+        # # Store original indices for this cluster
+        # original_indices = np.where(cluster_mask)[0]
+
+        # # Index objects by integer position — no np.array(objects) needed
+        # cluster_objects = [objects[i] for i in original_indices]
+
+        # # If there is an empty cluster emit empty lists
+        # if len(cluster_objects) == 0:
+        #     results.append([])
+        #     indices.append([])
+        #     continue
+
+        # cluster_object_vectors = object_vectors[cluster_mask] - null_topic_vector
+        # cluster_indices = np.arange(cluster_object_vectors.shape[0])
+
+        # if cluster_object_vectors.shape[0] >= n_exemplars:
+        #     _, candidate_indices = selector.fit_transform(
+        #         cluster_object_vectors, y=cluster_indices
+        #     )
+        # else:
+        #     candidate_indices = cluster_indices
+
+        # if object_to_text_function is None:
+        #     chosen_exemplars = [cluster_objects[i] for i in candidate_indices]
+        # else:
+        #     chosen_exemplars = object_to_text_function(
+        #         [cluster_objects[i] for i in candidate_indices]
+        #     )
+
+        # # Map chosen indices back to original object list indices
+        # chosen_original_indices = [original_indices[i] for i in candidate_indices]
+
+        # results.append(chosen_exemplars)
+        # indices.append(chosen_original_indices)
+
     return results, indices
+
+
+class RandomExemplarAnnotator:
+    inputs = ("cluster_objects",)
+    outputs = ("exemplars", "exemplar_original_indices")
+    algorithm_type = "node-node"
+
+    def __init__(
+        self,
+        n_exemplars: int = 4,
+        object_to_text_function=None,
+        cluster_label_vector=None,
+    ):
+        self.n_exemplars = n_exemplars
+        self.object_to_text_function = object_to_text_function
+        self.cluster_label_vector = cluster_label_vector
+
+    def annotate(
+        self,
+        node,
+        *,
+        cluster_objects,
+    ):
+        if len(cluster_objects) == 0:
+            return {"exemplars": [], "exemplar_original_indices": []}
+
+        # Random permutation of indices within this cluster
+        exemplar_order = np.random.permutation(len(cluster_objects))[: self.n_exemplars]
+        # Extract selected exemplar objects
+        chosen_exemplars = [cluster_objects[i] for i in exemplar_order]
+        # Apply text transformation if provided
+        if self.object_to_text_function is not None:
+            chosen_exemplars = self.object_to_text_function(chosen_exemplars)
+
+        # Map cluster-relative indices back to global indices using cluster mask
+        cluster_mask = self.cluster_label_vector == node.cluster
+        original_indices = np.where(cluster_mask)[0]
+        chosen_original_indices = [original_indices[i] for i in exemplar_order]
+
+        return {
+            "exemplars": chosen_exemplars,
+            "exemplar_original_indices": chosen_original_indices,
+        }  # keys have to match outputs
 
 
 def random_exemplars(
@@ -483,6 +627,13 @@ def random_exemplars(
 
     results = []
     indices = []
+
+    random_annotator = RandomExemplarAnnotator(
+        n_exemplars=n_exemplars,
+        object_to_text_function=object_to_text_function,
+        cluster_label_vector=cluster_label_vector,
+    )
+
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting random exemplars",
@@ -500,23 +651,16 @@ def random_exemplars(
         # Index objects by integer position — no np.array(objects) needed
         cluster_objects = [objects[i] for i in original_indices]
 
-        # If there is an empty cluster emit empty lists
-        if len(cluster_objects) == 0:
-            results.append([])
-            indices.append([])
-            continue
+        # TODO: layer=0 is a placeholder. Once integrated with Executor and full tree context,
+        # this will the be node object that is passed to the annotator.
+        node = NodeId(layer=0, cluster=cluster_num)
 
-        # Randomly permute the index to create a random selection
-        exemplar_order = np.random.permutation(len(cluster_objects))[:n_exemplars]
-        if object_to_text_function is None:
-            chosen_exemplars = cluster_objects[exemplar_order].tolist()
-        else:
-            chosen_exemplars = object_to_text_function(
-                [cluster_objects[i] for i in exemplar_order]
-            )
-
-        # Map chosen indices back to original object list indices
-        chosen_original_indices = [original_indices[i] for i in exemplar_order]
+        result = random_annotator.annotate(
+            node=node,
+            cluster_objects=cluster_objects,
+        )
+        chosen_exemplars = result["exemplars"]
+        chosen_original_indices = result["exemplar_original_indices"]
 
         results.append(chosen_exemplars)
         indices.append(chosen_original_indices)
@@ -626,14 +770,12 @@ class DiverseExemplarAnnotator:
 
     def __init__(
         self,
-        null_topic=None,
         n_exemplars: int = 4,
         diversify_alpha=None,
         object_to_text_function=None,
         cluster_label_vector=None,
         method="centroid",
     ):
-        self.null_topic = null_topic
         self.n_exemplars = n_exemplars
         self.diversify_alpha = diversify_alpha
         self.object_to_text_function = object_to_text_function
@@ -649,11 +791,13 @@ class DiverseExemplarAnnotator:
         cluster_object_vectors,  # has to match inputs name
     ):
 
+        null_topic = np.mean(cluster_object_vectors, axis=0)
+
         node_result = diverse_exemplars_by_cluster(
             cluster_objects=cluster_objects,
             cluster_centroid=cluster_centroid,
             cluster_object_vectors=cluster_object_vectors,
-            null_topic=self.null_topic,
+            null_topic=null_topic,
             n_exemplars=self.n_exemplars,
             diversify_alpha=self.diversify_alpha,
             object_to_text_function=self.object_to_text_function,
@@ -722,10 +866,8 @@ def diverse_exemplars(
 
     results = []
     indices = []
-    null_topic = np.mean(object_vectors, axis=0)
 
-    annotator = DiverseExemplarAnnotator(
-        null_topic=null_topic,
+    diverse_annotator = DiverseExemplarAnnotator(
         n_exemplars=n_exemplars,
         diversify_alpha=diversify_alpha,
         object_to_text_function=object_to_text_function,
@@ -744,13 +886,13 @@ def diverse_exemplars(
         original_indices = np.where(cluster_mask)[0]
         cluster_objects = [objects[i] for i in original_indices]
         cluster_centroid = centroid_vectors[cluster_num]
-        cluster_object_vectors = object_vectors[cluster_mask] - null_topic
+        cluster_object_vectors = object_vectors[cluster_mask]
 
         # TODO: layer=0 is a placeholder. Once integrated with Executor and full tree context,
         # this will the be node object that is passed to the annotator.
         node = NodeId(layer=0, cluster=cluster_num)
 
-        result = annotator.annotate(
+        result = diverse_annotator.annotate(
             node=node,
             cluster_objects=cluster_objects,
             cluster_centroid=cluster_centroid,
@@ -758,23 +900,6 @@ def diverse_exemplars(
         )
         chosen_exemplars = result["exemplars"]
         chosen_original_indices = result["exemplar_original_indices"]
-
-        # chosen_exemplars, exemplar_order, chosen_indices = diverse_exemplars_by_cluster(
-        #     cluster_objects=cluster_objects,
-        #     cluster_centroid=cluster_centroid,
-        #     cluster_object_vectors=cluster_object_vectors,
-        #     null_topic=null_topic,
-        #     n_exemplars=n_exemplars,
-        #     diversify_alpha=diversify_alpha,
-        #     object_to_text_function=object_to_text_function,
-        #     method=method,
-        #     verbose=verbose,
-        #     show_progress_bar=show_progress_bar,
-        # )
-
-        # chosen_original_indices = get_original_indices(
-        #     cluster_mask, exemplar_order, chosen_indices
-        # )
 
         results.append(chosen_exemplars)
         indices.append(chosen_original_indices)
