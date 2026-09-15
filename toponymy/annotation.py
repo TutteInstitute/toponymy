@@ -1,3 +1,9 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
 from typing import (
     Any,
     Dict,
@@ -7,7 +13,6 @@ from typing import (
     Optional,
     Protocol,
     runtime_checkable,
-    Self,
     Sequence,
     Tuple,
     TypeVar,
@@ -15,6 +20,7 @@ from typing import (
 from collections.abc import Iterator, Mapping, MutableMapping
 from collections import defaultdict
 from enum import Enum
+from warnings import warn
 
 T = TypeVar("T")
 
@@ -479,7 +485,18 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
 
 @runtime_checkable
 class Annotator(Protocol):
-    """Structural contract for an annotation algorithm."""
+    """Structural contract for an annotation algorithm.
+
+    Required:
+    - inputs: input annotation names that must be present and computed per node
+    - outputs: output annotation names produced by annotate(...)
+    - algorithm_type: type for executor. currently supports "node-node"
+    - annotate(node, **kwargs): returns a mapping with exactly keys in outputs
+
+    Optional:
+    - optional_inputs: input annotation names that are passed only when available
+      and computed for the current node.
+    """
 
     inputs: Sequence[str]
     outputs: Sequence[str]
@@ -524,10 +541,14 @@ class Executor:
             )
 
         inputs = tuple(annotator.inputs)
+        optional_inputs = tuple(getattr(annotator, "optional_inputs", ()))
         outputs = tuple(annotator.outputs)
 
         if len(set(inputs)) != len(inputs):
-            raise ValueError("annotator.inputs contains duplicate names")
+            raise ValueError("annotator.inputs do not match")
+
+        if len(set(optional_inputs)) != len(optional_inputs):
+            raise ValueError("annotator.optional_inputs contains duplicate names")
 
         if len(set(outputs)) != len(outputs):
             raise ValueError("annotator.outputs contains duplicate names")
@@ -535,6 +556,14 @@ class Executor:
         missing = [name for name in inputs if name not in self.store]
         if missing:
             raise KeyError(f"missing input annotation(s): {missing}")
+
+        missing_optional = [name for name in optional_inputs if name not in self.store]
+        if missing_optional:
+            warn(
+                f"missing optional input annotation(s) will be ignored: {missing_optional}"
+            )
+
+        input_annotations = set(inputs) | set(optional_inputs) - set(missing_optional)
 
         selected_nodes = (
             self.store.tree.nodes
@@ -550,7 +579,7 @@ class Executor:
 
         for node in selected_nodes:
             try:
-                values = {name: self.store[name][node] for name in inputs}
+                values = {name: self.store[name][node] for name in input_annotations}
                 result = annotator.annotate(node, **values)
             except Exception as error:
                 for name in outputs:
