@@ -17,7 +17,7 @@ from typing import (
     Tuple,
     TypeVar,
 )
-from collections.abc import Iterator, Mapping, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping, ValuesView
 from collections import defaultdict
 from enum import Enum
 from warnings import warn
@@ -326,6 +326,9 @@ class Annotation(MutableMapping[NodeId, T]):
 
     def __len__(self) -> int:
         return len(self._values)
+
+    def __repr__(self) -> str:
+        return f"Annotation(name={self.name!r}, tree={self.tree!r})"
 
     @property
     def states(self) -> Mapping[NodeId, AnnotationState]:
