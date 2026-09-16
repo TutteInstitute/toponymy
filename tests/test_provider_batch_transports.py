@@ -10,12 +10,20 @@ import httpx
 import pytest
 
 import toponymy.provider_batches as provider_batches
+from toponymy.debug_logging import BasicDebugLogger
+from toponymy.llm_wrappers import (
+    BatchAzureAINamer,
+    CallResult,
+    CohereBatchNamer,
+    LLMBatchItemError,
+)
 from toponymy.provider_batches import (
     AzureBatchTransport,
     BatchItemError,
     BatchProtocolError,
     CohereBatchTransport,
 )
+from toponymy.templates import Prompt
 
 PROMPTS = [
     {"system": "Name the topic.", "user": "Café trees 🌳", "combined": "unused"},
@@ -984,3 +992,140 @@ def test_real_cohere_sdk_serializes_dataset_and_batch_requests_with_mock_http():
         transport = cohere_transport(client)
         assert transport.submit_batch(PROMPTS[:1], 0.2, 100) == "batch-fixture"
     assert len(requests) == 3
+
+
+@pytest.fixture(params=["azure", "cohere"])
+def batch_debug(request, tmp_path):
+    log_path = tmp_path / "batch.jsonl"
+    events = []
+    logger = BasicDebugLogger(log_path)
+
+    def callback(event):
+        events.append(event)
+        logger(event)
+
+    def make(rows):
+        options = dict(
+            api_key="fixture",
+            model="fixture-model",
+            callback=callback,
+            polling_interval=0.001,
+        )
+        if request.param == "azure":
+            client = AzureClient(rows)
+            wrapper = BatchAzureAINamer(
+                endpoint="https://resource.openai.azure.com", client=client, **options
+            )
+        else:
+            add, _ = request.getfixturevalue("avro_download")
+            add("output-dataset", rows)
+            client = CohereClient()
+            wrapper = CohereBatchNamer(client=client, **options)
+        return wrapper, client
+
+    row = azure_row if request.param == "azure" else cohere_row
+    return make, row, events, log_path
+
+
+@pytest.mark.asyncio
+async def test_batch_debug_success_records_preserve_order_and_topic_names(batch_debug):
+    make, row, events, log_path = batch_debug
+    texts = ['{"topic_name":"Café 🌳"}', '{"topic_name":"Oceans"}']
+    wrapper, client = make([row("1", texts[1]), row("0", texts[0])])
+
+    names = await wrapper.generate_topic_names([Prompt("s", "u"), Prompt("s", "v")])
+
+    assert names == ["Café 🌳", "Oceans"]
+    records = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record.get("event") for record in records] == [
+        "llm_call_start",
+        "llm_call_success",
+    ]
+    assert json.loads(json.dumps(events)) == records
+    assert records[1] == {
+        "wrapper": type(wrapper).__name__,
+        "model": "fixture-model",
+        "event": "llm_call_success",
+        "routine": "batch_results",
+        "batch_id": (
+            "azure-batch" if isinstance(wrapper, BatchAzureAINamer) else "cohere-batch"
+        ),
+        "results": [{"value": text, "error": None} for text in texts],
+    }
+    assert sum(call[0] == "create" for call in client.calls) == 1
+    assert not any(call[0] == "cancel" for call in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_batch_debug_item_failure_keeps_structured_error_and_return_contract(
+    batch_debug,
+):
+    make, row, events, log_path = batch_debug
+    failed = row("1")
+    failed["response"]["status_code"] = 500
+    wrapper, _ = make([failed, row("0", "Good")])
+    batch_id = wrapper.submit_batch([Prompt("s", "u"), Prompt("s", "v")], 0.2, 128)
+
+    results = await wrapper.retrieve_batch_text_results(batch_id, return_results=True)
+
+    assert all(isinstance(result, CallResult) for result in results)
+    assert results[0].value == "Good" and results[0].error is None
+    assert results[1].value is None
+    assert isinstance(results[1].error, LLMBatchItemError)
+    records = [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert records[-1].get("results") == [
+        {"value": "Good", "error": None},
+        {
+            "value": None,
+            "error": {"type": "LLMBatchItemError", "message": str(results[1].error)},
+        },
+    ]
+    assert json.loads(json.dumps(events)) == records
+    with pytest.raises(LLMBatchItemError, match="HTTP 500"):
+        await wrapper.retrieve_batch_text_results(batch_id)
+
+
+@pytest.mark.asyncio
+async def test_batch_debug_cancel_does_not_emit_success_or_replace_cancellation(
+    batch_debug,
+):
+    make, _, events, log_path = batch_debug
+    wrapper, client = make([])
+    client.statuses = deque(
+        [
+            (
+                "in_progress"
+                if isinstance(wrapper, BatchAzureAINamer)
+                else "BATCH_STATUS_QUEUED"
+            )
+        ]
+    )
+    entered = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    def retrieve(batch_id):
+        loop.call_soon_threadsafe(entered.set)
+        return client.retrieve(batch_id)
+
+    client.batches.retrieve = retrieve
+    task = asyncio.create_task(wrapper.generate_topic_names([Prompt("s", "u")]))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=3)
+        task.cancel("caller cancellation")
+        with pytest.raises(asyncio.CancelledError, match="caller cancellation"):
+            await asyncio.wait_for(task, timeout=3)
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    assert sum(call[0] == "create" for call in client.calls) == 1
+    assert sum(call[0] == "cancel" for call in client.calls) == 1
+    assert [event["event"] for event in events] == ["llm_call_start"]
+    assert [
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()
+    ] == events

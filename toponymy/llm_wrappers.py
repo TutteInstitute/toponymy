@@ -725,6 +725,20 @@ def _transport_batch_results(results):
     return aligned
 
 
+def _batch_debug_results(results: list[CallResult[str]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "value": result.value,
+            "error": (
+                {"type": type(result.error).__name__, "message": str(result.error)}
+                if result.error is not None
+                else None
+            ),
+        }
+        for result in results
+    ]
+
+
 def _ordered_anthropic_results(records):
     indexed = {}
     for record in records:
@@ -3291,7 +3305,7 @@ class CohereBatchNamer(AsyncLLMWrapper):
                 "event": "llm_call_success",
                 "routine": "batch_results",
                 "batch_id": batch_id,
-                "results": results,
+                "results": _batch_debug_results(results),
             }
         )
         return results
@@ -4433,7 +4447,7 @@ class BatchAzureAINamer(AsyncLLMWrapper):
                 "event": "llm_call_success",
                 "routine": "batch_results",
                 "batch_id": batch_id,
-                "results": results,
+                "results": _batch_debug_results(results),
             }
         )
         return results
