@@ -39,6 +39,109 @@ without downloading a replacement.
    * - ``new_*`` implementation imports
      - ``clustering``, ``types``, ``feature_extraction``, ``templates`` and ``toponymy``
 
+Constructor and fit arguments
+-----------------------------
+
+Arguments after ``clusterer`` in ``Toponymy(...)`` are now keyword-only.
+The ``fit`` and ``fit_predict`` methods no longer accept ``exemplar_method``,
+``keyphrase_method`` or ``subtopic_method``. Move these choices to the
+corresponding extractor's ``selection_method`` at construction. For example,
+replace::
+
+    model.fit(
+        objects, embedding_vectors, clusterable_vectors,
+        exemplar_method="central",
+        keyphrase_method="information_weighted",
+        subtopic_method="central",
+    )
+
+with::
+
+    from toponymy import Toponymy
+    from toponymy.feature_extraction import (
+        TextExemplarExtractor, TextKeyphraseExtractor, SubtopicExtractor,
+    )
+
+    model = Toponymy(
+        llm_wrapper,
+        text_embedding_model=embedder,
+        clusterer=clusterer,
+        feature_extractors=[
+            TextExemplarExtractor(selection_method="central"),
+            TextKeyphraseExtractor(selection_method="information_weighted"),
+            SubtopicExtractor(selection_method="central"),
+        ],
+    )
+    model.fit(objects, embedding_vectors, clusterable_vectors)
+
+For ``fit_predict``, use the same extractor configuration and call
+``model.fit_predict(objects, embedding_vectors, clusterable_vectors)``. It still
+returns one array of object-aligned topic names per layer, rather than the topic
+objects themselves.
+
+This transfers the selection choices; it does not reproduce the old clustering,
+prompt text or generated names. In particular, ``SubtopicExtractor`` defaults
+to ``"size"`` when no method is specified, while the former ``fit`` signature
+defaulted to ``subtopic_method="central"`` and ``fit_predict`` defaulted to
+``subtopic_method="facility_location"``.
+
+``show_progress_bars`` and ``exemplar_delimiters`` are removed from the
+``Toponymy`` constructor. Configure ``PLSCANClusterer(verbose=True)`` or
+``KMeansClusterer(verbose=True)`` for their progress output; the pipeline does
+not reproduce the former per-layer progress bars. Setting ``Toponymy(verbose=True)``
+does not enable those clusterer progress settings.
+
+Custom exemplar formatting belongs in a template. For example, replace
+``exemplar_delimiters=("<example>", "</example>\n")`` with a template that
+supplies delimiters for both naming and disambiguation::
+
+    from toponymy.templates import TextTemplate
+
+    class ExampleTemplate(TextTemplate):
+        @staticmethod
+        def _with_delimiters(features):
+            return {
+                **features,
+                "exemplar_start_delimiter": "<example>",
+                "exemplar_end_delimiter": "</example>\n",
+            }
+
+        def cluster_prompt(self, features, name_kind):
+            return super().cluster_prompt(self._with_delimiters(features), name_kind)
+
+        def disambiguate_prompt(self, names, features, name_kind):
+            return super().disambiguate_prompt(
+                names, [self._with_delimiters(item) for item in features], name_kind
+            )
+
+    model = Toponymy(
+        llm_wrapper,
+        prompt_template=ExampleTemplate("documents", "my corpus"),
+    )
+
+The copied dictionaries preserve the original topic features. There is no
+constructor alias for the old ``exemplar_delimiters`` pair.
+
+``prompt_template`` now accepts a ``Template`` instance. The former
+``PROMPT_TEMPLATES``, ``SUMMARY_PROMPT_TEMPLATES`` and
+``MULTILINGUAL_EN_FR_PROMPT_TEMPLATES`` dictionaries are removed. Use
+``TextTemplate``, ``SummaryTemplate`` or ``MultilingualENFRTemplate``
+respectively. For example::
+
+    from toponymy.templates import TextTemplate
+
+    model = Toponymy(
+        llm_wrapper,
+        prompt_template=TextTemplate("documents", "my corpus"),
+    )
+
+Custom dictionaries need to be ported to the ``Template`` interface: implement
+``cluster_prompt`` and ``disambiguate_prompt`` to return ``Prompt`` objects,
+and ``extract_name`` and ``extract_disambiguated_names`` to parse responses.
+The old ``toponymy.prompt_construction`` module is removed; call the template's
+prompt methods directly. The removed ``toponymy.cluster_layer`` classes are
+replaced by the membership types and separate topic state described below.
+
 Inputs and ownership
 --------------------
 
@@ -110,6 +213,15 @@ naming. Upper-layer prompts are refreshed after layer-dependent extractors
 receive lower-layer names. Every new ``fit`` recomputes data-dependent stages.
 Explicit ``reuse_clusterer=True`` reuses clustering only; feature and naming
 state are fresh for each prepared fit.
+
+Replace reads of ``layer.topic_names[cluster_id]``, ``layer.keyphrases[cluster_id]``
+and ``layer.prompts[cluster_id]`` with fields on
+``topic = model.topics_[(layer_index, cluster_id)]``: ``topic.name``,
+``topic.features["cluster_keywords"]`` and ``topic.prompt``. The keyphrase field
+exists only when a keyphrase extractor is configured. Keys use the original
+cluster IDs, which need not be consecutive. Topic names are ``None`` until
+naming succeeds; features and initial prompts can be inspected after ``prepare``.
+Cluster layers retain membership, not mutable naming or provider configuration.
 
 Disambiguation remains enabled. It detects duplicate names, and uses semantic
 name similarity when a text embedder is present. Use ``disambiguate=False``
