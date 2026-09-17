@@ -727,7 +727,8 @@ def fixed_polling_clock(monkeypatch):
             name: getattr(asyncio, name)
             for name in (
                 "create_task",
-                "wait_for",
+                "wait",
+                "gather",
                 "to_thread",
                 "sleep",
                 "TimeoutError",
@@ -747,11 +748,11 @@ async def test_owned_overall_expiry_does_not_require_clock_to_reach_deadline(
 ):
     timers = []
 
-    async def expire_early(awaitable, *, timeout):
+    async def expire_early(tasks, *, timeout):
         timers.append(timeout)
-        return await asyncio.wait_for(awaitable, timeout=0)
+        return set(), set(tasks)
 
-    fixed_polling_clock.wait_for = expire_early
+    fixed_polling_clock.wait = expire_early
     client = AzureClient() if provider == "azure" else CohereClient()
     factory = azure_transport if provider == "azure" else cohere_transport
     transport = factory(
@@ -805,13 +806,13 @@ async def test_owned_request_expiry_retries_without_becoming_overall_expiry(
 ):
     timers = []
 
-    async def expire_requests(awaitable, *, timeout):
+    async def expire_requests(tasks, *, timeout):
         timers.append(timeout)
         if complete and len(timers) == 2:
-            return await asyncio.wait_for(awaitable, timeout=timeout)
-        return await asyncio.wait_for(awaitable, timeout=0)
+            return await asyncio.wait(tasks, timeout=timeout)
+        return set(), set(tasks)
 
-    fixed_polling_clock.wait_for = expire_requests
+    fixed_polling_clock.wait = expire_requests
     client = AzureClient() if provider == "azure" else CohereClient()
     factory = azure_transport if provider == "azure" else cohere_transport
     transport = factory(client, timeout=10.0, request_timeout=1.0, max_poll_retries=1)
@@ -823,6 +824,31 @@ async def test_owned_request_expiry_retries_without_becoming_overall_expiry(
             await transport.wait_for_completion("batch")
         assert client.calls == []
     assert timers == [1.0, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_thread_call_preserves_cancellation_when_request_finishes(monkeypatch):
+    async def completed_call(function, *args):
+        asyncio.get_running_loop().call_soon(task.cancel, "caller cancellation")
+        return "completed"
+
+    monkeypatch.setattr(provider_batches.asyncio, "to_thread", completed_call)
+    cancellations = []
+
+    async def call():
+        try:
+            return await provider_batches._thread_call(lambda: "completed", timeout=1.0)
+        except asyncio.CancelledError as error:
+            cancellations.append(error)
+            raise
+
+    task = asyncio.create_task(call())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled()
+    # Python 3.10 does not retain the message across a cancelled Task boundary.
+    assert len(cancellations) == 1
+    assert str(cancellations[0]) == "caller cancellation"
 
 
 @pytest.mark.asyncio
@@ -1112,17 +1138,29 @@ async def test_batch_debug_cancel_does_not_emit_success_or_replace_cancellation(
         return client.retrieve(batch_id)
 
     client.batches.retrieve = retrieve
-    task = asyncio.create_task(wrapper.generate_topic_names([Prompt("s", "u")]))
+    cancellations = []
+
+    async def generate():
+        try:
+            return await wrapper.generate_topic_names([Prompt("s", "u")])
+        except asyncio.CancelledError as error:
+            cancellations.append(error)
+            raise
+
+    task = asyncio.create_task(generate())
     try:
         await asyncio.wait_for(entered.wait(), timeout=3)
         task.cancel("caller cancellation")
-        with pytest.raises(asyncio.CancelledError, match="caller cancellation"):
+        with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, timeout=3)
     finally:
         if not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
 
+    assert task.cancelled()
+    assert len(cancellations) == 1
+    assert str(cancellations[0]) == "caller cancellation"
     assert sum(call[0] == "create" for call in client.calls) == 1
     assert sum(call[0] == "cancel" for call in client.calls) == 1
     assert [event["event"] for event in events] == ["llm_call_start"]

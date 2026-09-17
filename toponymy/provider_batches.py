@@ -466,11 +466,16 @@ class _ThreadCallTimeout(asyncio.TimeoutError):
 async def _thread_call(function: Callable[..., T], *args: object, timeout: float) -> T:
     task = asyncio.create_task(asyncio.to_thread(function, *args))
     try:
-        return await asyncio.wait_for(task, timeout=timeout)
-    except asyncio.TimeoutError as error:
-        if task.cancelled():
-            raise _ThreadCallTimeout() from error
-        raise
+        # wait_for can swallow caller cancellation racing with completion on
+        # Python 3.10/3.11. Keep the deadline separate from the request result.
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if not done:
+            raise _ThreadCallTimeout()
+        return task.result()
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 async def _wait_for_status(
