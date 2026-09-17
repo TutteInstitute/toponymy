@@ -19,6 +19,7 @@ keyphrases, named child topics, or contrastive TreeSHAP evidence.
    installation
    basic_usage
    migration
+   benchmark_results
    params_and_options
    saving_loading
    debugging_llm_runs

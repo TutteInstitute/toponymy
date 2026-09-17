@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="864pt" height="554.4pt" viewBox="0 0 864 554.4" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 554.4 
+L 864 554.4 
+L 864 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="line2d_1">
+    <path d="M 30.24 139.358377 
+L 833.76 139.358377 
+" clip-path="url(#p6153edfb24)" style="fill: none; stroke: #535d66; stroke-width: 0.7; stroke-linecap: square"/>
+   </g>
+   <g id="line2d_2">
+    <path d="M 30.24 359.026302 
+L 833.76 359.026302 
+" clip-path="url(#p6153edfb24)" style="fill: none; stroke: #535d66; stroke-width: 0.7; stroke-linecap: square"/>
+   </g>
+   <g id="text_1">
+    <text style="font-weight: 700; font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="30.24" y="128.746788" transform="rotate(-0 30.24 128.746788)">PRIMARY • Narval Linux / Python 3.12.0</text>
+   </g>
+   <g id="text_2">
+    <text style="font-weight: 700; font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="480.2112" y="128.74632" transform="rotate(-0 480.2112 128.74632)">180/180</text>
+   </g>
+   <g id="text_3">
+    <text style="font-weight: 700; font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="592.704" y="128.226788" transform="rotate(-0 592.704 128.226788)">OBSERVATIONS VALIDATED</text>
+   </g>
+   <g id="text_4">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="41.48928" y="165.098304" transform="rotate(-0 41.48928 165.098304)">Measurement observations</text>
+   </g>
+   <g id="text_5">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="432" y="165.097875" transform="rotate(-0 432 165.097875)">172/172</text>
+   </g>
+   <g id="text_6">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="568.5984" y="164.838109" transform="rotate(-0 568.5984 164.838109)">VALIDATED</text>
+   </g>
+   <g id="text_7">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="41.48928" y="201.709625" transform="rotate(-0 41.48928 201.709625)">NEW native suite observations</text>
+   </g>
+   <g id="text_8">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="432" y="201.709195" transform="rotate(-0 432 201.709195)">2/2</text>
+   </g>
+   <g id="text_9">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="568.5984" y="201.44943" transform="rotate(-0 568.5984 201.44943)">PASS</text>
+   </g>
+   <g id="text_10">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="41.48928" y="238.320946" transform="rotate(-0 41.48928 238.320946)">Common-suite observations</text>
+   </g>
+   <g id="text_11">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="432" y="238.320516" transform="rotate(-0 432 238.320516)">4/4</text>
+   </g>
+   <g id="text_12">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="568.5984" y="238.060751" transform="rotate(-0 568.5984 238.060751)">PASS</text>
+   </g>
+   <g id="text_13">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #b36300" x="41.48928" y="274.932267" transform="rotate(-0 41.48928 274.932267)">OLD native suite observations</text>
+   </g>
+   <g id="text_14">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #b36300" x="432" y="274.931837" transform="rotate(-0 432 274.931837)">2/2</text>
+   </g>
+   <g id="text_15">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #b36300" x="568.5984" y="274.672071" transform="rotate(-0 568.5984 274.672071)">EXPECTED BASELINE OUTCOME</text>
+   </g>
+   <g id="text_16">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #b36300" x="41.48928" y="311.543587" transform="rotate(-0 41.48928 311.543587)">Each OLD native suite</text>
+   </g>
+   <g id="text_17">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #b36300" x="432" y="311.543158" transform="rotate(-0 432 311.543158)">653 + 1 + 1</text>
+   </g>
+   <g id="text_18">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #b36300" x="568.5984" y="311.283783" transform="rotate(-0 568.5984 311.283783)">PASS + known dependency failure + source skip</text>
+   </g>
+   <g id="text_19">
+    <text style="font-weight: 700; font-size: 12px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="30.24" y="348.414713" transform="rotate(-0 30.24 348.414713)">CORRECTED RELEASE • Windows / Python 3.12.0</text>
+   </g>
+   <g id="text_20">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="41.48928" y="384.766229" transform="rotate(-0 41.48928 384.766229)">Default suite</text>
+   </g>
+   <g id="text_21">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="432" y="384.765799" transform="rotate(-0 432 384.765799)">1,491</text>
+   </g>
+   <g id="text_22">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="568.5984" y="384.506424" transform="rotate(-0 568.5984 384.506424)">PASS; 40 existing skips, 3 external deselections</text>
+   </g>
+   <g id="text_23">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="41.48928" y="421.37755" transform="rotate(-0 41.48928 421.37755)">Extended property checks</text>
+   </g>
+   <g id="text_24">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="432" y="421.37712" transform="rotate(-0 432 421.37712)">85</text>
+   </g>
+   <g id="text_25">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="568.5984" y="421.117745" transform="rotate(-0 568.5984 421.117745)">PASS; 3,000 clustering + 2,000 parser examples</text>
+   </g>
+   <g id="text_26">
+    <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="41.48928" y="457.98887" transform="rotate(-0 41.48928 457.98887)">Targeted mutation checks</text>
+   </g>
+   <g id="text_27">
+    <text style="font-weight: 700; font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="432" y="457.988441" transform="rotate(-0 432 457.988441)">6/6</text>
+   </g>
+   <g id="text_28">
+    <text style="font-size: 10px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="568.5984" y="457.729066" transform="rotate(-0 568.5984 457.729066)">Plausible batch-debug mutations detected</text>
+   </g>
+  </g>
+  <g id="text_29">
+   <text style="font-weight: 700; font-size: 19px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #20262b" x="30.24" y="36.613031" transform="rotate(-0 30.24 36.613031)">Validation evidence</text>
+  </g>
+  <g id="text_30">
+   <text style="font-size: 11px; font-family: 'DejaVu Sans'; text-anchor: start; fill: #535d66" x="30.24" y="58.254281" transform="rotate(-0 30.24 58.254281)">Primary numerical evidence and corrected-release checks have distinct source and platform scopes</text>
+  </g>
+  <g id="text_31">
+   <text style="font-size: 10px; font-family: 'DejaVu Sans'; fill: #535d66" transform="translate(30.24 522.299375)">The known OLD notebook dependency failure and source-defined skip are retained as separate outcomes, not passes.</text>
+   <text style="font-size: 10px; font-family: 'DejaVu Sans'; fill: #535d66" transform="translate(30.24 536.299375)">No semantic label-quality claim. Benchmark NEW: 58e0a84b; corrected-release source: 4ee27af2. Protocol v2.0.3.</text>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="p6153edfb24">
+   <rect x="30.24" y="94.248" width="803.52" height="415.8"/>
+  </clipPath>
+ </defs>
+</svg>
