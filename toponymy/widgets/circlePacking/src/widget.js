@@ -143,7 +143,7 @@ function render({ model, el }) {
     let view;
 
     requestAnimationFrame(()=>
-      zoomTo([focus.x, focus.y, focus.r * 2], focus)
+      zoomTo([focus.x, focus.y, Math.max(1, focus.r * 2)], focus)
     );
 
     function zoomTo(v, focus) {
@@ -172,7 +172,7 @@ function render({ model, el }) {
       const transition = svg.transition()
           .duration(event.altKey ? 7500 : 750)
           .tween("zoom", d => {
-            const i = d3.interpolateZoom(view, [focus.x, focus.y, focus.r * 2]);
+            const i = d3.interpolateZoom(view, [focus.x, focus.y, Math.max(1, focus.r * 2)]);
             return t => zoomTo(i(t),focus);
           });
 

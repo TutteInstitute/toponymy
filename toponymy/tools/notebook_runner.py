@@ -93,6 +93,13 @@ def collect_log_lines(
     return collected
 
 
+def _log_lines(collected: list[tuple[str, str]]) -> None:
+    for level, line in collected:
+        logger.log(
+            getattr(logging, level.upper(), logging.INFO), "Notebook log line: %s", line
+        )
+
+
 class InstrumentedNotebookClient(NotebookClient):
     """
     A NotebookClient that logs the start and end of each cell execution, as well as the total execution time of the notebook.
@@ -126,8 +133,9 @@ def run_notebook(
     Execute a Jupyter notebook with optional logging instrumentation and log-line collection.
 
     Runs the notebook in a kernel, injects a logging capture cell to ensure stdlib logging
-    is routed to stdout, and optionally collects log-like lines from cell outputs. On exception,
-    partial notebook outputs and collected logs are re-emitted before re-raising.
+    is routed to stdout, and optionally collects log-like lines from cell outputs.
+    On execution failure, partial logs are re-emitted. Log-collection mode returns
+    those lines; otherwise the original exception is re-raised.
 
     Parameters
     ----------
@@ -153,10 +161,11 @@ def run_notebook(
     Raises
     ------
     Exception
-        Any exception raised by the notebook kernel during execution is re-raised after logging.
+        Kernel execution errors are re-raised after logging unless
+        ``return_log_lines=True`` requests partial logs instead.
     """
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
     _inject_logging_capture_cell(nb)
@@ -167,7 +176,7 @@ def run_notebook(
         nb,
         timeout=timeout,
         kernel_name=kernel_name,
-        resources={"metadata": {"path": str(doc_dir())}},
+        resources={"metadata": {"path": str(Path(path).resolve().parent)}},
     )
 
     logger.info("Running %s", path)
@@ -188,16 +197,7 @@ def run_notebook(
         logger.info(
             "Collected %s logging lines from failed notebook %s", len(collected), path
         )
-        for level, line in collected:
-            normalized = level.lower()
-            log_fn = {
-                "debug": logger.debug,
-                "info": logger.info,
-                "warning": logger.warning,
-                "error": logger.error,
-                "critical": logger.critical,
-            }.get(normalized, logger.info)
-            log_fn("Notebook log line: %s", line)
+        _log_lines(collected)
 
         if return_log_lines:
             return collected
@@ -208,16 +208,7 @@ def run_notebook(
     # success path: collect and log normally
     collected = collect_log_lines(executed_nb, ignore_litellm=ignore_litellm)
     logger.info("Collected %s logging lines from notebook %s", len(collected), path)
-    for level, line in collected:
-        normalized = level.lower()
-        log_fn = {
-            "debug": logger.debug,
-            "info": logger.info,
-            "warning": logger.warning,
-            "error": logger.error,
-            "critical": logger.critical,
-        }.get(normalized, logger.info)
-        log_fn("Notebook log line: %s", line)
+    _log_lines(collected)
 
     if return_log_lines:
         return collected
@@ -258,6 +249,14 @@ def run_all(
     """
     if notebooks is None:
         notebooks = NOTEBOOKS
+        missing = [str(path) for path in notebooks if not Path(path).is_file()]
+        if missing:
+            raise FileNotFoundError(
+                "Default documentation notebooks are available in a source checkout, "
+                "not the installed package. Pass explicit local notebook paths to "
+                "run_all([...]) or use a source checkout. Missing: "
+                + ", ".join(missing)
+            )
 
     for nb in notebooks:
         run_notebook(

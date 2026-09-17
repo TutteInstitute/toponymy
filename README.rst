@@ -1,323 +1,150 @@
-===========
 Toponymy
-===========
+========
 
 .. image:: doc/toponymy_text_horizontal.png
-  :width: 600
-  :align: center
-  :alt: Toponymy
+   :width: 600
+   :align: center
+   :alt: Toponymy
 
+Toponymy names groups of documents or other objects in embedding space, at
+multiple resolutions. It combines maintained clustering algorithms, selected
+evidence from each cluster, and a language model. The name comes from the
+Greek *topos* (place) and *onuma* (name).
 
-**🤖 Chat with our AI docs:** https://deepwiki.com/TutteInstitute/toponymy
+`Documentation <https://toponymy.readthedocs.io/>`_ describes the public API.
+The `architecture wiki <https://github.com/TutteInstitute/toponymy/wiki/Toponymy-Architecture>`_
+provides additional design context. This source tree documents the v0.6 API;
+see ``doc/migration.rst`` when moving from v0.5.
 
-More traditional documentation can be found at: https://toponymy.readthedocs.io/
+Installation
+------------
 
-For an overview of Toponymy's internal design, see the `Toponymy Architecture <https://github.com/TutteInstitute/toponymy/wiki/Toponymy-Architecture>`_ wiki page.
-
-The package name Toponymy is derived from the Greek topos ‘place’ + onuma ‘name’.  Thus, the naming of places.  
-The goal of Toponymy is to put names to places in the space of information. This could be a corpus of documents,
-in which case Toponymy can be viewed as a topic naming library.  It could also be a collection of images, in which case
-Toponymy could be used to name the themes of the images.  The goal is to provide a names that can allow a user to
-navigate through the space of information in a meaningful way.
-
-Toponymy is designed to scale to very large corpora and collections, providing meaningful names on multiple scales,
-from broad themes to fine-grained topics.  We make use a custom clustering methods, information extraction, 
-and large language models to power this. The library is designed to be flexible and easy to use.
-
-As of now this is an beta version of the library. Things can and will break right now.
-We welcome feedback, use cases and feature suggestions.
-
-------------------
-Basic Installation
-------------------
-
-You can install Toponymy using:
-
-.. code-block:: bash
-
-    pip install toponymy
-
-
-To install the latest version of Toponymy from source you can do so by cloning the repository and running:
-
-.. code-block:: bash
-
-    git clone https://github.com/TutteInstitute/toponymy
-    cd toponymy
-    pip install .
-
------------
-Basic Usage
------------
-
-As an example, we can use Toponymy to cluster documents in the `20-Newsgroups dataset <http://qwone.com/~jason/20Newsgroups/>`_ on hugging face and then assign topic names to these clusters. The 20 newsgroups dataset contains 18,170 documents distributed roughly evenly across 20 different newsgroups. You can compute vector representations of each document on your own (see `Vector Construction <https://github.com/TutteInstitute/toponymy?tab=readme-ov-file#vector-construction>`_ for instructions), but this can be very expensive without a GPU. We recommend downloading our precomputed vectors. Code to retrieve these vectors is below:
-
-.. code-block:: python
-
-    import numpy as np
-    import pandas as pd
-    newsgroups_df = pd.read_parquet("hf://datasets/lmcinnes/20newsgroups_embedded/data/train-00000-of-00001.parquet")
-    text = newsgroups_df["post"].str.strip().values
-    document_vectors = np.stack(newsgroups_df["embedding"].values)
-    document_map = np.stack(newsgroups_df["map"].values)
-
-After running the above code, ``document_vectors`` will contain 768-dimensional embeddings for each of the 18,170 documents in the dataset and ``document_map`` will contain 2-dimensional embeddings of these same documents.
-
-We can visualize the documents using the 2-dimensional representations in ``document_map``:
-
-.. code-block:: python
-
-  import datamapplot
-  plot = datamapplot.create_plot(document_map)
-  display(plot)
-
-.. image:: doc/example_2D_plot.png
-  :width: 600
-  :align: center
-  :alt: example_2D_plot
-
-Once we have a low-dimensional representation, we can do the topic naming. 
-Toponymy will make use of a clusterer to create a balanced hierarchical layered 
-clustering of our documents. (In this case, we use ``ToponymyClusterer`` on the 2-dimensional vectors in ``document_map``.)
-
-.. code-block:: python
-
-    from toponymy import ToponymyClusterer
-    clusterer = ToponymyClusterer(min_clusters=4, verbose=True)
-    clusterer.fit(clusterable_vectors=document_map, embedding_vectors=document_vectors)
-    for i, layer in enumerate(clusterer.cluster_layers_):
-        print(f'{len(np.unique(layer.cluster_labels))-1} clusters in layer {i}')
-
-Toponymy will then use a variety of sampling and summarization techniques to construct prompts 
-describing each cluster to pass to a large language model (LLM).  
-
-Note that Toponymy also requires an embedding model for determining which of the documents will be most relevant to each
-of our clusters.  This doesn't have to be the embedding model that our documents were embedded with but it 
-should be similar.
-
-.. code-block:: python
-
-    from sentence_transformers import SentenceTransformer
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-
-Toponymy supports multiple LLMs, including Cohere, OpenAI, and Anthropic via service calls, and local models via
-Huggingface and LlamaCpp. Here we show an example using OpenAI. 
-
-You will need to get a free `OpenAI key <https://platform.openai.com/api-keys>`_ and store it in the file ``openai_key.txt`` before running this code.
-Also make sure that openai is installed in your environment. You can test your connection to OpenAI with the test_llm_connectivity() method before running Toponymy.
-
-.. code-block:: python
-
-    import openai
-    from toponymy import Toponymy
-    from toponymy.llm_wrappers import OpenAINamer
-    
-    openai_api_key = open("openai_key.txt").read().strip()
-    llm = OpenAINamer(openai_api_key)
-    llm.test_llm_connectivity()
-
-
-The following code will generate a topic naming
-for the documents in the data set using the ``document_vectors``, ``document_map``, and ``embedding_model`` created above.
-(Warning are filtered here because they can interfere with the display of the progress bar.)
-
-.. code-block:: python
-
-    import warnings
-    warnings.filterwarnings('ignore')
-
-    topic_model = Toponymy(
-        llm_wrapper=llm,
-        text_embedding_model=embedding_model,
-        clusterer=clusterer,
-        object_description="newsgroup posts",
-        corpus_description="20-newsgroups dataset",
-        exemplar_delimiters=["<EXAMPLE_POST>\n","\n</EXAMPLE_POST>\n\n"]
-    )
-    
-    # Note on data types for fit() method:
-    # - text: Python list of strings (not numpy array)
-    # - document_vectors: numpy array of shape (n_documents, embedding_dimension)
-    # - document_map: numpy array of shape (n_documents, clustering_dimension)
-    topic_model.fit(text, document_vectors, document_map)
-
-
-``topic_model`` will contain ``topic_names``, a list of lists which can be used to explore the unique topic names in each layer or resolution.
-Let's examine the last layer of topics. There were five clusters in this layer. Toponymy assigns a name to each cluster.
-
-.. code-block:: python
-
-    topic_names = topic_model.topic_names_
-
-    topic_names[-1:]
-
-    [['Sports Analysis',
-    'Religion and Sociopolitical Conflicts',
-    'Automotive and Motorcycle Discussion',
-    'X Window System and DOS/Windows Graphics',
-    'Vintage Computer Hardware']]
-
-Our gray 2-D plot from above can now be displayed with labeled clusters. (See `Interactive Topic Visualization <https://github.com/TutteInstitute/toponymy?tab=readme-ov-file#interactive-topic-visualization>`_ for more details on generating interactive plots.)
-
-.. image:: doc/example_labeled_plot.png
-  :width: 600
-  :align: center
-  :alt: example_labeled_plot
-
-At this particular level of resolution, this plot also shows one topic ('NASA and Space Exploration Missions') from the second to last layer of clusters. 
-
-.. code-block:: python
-
-    topic_names[-2:]
-
-    [['NHL Hockey Playoffs and Team Analysis',
-    'Major League Baseball Analysis',
-    'NASA and Space Exploration Missions',
-    'Clipper Chip Encryption and Privacy Debate',
-    'Medical Discussions on Chronic Diseases and Diet',
-    'Middle East Conflicts and Israeli-Palestinian Issues',
-    'Automotive and Motorcycle Discussion',
-    'Christianity, Faith, and Religious Debates',
-    'Waco Siege and Government Controversy',
-    'US Gun Rights and Regulation Debate',
-    'Political and Social Controversies Online',
-    'X Window System and DOS/Windows Graphics',
-    'Vintage PC and Macintosh Hardware',
-    'PC Hard Drive Interfaces and Troubleshooting'],
-    ['Sports Analysis',
-    'Religion and Sociopolitical Conflicts',
-    'Automotive and Motorcycle Discussion',
-    'X Window System and DOS/Windows Graphics',
-    'Vintage Computer Hardware']]
-
-
-``topics_per_document`` contains topic labels for each document, with one list for each level of resultion in our 
-cluster layers.  In our above case this will be a list of 5 layers each containing a list of topic labels for each of the 18,170 documents.  
-Documents that aren't contained within a cluster at a given layer are given the topic ``Unlabelled``.
-
-.. code-block:: python
-    
-    topics_per_document = [cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_]
-    topics_per_document
-    
-
-    [array(['Unlabelled',
-            'Discussion on VESA Local Bus Video Cards and Performance',
-            'Unlabelled', ...,
-            'Cooling Solutions and Components for CPUs and Power Supplies',
-            'Algorithms for Finding Sphere from Four Points in 3D',
-            'Automotive Discussions on Performance Cars and Specifications'], dtype=object),
-    array(['NHL Playoff Analysis and Predictions',
-            'Graphics Card Performance and Benchmark Discussions',
-            'Armenian Genocide and Turkish Atrocities Discourse', ...,
-            'Cooling Solutions and Components for CPUs and Power Supplies',
-            'Algorithms for 3D Polygon Processing and Geometry',
-            'Discussions on SUVs and Performance Cars'], dtype=object),
-    array(['NHL Playoff Analysis and Predictions',
-            'Video Card Drivers and Performance',
-            'Armenian Genocide and Turkish Atrocities', ..., 'Unlabelled',
-            'Unlabelled', 'Automotive Performance and Used Cars'], dtype=object),
-    array(['NHL Playoffs and Player Analysis',
-            'Vintage Computer Hardware and Upgrades', 'Unlabelled', ...,
-            'Unlabelled', 'X Window System and Graphics Software',
-            'Automotive Performance and Safety'], dtype=object),
-    array(['Sports Analysis', 'Computer Hardware', 'Unlabelled', ...,
-            'Unlabelled', 'X Window System and Graphics Software',
-            'Automotive Performance and Safety'], dtype=object)]
-
------------------------------------
-Interactive Topic Visualization
------------------------------------
-
-Once you’ve generated the topic names and document map, it's helpful to visualize how topics are distributed across your corpus. We recommend using the `DataMapPlot <https://github.com/TutteInstitute/datamapplot>`_ library for this purpose. It creates interactive, zoomable maps that allow you to explore clusters and topic labels in a spatial layout. It is particularly well suited to exploring data maps along with layers of topic names. 
-
-Here is an example of using ``datamapplot`` to visualize your data. We can pass in our ``document_map``, ``document_vectors`` and newly created ``topics_per_document`` as input:
+Install a released package with ``pip install toponymy``, or install this source
+tree with ``pip install .``. Python 3.10 or newer is required. PLSCAN is the
+default clusterer. EVoC and TreeSHAP are optional extras:
 
 .. code-block:: shell
 
-    pip install datamapplot
-    conda install -c conda-forge datamapplot
+   pip install 'toponymy[evoc]'
+   pip install 'toponymy[treeshap]'
+
+A local example
+---------------
+
+In a source checkout, ``examples/local_pipeline.py`` uses small arrays,
+precomputed clusters with sparse IDs, and a deterministic naming provider.
+It needs no model downloads, credentials, or service calls:
+
+.. code-block:: shell
+
+   python examples/local_pipeline.py
+   python examples/local_pipeline.py --output topics.toponymy
+
+For your own objects and vectors, the main workflow is:
 
 .. code-block:: python
 
-    import datamapplot
-    topic_name_vectors = [cluster_layer.topic_name_vector for cluster_layer in topic_model.cluster_layers_]
+   from toponymy import Toponymy
 
-    plot = datamapplot.create_interactive_plot(
-        document_map,
-        *topic_name_vectors,
-    )
+   pipeline = Toponymy(llm_wrapper=your_naming_provider)
+   pipeline.prepare(objects, embedding_vectors, clusterable_vectors)
 
-    plot
+   for key, topic in pipeline.topics_.items():
+       print(key, topic.features, topic.prompt.system, topic.prompt.user)
 
-This will launch an interactive map in your browser or notebook environment, showing document clusters and their associated topic names across all hierarchical layers. You can zoom in to explore fine-grained topics and zoom out to see broader themes, enabling intuitive navigation of the information space.
+   pipeline.name_topics()
+   print(pipeline.topic_names_)
 
------------------------------------
-Controlling Verbose Output
------------------------------------
+``prepare`` builds clusters, extracts evidence and renders initial prompts
+without calling the naming provider. ``name_topics`` performs naming.
+``fit(objects, embedding_vectors, clusterable_vectors)`` combines both stages.
+With an asynchronous wrapper, use ``await pipeline.fit_async(...)`` or
+``await pipeline.name_topics_async()`` after preparation.
 
-Toponymy provides a unified ``verbose`` parameter to control progress bars and informative messages across all components:
+``embedding_vectors`` is a finite numeric matrix with one row per object.
+Feature extraction uses these semantic vectors. Optional ``clusterable_vectors``
+can have a different dimension, for example a two-dimensional map. If omitted,
+clustering uses the semantic vectors. Do not mutate input matrices while a fit
+or its result is using them.
+
+Choosing the evidence
+---------------------
+
+The default uses four representative texts per cluster through
+``TextExemplarExtractor``. It requires no additional text embedding provider.
+To include keyphrases or already named child topics, configure extractors:
 
 .. code-block:: python
 
-    # Show all progress bars and messages
-    clusterer = ToponymyClusterer(min_clusters=4, verbose=True)
-    
-    # Suppress all output for silent operation
-    clusterer = ToponymyClusterer(min_clusters=4, verbose=False)
-    
-    # The same parameter works for all components
-    topic_model = Toponymy(
-        llm_wrapper=llm,
-        text_embedding_model=embedding_model,
-        verbose=True  # Shows progress for all operations
-    )
+   from toponymy.feature_extraction import (
+       TextExemplarExtractor, TextKeyphraseExtractor, SubtopicExtractor,
+   )
 
-The ``verbose`` parameter unifies the older separate ``verbose`` and ``show_progress_bar`` parameters, providing a simpler and more consistent interface. Legacy parameters are still supported for backward compatibility but will show deprecation warnings.
+   pipeline = Toponymy(
+       llm_wrapper=your_naming_provider,
+       text_embedding_model=your_text_embedder,
+       feature_extractors=[
+           TextExemplarExtractor(n_exemplars=6),
+           TextKeyphraseExtractor(n_keyphrases=12),
+           SubtopicExtractor(n_subtopics=16),
+       ],
+   )
 
+Keyphrases need a text embedder only when their embeddings must be generated.
+Supplying a count matrix, vocabulary and keyphrase vectors through
+``feature_options`` requires no text embedder. Child-topic
+features are filled after their lower layers have names, so upper-layer prompts
+are refreshed during naming. ``TreeSHAPKeyphraseExtractor`` offers an opt-in
+contrastive alternative with its own optional dependency.
+
+Results and storage
 -------------------
-Vector Construction
--------------------
 
-If you do not have ready made document vectors and low dimensional representations of your data you will need to compute 
-your own. For faster encoding change device to: "cuda", "mps", "npu" or "cpu" depending on hardware availability. Alternatively,
-one could make use of an API call to embedding service.  Embedding wrappers can be found in:
-
-.. code-block:: python
-
-    from toponymy.embedding_wrappers import OpenAIEmbedder
-
-or the embedding wrapper of your choice. Once we generate document vectors we will need to construct a low dimensional representation.  
-Here we do that via our UMAP library.  
+``pipeline.topics_`` maps ``(layer_index, original_cluster_id)`` to topic state:
+members, features, prompt, name, optional summary and explanation. Each entry
+in ``topic_names_`` and ``topic_sizes_`` is a dictionary keyed by the original
+cluster ID. IDs may be sparse; they are not list offsets. Noise has label ``-1``
+and does not create a topic. ``topic_name_vectors_`` gives names aligned to
+objects in each layer, with ``"Unlabelled"`` for noise.
 
 .. code-block:: python
 
-    pip install umap-learn
-    pip install pandas
-    pip install sentence_transformers
+   from toponymy import TopicModel
 
-    import pandas as pd
-    from sentence_transformers import SentenceTransformer
-    import umap
+   pipeline.topic_model_.to_file("topics.toponymy")
+   saved = TopicModel.from_file("topics.toponymy")
+   print(saved.topic_names)
 
-    newsgroups_df = pd.read_parquet("hf://datasets/lmcinnes/20newsgroups_embedded/data/train-00000-of-00001.parquet")
-    text = newsgroups_df["post"].str.strip().values
-    embedding_model = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+The existing ``TopicModel`` is the results and persistence interface. Format
+0.3 retains topic features, prompts, name embeddings and disambiguation history;
+formats 0.1 and 0.2 remain readable.
+For summaries, configure ``SummaryTemplate`` rather than a cluster layer class.
 
-    document_vectors = embedding_model.encode(text, show_progress_bar=True)
-    document_map = umap.UMAP(metric='cosine').fit_transform(document_vectors)
+If you have a two-dimensional document map, the optional DataMapPlot library
+can display the object-aligned names at each resolution:
 
--------
-License
--------
+.. code-block:: python
 
-Toponymy is MIT licensed. See the LICENSE file for details.
+   import datamapplot
 
-------------
-Contributing
-------------
+   plot = datamapplot.create_interactive_plot(
+       document_map, *pipeline.topic_name_vectors_
+   )
 
-Contributions are more than welcome! If you have ideas for features of projects please get in touch. Everything from
-code to notebooks to examples and documentation are all *equally valuable* so please don't feel you can't contribute.
-To contribute please `fork the project <https://github.com/TutteInstitute/toponymy/fork>`_ make your
-changes and submit a pull request. We will do our best to work through any issues with you and get your code merged in.
+Similar names are disambiguated by default. Exact duplicates need no embedder;
+an available text embedder also enables similarity comparisons. Disambiguation
+can add provider calls, which are visible in ``request_counts_``. Scripted
+responses in the local example demonstrate the pipeline, not topic quality.
+
+The documentation notebooks and example datasets are source-checkout assets;
+they are not installed with the package. Install ``toponymy[example-notebooks]``
+to run your own local notebooks through ``toponymy.tools.notebook_runner``.
+Pass explicit notebook paths. For the historical bundled-data loaders, set
+``TOPONYMY_EXAMPLES_DIR`` to an existing local examples directory; this setting
+does not download data.
+
+Contributing and license
+------------------------
+
+See ``CONTRIBUTING.md`` for the formatter, tests, and contribution workflow.
+Toponymy is MIT licensed; see ``LICENSE``.

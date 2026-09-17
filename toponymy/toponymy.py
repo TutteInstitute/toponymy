@@ -1,461 +1,740 @@
-from toponymy.clustering import ToponymyClusterer, Clusterer
-from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.cluster_layer import (
-    ClusterLayer,
-    ClusterLayerSummaryText,
-    ClusterLayerText,
-)
-from toponymy.topic_tree import TopicTree
-from toponymy.llm_wrappers import LLMWrapper
-from toponymy.embedding_wrappers import TextEmbedderProtocol
-from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_PROMPT_TEMPLATES
-from toponymy._utils import handle_verbose_params
+"""The staged topic modelling pipeline."""
 
-from sklearn.base import BaseEstimator
-from sklearn.utils.validation import check_is_fitted
+from copy import copy, deepcopy
+import asyncio
+from time import perf_counter
+
 import numpy as np
+from scipy import sparse
+from scipy.cluster.hierarchy import fcluster, linkage
+from scipy.spatial.distance import squareform
+from sklearn.base import clone
+from sklearn.exceptions import NotFittedError
 
-from tqdm.auto import tqdm
+from .clustering import PLSCANClusterer, validate_cluster_tree
+from .feature_extraction import (
+    TextExemplarExtractor,
+    TextKeyphraseExtractor,
+    SubtopicExtractor,
+)
+from .serialization import Topic, TopicModel
+from .templates import Prompt, TextTemplate
+from .utility_functions import _normalize_rows
 
-from typing import List, Any, Optional, Type, Dict, Tuple
+
+def _matrix(values, rows, name):
+    result = np.asarray(values)
+    if result.ndim != 2 or result.shape[0] != rows or result.shape[1] == 0:
+        raise ValueError(f"{name} must have shape (number of objects, dimensions)")
+    if result.dtype.kind not in "fiu" or not np.isfinite(result).all():
+        raise ValueError(f"{name} must contain finite real numbers")
+    view = result.view()
+    view.flags.writeable = False
+    return view
 
 
 class Toponymy:
-    """
-    A class for generating topic names for vector based topic modeling.
+    """Cluster objects, extract evidence, then name topics layer by layer.
 
-    Parameters:
-    -----------
-    llm_wrapper: class
-        A llm_wrapper class.  These should be objects that inherit from the LlmWrapper base classs.
-    text_embedding_model: TextEmbedderProtocol
-        a function with an encode used to vectorize the objects that we are topic modeling.
-    clusterer: Clusterer
-        The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
-    layer_class: Type[Any]
-        The class to used for creating layers from our objects. Default is ClusterLayerText.
-    keyphrase_builder: KeyphraseBuilder
-        The keyphrase builder to use for building keyphrases from the objects.
-    object_description: str
-        A description of the objects being topic modeled.
-    corpus_description: str
-        A description of the collection of objects being topic modeled.
-    lowest_detail_level: float
-        The lowest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
-    highest_detail_level: float
-        The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
-    exemplar_delimiters: List[str]
-        A list of strings that represent the delimiters for the exemplar texts. Default is ["    *\"", "\"\n"].
-    verbose: bool
-        Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
-    show_progress_bars: bool, deprecated
-        Deprecated. Use verbose instead.
-
-    Attributes:
-    -----------
-    llm_wrapper: class
-        A llm_wrapper class.  These should be objects that inherit from the LlmWrapper base classs.
-    embedding_model: callable
-        a function with an encode used to vectorize the objects that we are topic modeling.
-    clusterer: Clusterer
-        The clusterer to use for clustering the objects. This should be a clusterer that inherits from the Clusterer base class.
-    layer_class: Type[Any]
-        The class to used for creating layers from our objects.
-    keyphrase_builder: KeyphraseBuilder
-        The keyphrase builder to use for building keyphrases from the objects.
-    object_description: str
-        A description of the objects being topic modeled.
-    corpus_description: str
-        A description of the collection of objects being topic modeled.
-    lowest_detail_level: float
-        The lowest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
-    highest_detail_level: float
-        The highest detail level to use for the topic names. This should be a value between 0 (finest grained detail) and 1 (very high level).
-    exemplar_delimiters: List[str]
-        A list of strings that represent the delimiters for the exemplar texts.
-    verbose: bool
-        Whether to show progress bars and verbose output.
-    clusterable_vectors_: np.array
-        A numpy array of shape=(number_of_objects, clustering_dimension) used for clustering.
-    embedding_vectors_: np.array
-        A numpy array of shape=(number_of_objects, embedding_dimension) used for vectorizing.
-    cluster_layers_: List[ClusterLayer]
-        A list of ClusterLayer objects that represent the layers of the topic model.
-    cluster_tree_: dict
-        A dictionary that represents the tree of clusters.
-    object_x_keyphrase_matrix_: np.array
-        A numpy array of shape=(number_of_objects, number_of_keyphrases) that represents the objects and their keyphrases.
-    keyphrase_list_: List[str]
-        A list of keyphrases.
-    keyphrase_vectors_: np.array
-        A numpy array of shape=(number_of_keyphrases, embedding_dimension) that represents the keyphrase vectors.
-    topic_names_: List[List[str]]
-        A list of lists of strings that represent the topic names at each layer of the topic model.
-    topic_name_vectors_: List[np.array]
-        A list of numpy arrays of shape=(number_of_topics, embedding_dimension) that represent the topic names of each object
-        at each layer of the topic model.
-    topic_sizes_: List[List[int]]
-        A list of lists where topic_sizes_[i][j] is the number of objects in cluster j at layer i.
-
+    Call prepare to inspect features and initial prompts without naming provider
+    requests. name_topics completes naming, including dependent layers.
+    Each fit owns fresh topic state; matrices are borrowed read-only views.
+    Callers must not mutate those matrices while fitting or using the result.
+    Feature extractors use semantic embeddings; clusterable_vectors can have
+    a different dimension and are used only for clustering.
     """
 
     def __init__(
         self,
-        llm_wrapper: LLMWrapper,
-        text_embedding_model: TextEmbedderProtocol,
-        clusterer: Clusterer = ToponymyClusterer(),
-        layer_class: Type[ClusterLayer] = ClusterLayerText,
-        prompt_template: Dict[str, Any] = PROMPT_TEMPLATES,
-        keyphrase_builder: KeyphraseBuilder = KeyphraseBuilder(),
-        object_description: str = "objects",
-        corpus_description: str = "collection of objects",
-        lowest_detail_level: float = 0.0,
-        highest_detail_level: float = 1.0,
-        exemplar_delimiters: List[str] = ['    * "', '"\n'],
-        verbose: Optional[bool] = None,
-        show_progress_bars: Optional[bool] = None,
+        llm_wrapper,
+        text_embedding_model=None,
+        clusterer=None,
+        *,
+        reuse_clusterer=False,
+        feature_extractors=None,
+        feature_options=None,
+        prompt_template=None,
+        object_description="objects",
+        corpus_description="collection of objects",
+        lowest_detail_level=0.0,
+        highest_detail_level=1.0,
+        disambiguate=True,
+        disambiguation_threshold=0.9,
+        max_disambiguation_group_size=4,
+        verbose=False,
     ):
+        if not 0 <= lowest_detail_level <= highest_detail_level <= 1:
+            raise ValueError("Detail levels must satisfy 0 <= lowest <= highest <= 1")
+        if not 0 <= disambiguation_threshold <= 1:
+            raise ValueError("disambiguation_threshold must lie in [0, 1]")
+        if (
+            isinstance(max_disambiguation_group_size, bool)
+            or not isinstance(max_disambiguation_group_size, int)
+            or max_disambiguation_group_size < 2
+        ):
+            raise ValueError(
+                "max_disambiguation_group_size must be an integer of at least 2"
+            )
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
-        self.layer_class = layer_class
-        self.clusterer = clusterer
-        self.keyphrase_builder = keyphrase_builder
+        self.clusterer = PLSCANClusterer() if clusterer is None else clusterer
+        if not isinstance(reuse_clusterer, bool):
+            raise ValueError("reuse_clusterer must be a boolean")
+        self.reuse_clusterer = reuse_clusterer
+        self.feature_extractors = (
+            [TextExemplarExtractor()]
+            if feature_extractors is None
+            else list(feature_extractors)
+        )
+        keys = [extractor.feature_key for extractor in self.feature_extractors]
+        if any(not isinstance(key, str) or not key for key in keys):
+            raise ValueError("Every feature extractor needs a nonempty feature_key")
+        if len(keys) != len(set(keys)):
+            raise ValueError("Feature extractors must have distinct feature_key values")
+        for extractor in self.feature_extractors:
+            if (
+                getattr(extractor, "requires_embedder", False)
+                and self.embedding_model is None
+            ):
+                raise ValueError(
+                    f"Extractor {extractor.feature_key!r} requires a text embedding "
+                    "model; pass text_embedding_model or remove the extractor"
+                )
+        self.feature_options = (
+            {}
+            if feature_options is None
+            else {key: dict(options) for key, options in feature_options.items()}
+        )
+        if set(self.feature_options) - set(keys):
+            raise ValueError("feature_options keys must identify configured extractors")
+        self.prompt_template = (
+            TextTemplate(object_description, corpus_description)
+            if prompt_template is None
+            else prompt_template
+        )
         self.object_description = object_description
         self.corpus_description = corpus_description
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
-        self.exemplar_delimiters = exemplar_delimiters
-        self.prompt_template = prompt_template
+        self.disambiguate = disambiguate
+        self.disambiguation_threshold = disambiguation_threshold
+        self.max_disambiguation_group_size = max_disambiguation_group_size
+        self.verbose = verbose
 
-        # Handle verbose parameters
-        self.show_progress_bars, self.verbose = handle_verbose_params(
-            verbose=verbose, show_progress_bars=show_progress_bars, default_verbose=True
+    def _require_prepared(self):
+        if not getattr(self, "_prepared", False):
+            raise NotFittedError("Call prepare or fit before accessing topic results")
+
+    def prepare(
+        self,
+        objects,
+        embedding_vectors=None,
+        clusterable_vectors=None,
+        *,
+        object_vectors=None,
+    ):
+        """Build inspectable topic evidence without calling the naming provider.
+
+        Layer-dependent extractors are owned by this prepared fit: automatically
+        fitted estimators are cloned, and separately fitted estimators are deep
+        copied with their learned state. Custom resource owners can implement
+        ``__sklearn_clone__`` or ``__deepcopy__`` to preserve that isolation.
+        Ordinary extractors run immediately and their feature results are copied.
+        """
+        self._prepared = False
+        if embedding_vectors is not None and object_vectors is not None:
+            raise ValueError("Supply embedding_vectors or object_vectors, not both")
+        if embedding_vectors is None:
+            embedding_vectors = object_vectors
+        self.__dict__.pop("topic_model_", None)
+        self.objects_ = tuple(objects)
+        n_objects = len(self.objects_)
+        prepared_extractors = []
+        for extractor in self.feature_extractors:
+            if extractor.layer_dependent:
+                try:
+                    extractor = (
+                        clone(extractor)
+                        if extractor.can_fit_from_objects()
+                        else deepcopy(extractor)
+                    )
+                except (TypeError, ValueError, RuntimeError) as error:
+                    raise TypeError(
+                        "Layer-dependent extractors must support sklearn cloning "
+                        "when fitted from objects, or deep copying when pre-fitted"
+                    ) from error
+            prepared_extractors.append(extractor)
+        self.feature_extractors_ = prepared_extractors
+        self.embedding_vectors_ = _matrix(
+            embedding_vectors, n_objects, "embedding_vectors"
+        )
+        clustering_graph = None
+        if sparse.issparse(clusterable_vectors):
+            graph = clusterable_vectors.tocsr(copy=False)
+            if (
+                graph.shape != (n_objects, n_objects)
+                or not np.isfinite(graph.data).all()
+                or np.any(graph.data < 0)
+            ):
+                raise ValueError(
+                    "A clustering distance graph must be square, finite and nonnegative"
+                )
+            clustering_graph = sparse.csr_matrix(
+                (graph.data.view(), graph.indices.view(), graph.indptr.view()),
+                shape=graph.shape,
+            )
+            for array in (
+                clustering_graph.data,
+                clustering_graph.indices,
+                clustering_graph.indptr,
+            ):
+                array.flags.writeable = False
+            self.clusterable_vectors_ = clustering_graph
+        else:
+            self.clusterable_vectors_ = (
+                self.embedding_vectors_
+                if clusterable_vectors is None
+                else _matrix(clusterable_vectors, n_objects, "clusterable_vectors")
+            )
+        self.stage_timings_ = {}
+        started = perf_counter()
+        if self.reuse_clusterer:
+            if not all(
+                hasattr(self.clusterer, name)
+                for name in ("cluster_layers_", "cluster_tree_")
+            ):
+                raise NotFittedError(
+                    "reuse_clusterer requires an already fitted clusterer"
+                )
+        else:
+            self.clusterer.fit(self.clusterable_vectors_)
+        self.cluster_layers_ = tuple(self.clusterer.cluster_layers_)
+        if any(len(layer.labels) != n_objects for layer in self.cluster_layers_):
+            raise ValueError("Clustering output does not match the number of objects")
+        validate_cluster_tree(self.clusterer.cluster_tree_, self.cluster_layers_)
+        self.cluster_tree_ = {
+            key: list(children)
+            for key, children in self.clusterer.cluster_tree_.items()
+        }
+        # Retain this fit's hierarchy when a caller later refits the estimator.
+        self._fitted_clusterer = copy(self.clusterer)
+        self._fitted_clusterer.cluster_layers_ = self.cluster_layers_
+        self._fitted_clusterer.cluster_tree_ = self.cluster_tree_
+        self.stage_timings_["clustering"] = perf_counter() - started
+        topics = {
+            (layer.layer_index, cluster.label): Topic(
+                layer.layer_index, cluster.label, cluster.members
+            )
+            for layer in self.cluster_layers_
+            for cluster in layer
+        }
+        self.topic_model_ = TopicModel.from_topics(
+            topics,
+            self.cluster_layers_,
+            self.cluster_tree_,
+            self.embedding_vectors_,
+            None if clustering_graph is not None else self.clusterable_vectors_,
+        )
+        self.topic_model_.clustering_graph = clustering_graph
+        self._name_embedding_model = self.embedding_model
+        self._name_embedding_dimension = None
+        if self.embedding_model is not None:
+            self.topic_model_.name_embedding_context = {
+                "embedder_class": f"{type(self.embedding_model).__module__}.{type(self.embedding_model).__qualname__}",
+                "scope": "prepared_fit",
+                **{
+                    key: value
+                    for key in ("model", "model_name", "input_type", "task_type")
+                    if isinstance(
+                        value := getattr(self.embedding_model, key, None), str
+                    )
+                },
+            }
+        self.topic_model_.metadata.update(
+            object_description=self.object_description,
+            corpus_description=self.corpus_description,
+            disambiguation=self.disambiguate,
+            clustering_reused=self.reuse_clusterer,
+        )
+        started = perf_counter()
+        for extractor in self.feature_extractors_:
+            if extractor.layer_dependent:
+                if extractor.can_fit_from_objects():
+                    options = (
+                        {"embedder": self.embedding_model}
+                        if getattr(extractor, "requires_embedder", False)
+                        else {}
+                    )
+                    extractor.fit(self.objects_, self._fitted_clusterer, **options)
+                else:
+                    extractor.predict()
+                if (
+                    isinstance(extractor, SubtopicExtractor)
+                    and self.embedding_model is None
+                ):
+                    if any(
+                        extractor._name_embedding_keys(i, self._fitted_clusterer)
+                        for i in range(1, len(self.cluster_layers_))
+                    ):
+                        raise ValueError(
+                            "Semantic subtopics require a text embedding model"
+                        )
+                continue
+            options = {"embedding_vectors": self.embedding_vectors_}
+            if isinstance(extractor, TextKeyphraseExtractor):
+                options = {"embedder": self.embedding_model}
+            options.update(self.feature_options.get(extractor.feature_key, {}))
+            if getattr(extractor, "requires_embedder", False):
+                options["embedder"] = self.embedding_model
+            features = (
+                extractor.fit_predict(self.objects_, self._fitted_clusterer, **options)
+                if extractor.can_fit_from_objects()
+                else extractor.predict()
+            )
+            if len(features) != len(self.cluster_layers_):
+                raise ValueError("Extractor output must have one entry per layer")
+            for layer, values in zip(self.cluster_layers_, features):
+                self._assign_features(extractor.feature_key, layer, values)
+                if hasattr(extractor, "indices_"):
+                    for cluster, indices in zip(
+                        layer, extractor.indices_[layer.layer_index]
+                    ):
+                        topics[(layer.layer_index, cluster.label)].features[
+                            "exemplar_indices"
+                        ] = list(indices)
+        self.stage_timings_["extraction"] = perf_counter() - started
+        self.request_counts_ = {"naming": 0, "disambiguation": 0, "name_embeddings": 0}
+        self._named_layers = set()
+        self._planned_disambiguation_layers = set()
+        self._prepared_naming_layers = {0}
+        for layer in self.cluster_layers_:
+            self._make_prompts(layer)
+        self._prepared = True
+        return self
+
+    def _assign_features(self, key, layer, values):
+        if len(values) != len(layer):
+            raise ValueError("Extractor output must align with sorted cluster IDs")
+        for cluster, value in zip(layer, values):
+            self.topic_model_.topics[(layer.layer_index, cluster.label)].features[
+                key
+            ] = deepcopy(value)
+
+    def _name_kind(self, layer_index):
+        count = len(self.cluster_layers_)
+        detail = (
+            self.lowest_detail_level
+            if count < 2
+            else self.lowest_detail_level
+            + layer_index
+            / (count - 1)
+            * (self.highest_detail_level - self.lowest_detail_level)
+        )
+        return (
+            "specific"
+            if detail < 0.34
+            else "general" if detail > 0.66 else "descriptive"
         )
 
-        # If the default prompt template is used, but the layer class is ClusterLayerSummaryText, it is
-        # reasonable to switch to the summary prompt templates, if not, the user may be passing their own.
-        base = getattr(layer_class, "func", layer_class)
+    def _make_prompts(self, layer):
+        for cluster in layer:
+            topic = self.topic_model_.topics[(layer.layer_index, cluster.label)]
+            topic.prompt = self.prompt_template.cluster_prompt(
+                topic.features, self._name_kind(layer.layer_index)
+            )
+
+    def _prepare_layer(self, layer):
+        if layer.layer_index not in self._prepared_naming_layers:
+            for extractor in self.feature_extractors_:
+                if extractor.layer_dependent:
+                    options = {}
+                    if isinstance(extractor, SubtopicExtractor):
+                        keys = extractor._name_embedding_keys(
+                            layer.layer_index, self._fitted_clusterer
+                        )
+                        if keys:
+                            vectors = self._ensure_name_embeddings(
+                                [self.topics_[key] for key in keys]
+                            )
+                            options["topic_name_embeddings"] = dict(zip(keys, vectors))
+                    values = extractor.extract_layer(
+                        layer.layer_index,
+                        self.topics_,
+                        self._fitted_clusterer,
+                        **options,
+                    )
+                    self._assign_features(extractor.feature_key, layer, values)
+            self._make_prompts(layer)
+            self._prepared_naming_layers.add(layer.layer_index)
+        return [self.topics_[(layer.layer_index, cluster.label)] for cluster in layer]
+
+    @staticmethod
+    def _store_name(topic, value):
+        if isinstance(value, tuple):
+            if len(value) != 3 or not all(isinstance(item, str) for item in value):
+                raise ValueError(
+                    "Summary parsers must return (name, summary, explanation)"
+                )
+            name, summary, explanation = value
+        elif isinstance(value, str):
+            name, summary, explanation = value, None, None
+        else:
+            raise ValueError("Name parsers must return a string or summary tuple")
+        if not name.strip():
+            raise ValueError("A naming provider returned an empty topic name")
+        topic.name, topic.summary, topic.explanation = name, summary, explanation
+
+    def _ensure_name_embeddings(self, topics):
+        """Reuse this prepared fit's name vectors; encode only missing exact texts."""
+        if not topics:
+            return np.empty((0, 0))
+        if self.embedding_model is None:
+            raise ValueError("Name embeddings require a text embedding model")
+        dimension = getattr(self, "_name_embedding_dimension", None)
+        available = {}
+        for topic in topics:
+            if not isinstance(topic.name, str) or not topic.name.strip():
+                raise ValueError("Name embeddings require nonempty topic names")
+        known_topics = self.topics_.values() if hasattr(self, "topics_") else topics
+        for topic in known_topics:
+            vector = getattr(topic, "name_embedding", None)
+            if (
+                vector is not None
+                and getattr(topic, "embedded_name", None) == topic.name
+            ):
+                vector = np.asarray(vector)
+                if (
+                    vector.ndim != 1
+                    or not vector.size
+                    or vector.dtype.kind not in "fiu"
+                    or not np.isfinite(vector).all()
+                ):
+                    raise ValueError("Stored topic name embedding is invalid")
+                if dimension is not None and len(vector) != dimension:
+                    raise ValueError(
+                        "Topic name embedding dimensions changed within a prepared fit"
+                    )
+                dimension = len(vector)
+                available.setdefault(topic.name, vector)
+        missing = [
+            topic
+            for topic in topics
+            if getattr(topic, "name_embedding", None) is None
+            or getattr(topic, "embedded_name", None) != topic.name
+        ]
+        texts = list(
+            dict.fromkeys(
+                topic.name for topic in missing if topic.name not in available
+            )
+        )
+        if texts:
+            self.request_counts_["name_embeddings"] += 1
+            vectors = _matrix(
+                self.embedding_model.encode(texts), len(texts), "topic name embeddings"
+            )
+            if dimension is not None and vectors.shape[1] != dimension:
+                raise ValueError(
+                    "Topic name embedding dimensions changed within a prepared fit"
+                )
+            dimension = vectors.shape[1]
+            available.update(zip(texts, vectors))
+        # Validate the complete response before installing any new topic state.
+        for topic in missing:
+            topic.name_embedding = np.array(available[topic.name], copy=True)
+            topic.name_embedding.flags.writeable = False
+            topic.embedded_name = topic.name
+        self._name_embedding_dimension = dimension
         if (
-            isinstance(base, type)
-            and issubclass(base, ClusterLayerSummaryText)
-            and prompt_template == PROMPT_TEMPLATES
+            hasattr(self, "topic_model_")
+            and self.topic_model_.name_embedding_context is not None
         ):
-            self.prompt_template = SUMMARY_PROMPT_TEMPLATES
+            self.topic_model_.name_embedding_context["dimension"] = dimension
+        return np.stack([topic.name_embedding for topic in topics])
 
-    def __sklearn_tags__(self):
-        tags = BaseEstimator.__sklearn_tags__(self)
-        tags.requires_fit = True
-        tags.non_deterministic = True
-        tags.input_tags.one_d_array = False
-        tags.input_tags.two_d_array = False
-        tags.input_tags.string = True
+    def _check_name_embedding_context(self):
+        if self.embedding_model is not self._name_embedding_model:
+            raise ValueError(
+                "The text embedding model changed; call prepare again before naming"
+            )
 
-        return tags
+    def _similar_groups(self, topics):
+        n = len(topics)
+        if n < 2:
+            return []
+        names = [topic.name for topic in topics]
+        normalized = [name.strip().casefold() for name in names]
+        duplicates = np.array([[a == b for b in normalized] for a in normalized])
+        distances = np.ones((n, n), dtype=float)
+        if self.embedding_model is not None:
+            vectors = self._ensure_name_embeddings(topics)
+            scaled = _normalize_rows(vectors)
+            distances = np.clip(1.0 - scaled @ scaled.T, 0, 2)
+        distances[duplicates] = 0.0
+        np.fill_diagonal(distances, 0.0)
+        # Complete linkage prevents a chain of neighbours from grouping names
+        # whose endpoints are unrelated. Bound each provider request as well.
+        labels = fcluster(
+            linkage(squareform(distances, checks=False), method="complete"),
+            t=1.0 - self.disambiguation_threshold,
+            criterion="distance",
+        )
+        groups = []
+        for label in dict.fromkeys(labels):
+            members = np.flatnonzero(labels == label)
+            if len(members) < 2:
+                continue
+            count = (
+                len(members) + self.max_disambiguation_group_size - 1
+            ) // self.max_disambiguation_group_size
+            groups.extend(
+                part.tolist()
+                for part in np.array_split(members, count)
+                if len(part) > 1
+            )
+        return groups
 
-    def _sync_layer_runtime_config(self) -> None:
-        """
-        Refresh wrapper-sensitive / run-sensitive settings on all cluster layers.
+    def _disambiguation_prompt(self, topics, group, layer):
+        selected = [topics[index] for index in group]
+        names = [topic.name for topic in selected]
+        prompt = self.prompt_template.disambiguate_prompt(
+            names,
+            [topic.features for topic in selected],
+            self._name_kind(layer.layer_index),
+        )
+        return selected, names, prompt
 
-        This ensures that reused pre-fit cluster layers respect the current
-        llm_wrapper and prompt configuration for this run.
-        """
+    @staticmethod
+    def _store_disambiguation(topics, names):
+        if (
+            not isinstance(names, (list, tuple))
+            or len(names) != len(topics)
+            or any(not isinstance(name, str) or not name.strip() for name in names)
+        ):
+            raise ValueError(
+                "Disambiguation results must align with every requested topic"
+            )
+        for topic, name in zip(topics, names):
+            topic.name = name
+
+    def _disambiguation_records(self, topics, layer):
+        history = self.topic_model_.disambiguation_history
+        if layer.layer_index not in self._planned_disambiguation_layers:
+            records = []
+            for index, group in enumerate(self._similar_groups(topics)):
+                selected, names, prompt = self._disambiguation_prompt(
+                    topics, group, layer
+                )
+                vectors = (
+                    np.stack([topic.name_embedding for topic in selected])
+                    if all(topic.name_embedding is not None for topic in selected)
+                    else None
+                )
+                records.append(
+                    {
+                        "layer": layer.layer_index,
+                        "group": index,
+                        "topic_keys": [list(topic.key) for topic in selected],
+                        "input_names": list(names),
+                        "input_name_embeddings": (
+                            vectors.tolist() if vectors is not None else None
+                        ),
+                        "embedding_dtype": (
+                            str(vectors.dtype) if vectors is not None else None
+                        ),
+                        "prompt": prompt._asdict(),
+                        "status": "pending",
+                        "output_names": None,
+                        "attempts": 0,
+                        "errors": [],
+                    }
+                )
+            history.extend(records)
+            self._planned_disambiguation_layers.add(layer.layer_index)
+        return [
+            record
+            for record in history
+            if record["layer"] == layer.layer_index and record["status"] != "succeeded"
+        ]
+
+    def _begin_disambiguation(self, record):
+        selected = [self.topics_[tuple(key)] for key in record["topic_keys"]]
+        if [topic.name for topic in selected] != record["input_names"]:
+            raise ValueError("Pending disambiguation names changed; call prepare again")
+        prompt = Prompt(**record["prompt"])
+        record["attempts"] += 1
+        record["status"] = "pending"
+        self.request_counts_["disambiguation"] += 1
+        return selected, list(record["input_names"]), prompt
+
+    def _finish_disambiguation(self, record, selected, names):
+        self._store_disambiguation(selected, names)
+        record["output_names"] = list(names)
+        record["status"] = "succeeded"
+
+    @staticmethod
+    def _failed_disambiguation(record, error):
+        record["status"] = (
+            "cancelled" if isinstance(error, asyncio.CancelledError) else "failed"
+        )
+        record["errors"].append(
+            {
+                "type": f"{type(error).__module__}.{type(error).__qualname__}",
+                "message": str(error)[:1000],
+            }
+        )
+
+    def name_topics(self):
+        """Name prepared layers synchronously; errors leave inspectable partial state."""
+        self._require_prepared()
+        self._check_name_embedding_context()
+        started = perf_counter()
         for layer in self.cluster_layers_:
-            layer.exemplar_delimiters = self.exemplar_delimiters
-            layer.show_progress_bar = self.show_progress_bars
-            layer.verbose = self.verbose
+            if layer.layer_index in self._named_layers:
+                continue
+            topics = self._prepare_layer(layer)
+            for topic in topics:
+                if topic.name is None:
+                    self.request_counts_["naming"] += 1
+                    self._store_name(
+                        topic,
+                        self.llm_wrapper.generate_topic_name(
+                            topic.prompt,
+                            response_parser=self.prompt_template.extract_name,
+                        ),
+                    )
+            if self.disambiguate:
+                for record in self._disambiguation_records(topics, layer):
+                    selected, names, prompt = self._begin_disambiguation(record)
+                    try:
+                        renamed = self.llm_wrapper.generate_topic_cluster_names(
+                            prompt,
+                            names,
+                            response_parser=self.prompt_template.extract_disambiguated_names,
+                        )
+                        self._finish_disambiguation(record, selected, renamed)
+                    except BaseException as error:
+                        self._failed_disambiguation(record, error)
+                        raise
+            self._named_layers.add(layer.layer_index)
+        self.stage_timings_["naming"] = perf_counter() - started
+        return self
 
-    def _compute_topic_sizes(self) -> List[List[int]]:
-        """
-        Compute the size of each cluster in each layer.
-
-        Returns
-        -------
-        List[List[int]]
-            A list of lists where topic_sizes[i][j] is the size of cluster j in layer i.
-        """
-
-        def cluster_size(cluster_label_array):
-            if cluster_label_array.min() < 0:
-                return np.bincount(cluster_label_array - cluster_label_array.min())[
-                    -cluster_label_array.min() :
-                ].tolist()
-            else:
-                return np.bincount(cluster_label_array).tolist()
-
-        return [cluster_size(layer.cluster_labels) for layer in self.cluster_layers_]
+    async def name_topics_async(self):
+        """Name each layer through the asynchronous wrapper's bounded batch API."""
+        self._require_prepared()
+        self._check_name_embedding_context()
+        started = perf_counter()
+        for layer in self.cluster_layers_:
+            if layer.layer_index in self._named_layers:
+                continue
+            topics = self._prepare_layer(layer)
+            pending = [topic for topic in topics if topic.name is None]
+            if pending:
+                self.request_counts_["naming"] += len(pending)
+                names = await self.llm_wrapper.generate_topic_names(
+                    [topic.prompt for topic in pending],
+                    response_parser=self.prompt_template.extract_name,
+                    return_results=True,
+                )
+                if len(names) != len(pending):
+                    raise ValueError("Naming results do not align with prompts")
+                failures = []
+                for topic, result in zip(pending, names):
+                    if result.error is None:
+                        self._store_name(topic, result.value)
+                    else:
+                        failures.append(result.error)
+                if failures:
+                    raise failures[0]
+            if self.disambiguate:
+                for record in self._disambiguation_records(topics, layer):
+                    selected, names, prompt = self._begin_disambiguation(record)
+                    try:
+                        renamed = await self.llm_wrapper.generate_topic_cluster_names(
+                            [prompt],
+                            [names],
+                            response_parser=self.prompt_template.extract_disambiguated_names,
+                        )
+                        if len(renamed) != 1:
+                            raise ValueError(
+                                "Disambiguation batch results do not align"
+                            )
+                        self._finish_disambiguation(record, selected, renamed[0])
+                    except BaseException as error:
+                        self._failed_disambiguation(record, error)
+                        raise
+            self._named_layers.add(layer.layer_index)
+        self.stage_timings_["naming"] = perf_counter() - started
+        return self
 
     def fit(
         self,
-        objects: List[Any],
-        embedding_vectors: np.ndarray,
-        clusterable_vectors: np.ndarray,
-        exemplar_method: str = "central",
-        keyphrase_method: str = "information_weighted",
-        subtopic_method: str = "central",
+        objects,
+        embedding_vectors=None,
+        clusterable_vectors=None,
+        *,
+        object_vectors=None,
     ):
-        """
-        Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
+        return self.prepare(
+            objects,
+            embedding_vectors,
+            clusterable_vectors,
+            object_vectors=object_vectors,
+        ).name_topics()
 
-        Parameters:
-        -----------
-        objects: Object
-            The objects over which to perform topic modeling.  These are often text documents or images.
-        embedding_vectors: np.array
-            An numpy array of shape=(number_of_objects, embedding_dimension) created with the same embedding_model specified in the constructor.
-        clusterable_vectors: np.array
-            A numpy array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
-            for density based clustering to be efficient (2-25).
-        exemplar_method: str, Optional
-            The method to use for generating exemplars. Default is "central". Other options are "saturated_coverage", "central", and "random".
-        keyphrase_method: str, Optional
-            The method to use for generating keyphrases. Default is "information_weighted". Other options are "saturated_coverage", "facility_location", "graph_cut", "central" and "bm25".
-        subtopic_method: str, Optional
-            The method to use for generating subtopics. Default is "facility_location". Other options are "information_weighted".
-
-        Returns:
-        --------
-        self: object
-            Returns the instance of the class.
-        """
-        self.clusterable_vectors_ = clusterable_vectors
-        self.embedding_vectors_ = embedding_vectors
-
-        # Build our layers and cluster tree
-        if hasattr(self.clusterer, "cluster_layers_") and hasattr(
-            self.clusterer, "cluster_tree_"
-        ):
-            # If the clusterer has already been fit, we can skip this step
-            self.cluster_layers_ = self.clusterer.cluster_layers_
-            self.cluster_tree_ = self.clusterer.cluster_tree_
-        else:
-            self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
-                clusterable_vectors,
-                embedding_vectors,
-                self.layer_class,
-                verbose=self.verbose,
-                show_progress_bar=self.show_progress_bars,
-                exemplar_delimiters=self.exemplar_delimiters,
-                prompt_template=self.prompt_template,
-            )
-
-        self._sync_layer_runtime_config()
-
-        # Initialize other data structures
-        self.topic_names_: List[List[str]] = [[]] * len(self.cluster_layers_)
-        self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
-            self.cluster_layers_
+    async def fit_async(
+        self,
+        objects,
+        embedding_vectors=None,
+        clusterable_vectors=None,
+        *,
+        object_vectors=None,
+    ):
+        self.prepare(
+            objects,
+            embedding_vectors,
+            clusterable_vectors,
+            object_vectors=object_vectors,
         )
-        if isinstance(self.cluster_layers_[0], ClusterLayerSummaryText):
-            self.topic_summaries_: List[List[str]] = [[]] * len(self.cluster_layers_)
-            self.topic_explanations_: List[List[str]] = [[]] * len(self.cluster_layers_)
-            _summarize_topics = True
-        else:
-            _summarize_topics = False
-
-        detail_levels = np.linspace(
-            self.lowest_detail_level,
-            self.highest_detail_level,
-            len(self.cluster_layers_),
-        )
-
-        # Get exemplars for layer 0 first and build keyphrase matrix
-        if (
-            hasattr(self.cluster_layers_[0], "object_to_text_function")
-            and self.cluster_layers_[0].object_to_text_function is not None
-        ):
-            # Non-text objects: use exemplars to build keyphrase matrix
-            exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts(
-                objects,
-                embedding_vectors,
-            )
-
-            # Create aligned text list
-            aligned_texts = [""] * len(objects)  # Empty strings for non-exemplars
-            for cluster_idx, cluster_exemplars in enumerate(exemplars):
-                for exemplar_idx, exemplar_text in zip(
-                    exemplar_indices[cluster_idx], cluster_exemplars
-                ):
-                    aligned_texts[exemplar_idx] = exemplar_text
-
-            # Build keyphrase matrix from aligned texts
-            (
-                self.object_x_keyphrase_matrix_,
-                self.keyphrase_list_,
-                self.keyphrase_vectors_,
-            ) = self.keyphrase_builder.fit_transform(aligned_texts)
-        else:
-            # Text objects: build keyphrase matrix directly from objects
-            (
-                self.object_x_keyphrase_matrix_,
-                self.keyphrase_list_,
-                self.keyphrase_vectors_,
-            ) = self.keyphrase_builder.fit_transform(objects)
-            # Still need to generate exemplars for layer 0
-            self.cluster_layers_[0].make_exemplar_texts(
-                objects,
-                embedding_vectors,
-                method=exemplar_method,
-            )
-
-        if self.keyphrase_vectors_ is None:
-            # If the keyphrase vectors are None, we need to generate them
-            self.keyphrase_vectors_ = self.embedding_model.encode(
-                self.keyphrase_list_,
-                show_progress_bar=self.show_progress_bars,
-            )
-
-        # Iterate through the layers and build the topic names
-        for i, layer in tqdm(
-            enumerate(self.cluster_layers_),
-            desc=f"Building topic names by layer",
-            disable=not self.show_progress_bars,
-            total=len(self.cluster_layers_),
-            unit="layer",
-        ):
-            if i > 0:  # Skip layer 0 exemplars as we already did them
-                layer.make_exemplar_texts(
-                    objects,
-                    embedding_vectors,
-                    method=exemplar_method,
-                )
-
-            layer.make_keyphrases(
-                self.keyphrase_list_,
-                self.object_x_keyphrase_matrix_,
-                self.keyphrase_vectors_,
-                self.embedding_model,
-                method=keyphrase_method,
-            )
-
-            if i > 0:
-                if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
-                    self.cluster_layers_[0].embed_topic_names(self.embedding_model)
-
-            if _summarize_topics:
-                if i > 0:
-                    layer.make_subtopics(
-                        self.topic_names_[0],
-                        self.cluster_layers_[0].cluster_labels,
-                        self.cluster_layers_[0].topic_name_embeddings,
-                        self.embedding_model,
-                        method=subtopic_method,
-                        topic_summaries=self.topic_summaries_[0],
-                        topic_explanations=self.topic_explanations_[0],
-                    )
-                layer.make_prompts(
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                    None,
-                    None,
-                    self.topic_summaries_,
-                    self.topic_explanations_,
-                )
-                (
-                    self.topic_names_[i],
-                    self.topic_summaries_[i],
-                    self.topic_explanations_[i],
-                ) = layer.name_topics(
-                    self.llm_wrapper,
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                    self.embedding_model,
-                    self.topic_summaries_,
-                    self.topic_explanations_,
-                )
-            else:
-                if i > 0:
-                    layer.make_subtopics(
-                        self.topic_names_[0],
-                        self.cluster_layers_[0].cluster_labels,
-                        self.cluster_layers_[0].topic_name_embeddings,
-                        self.embedding_model,
-                        method=subtopic_method,
-                    )
-                layer.make_prompts(
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                )
-                self.topic_names_[i] = layer.name_topics(
-                    self.llm_wrapper,
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                    self.embedding_model,
-                )
-            self.topic_name_vectors_[i] = layer.make_topic_name_vector()
-
-        # Compute and cache topic sizes for efficient access and serialization
-        self.topic_sizes_ = self._compute_topic_sizes()
-
-        return self
+        return await self.name_topics_async()
 
     def fit_predict(
         self,
-        objects: List[Any],
-        object_vectors: np.ndarray,
-        clusterable_vectors: np.ndarray,
-        exemplar_method: str = "central",
-        keyphrase_method: str = "information_weighted",
-        subtopic_method: str = "facility_location",
-    ) -> List[np.ndarray]:
-        """
-        Fit the model with objects and return the topic names.
-
-        Parameters:
-        -----------
-        objects: List[Any]
-            A list of objects to perform topic modeling over.
-        object_vectors: np.array
-            An array of shape=(number_of_objects, embedding_dimension) created with the same embedding_model specified in the constructor.
-        object_map: np.array
-            An array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
-            for density based clustering to be efficient (2-25).
-
-        Returns:
-        --------
-        topic_name_vectors: List[np.array]
-            A list of numpy arrays of shape=(number_of_topics, embedding_dimension) that represent the topic names of each object
-            at each layer of the topic model.
-        """
+        objects,
+        embedding_vectors=None,
+        clusterable_vectors=None,
+        *,
+        object_vectors=None,
+    ):
         self.fit(
             objects,
-            object_vectors,
+            embedding_vectors,
             clusterable_vectors,
-            exemplar_method=exemplar_method,
-            keyphrase_method=keyphrase_method,
-            subtopic_method=subtopic_method,
+            object_vectors=object_vectors,
         )
         return self.topic_name_vectors_
 
     @property
-    def topic_tree_(self) -> TopicTree:
-        """
-        Returns the topic tree.
+    def topics_(self):
+        self._require_prepared()
+        return self.topic_model_.topics
 
-        Returns:
-        --------
-        TopicTree
-            A representation of the topic tree (either html or string).
-        """
-        check_is_fitted(
-            self,
-            ["cluster_tree_", "topic_names_", "topic_name_vectors_", "topic_sizes_"],
-        )
+    @property
+    def topic_names_(self):
+        self._require_prepared()
+        return self.topic_model_.topic_names
 
-        return TopicTree(
-            self.cluster_tree_,
-            self.topic_names_,
-            self.topic_sizes_,
-            self.embedding_vectors_.shape[0],
-        )
+    @property
+    def topic_sizes_(self):
+        self._require_prepared()
+        return self.topic_model_.topic_sizes
+
+    @property
+    def topic_name_vectors_(self):
+        self._require_prepared()
+        return self.topic_model_.topic_name_vectors
+
+    @property
+    def topic_tree_(self):
+        self._require_prepared()
+        return self.topic_model_.topic_tree()

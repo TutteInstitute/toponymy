@@ -1,64 +1,46 @@
-================
 PLSCANClusterer
-================
+===============
 
-``PLSCANClusterer`` is a Toponymy ``Clusterer`` wrapper around
-``fast_hdbscan.PLSCAN``. It is useful when you want PLSCAN-based layered
-clustering inside Toponymy while still using the standard Toponymy clusterer
-interface. It does not replace ``ToponymyClusterer``; it is an alternative
-clusterer for users who specifically want PLSCAN's persistence-based cluster
-layers.
-
-When to use it
---------------
-
-Use ``PLSCANClusterer`` when you want to:
-
-* cluster on ``clusterable_vectors``, often a low-dimensional map or another
-  clusterable representation;
-* compute Toponymy centroids from ``embedding_vectors``;
-* inspect PLSCAN layers through the same ``cluster_layers_`` and
-  ``cluster_tree_`` interface used by other Toponymy clusterers.
-
-Basic usage
------------
+``PLSCANClusterer`` is the default adapter around ``fast_hdbscan.PLSCAN``.
+It delegates clustering to fast-hdbscan and converts its labels into the same
+owned layer and containment-tree contract used by the other clusterers.
 
 .. code-block:: python
 
-   from toponymy import ClusterLayerText, PLSCANClusterer
+   from toponymy import PLSCANClusterer
 
    clusterer = PLSCANClusterer(
-       min_clusters=6,
        min_samples=5,
        base_min_cluster_size=10,
        max_layers=4,
+       reproducible=True,
    )
+   layers, tree = clusterer.fit_predict(clusterable_vectors)
 
-   cluster_layers, cluster_tree = clusterer.fit_predict(
-       clusterable_vectors=clusterable_vectors,
-       embedding_vectors=embedding_vectors,
-       layer_class=ClusterLayerText,
-   )
+   for layer in layers:
+       print(layer.layer_index, [cluster.label for cluster in layer])
 
-   # Toponymy layer objects and the parent/child cluster tree
-   clusterer.cluster_layers_
-   clusterer.cluster_tree_
+Pass only the clustering representation to the clusterer. Semantic embeddings,
+feature extractors, templates and naming providers belong to ``Toponymy``.
 
-   # PLSCAN metadata retained for the returned layers
-   clusterer.cluster_probabilities_
-   clusterer.cluster_persistence_scores_
-   clusterer.plscan_min_cluster_sizes_
+``base_min_cluster_size`` controls the finest clustering resolution.
+``base_n_clusters`` requests an approximate finest-layer count instead.
+``max_layers`` limits the number of selected layers; it does not promise that
+every input yields that many nonempty layers. ``reproducible=True`` selects
+the maintained estimator's deterministic computation path.
 
-``cluster_layers`` is the list of Toponymy cluster layer objects. ``cluster_tree``
-maps clusters between neighboring layers.
+Algorithm-specific diagnostics remain on ``clusterer.plscan_``, including
+``membership_strength_layers_``, ``layer_persistence_scores_`` and
+``min_cluster_sizes_``. For an empty or undersized fit that bypassed the
+estimator, ``plscan_`` is ``None``.
 
-Notes
------
+The adapter requires fast-hdbscan >=0.3.2. Dense finite real vectors are the
+ordinary input. ``metric="precomputed"`` instead accepts a scipy sparse square
+distance graph with finite, nonnegative stored distances; an explicit zero
+edge differs from a missing edge. Other metrics may need fast-hdbscan's
+optional nearest-neighbor dependency. ``cannot_link`` constraints require
+``algorithm="kruskal"``.
 
-* ``clusterable_vectors`` are passed to ``fast_hdbscan.PLSCAN.fit(...)``.
-* ``embedding_vectors`` are used for Toponymy centroid construction.
-* ``-1`` labels are preserved as noise or unlabelled points.
-* ``cluster_probabilities_`` and ``cluster_persistence_scores_`` are stored on
-  the clusterer object for the returned layers.
-* ``plscan_min_cluster_sizes_`` stores the ``min_cluster_sizes_`` trace exposed
-  by ``fast_hdbscan.PLSCAN``.
+No naming configuration is stored on cluster layers. Noise stays ``-1``;
+empty and all-noise results are valid. See :doc:`cluster_layers` for the full
+membership and tree contract.

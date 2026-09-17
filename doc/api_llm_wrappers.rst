@@ -1,13 +1,21 @@
 LLM Wrappers
 ------------
 
-The LLM wrappers provide a unified interface for working with different language models.
-
-They are designed for use with the Toponymy API and offer a consistent way to configure and interact with LLM providers.
+Wrappers accept the canonical ``Prompt`` and the selected template's response
+parser. See :doc:`llm_wrappers` for system/user separation, schema policy,
+bounded retries and the distinction between sync, async and batch transports.
 
 .. currentmodule:: toponymy.llm_wrappers
 
-Most wrappers are convenience layers around `(Async)LiteLLMNamer` with sensible defaults. Any model supported by LiteLLM can also be used directly via `LiteLLMNamer` by specifying the appropriate parameters.
+.. autoclass:: toponymy.llm_wrappers.LLMWrapper
+   :members: generate_topic_name, generate_topic_cluster_names, supports_json_schema
+
+.. autoclass:: toponymy.llm_wrappers.AsyncLLMWrapper
+   :members: generate_topic_names, generate_topic_cluster_names, supports_json_schema
+
+``LiteLLMNamer`` and ``AsyncLiteLLMNamer`` adapt configured provider models.
+An explicitly required structured-output capability must be supported by that
+provider; unsupported requirements raise ``InvalidLLMInputError``.
 
 .. autoclass:: toponymy.llm_wrappers.LiteLLMNamer
    :members:

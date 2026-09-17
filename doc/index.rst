@@ -1,90 +1,50 @@
-.. Toponymy documentation master file, created by
-   sphinx-quickstart on Wed Apr 30 14:55:44 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
 .. image:: toponymy_text_horizontal.png
-  :width: 600
-  :alt: Toponymy logo
-  :align: center
+   :width: 600
+   :alt: Toponymy logo
+   :align: center
 
-Toponymy: Topic Modelling in Embedding Space
-============================================
+Toponymy: topics in embedding space
+===================================
 
-The package name Toponymy is derived from the Greek topos ‘place’ + onuma ‘name’.  Thus, the naming of places.  
-The goal of Toponymy is to put names to places in the space of information. This could be a corpus of documents,
-in which case Toponymy can be viewed as a topic naming library.  It could also be a collection of images, in which case
-Toponymy could be used to name the themes of the images.  The goal is to provide a names that can allow a user to
-navigate through the space of information in a meaningful way.
-
-Toponymy is designed to scale to very large corpora and collections, providing meaningful names on multiple scales,
-from broad themes to fine-grained topics.  We make use a custom clustering methods, information extraction, 
-and large language models to power this. The library is designed to be flexible and easy to use.
-
-**Quick Install**
-
-.. code-block:: bash
-
-   pip install toponymy
-
-**Beta Status**
-
-   Please note: Toponymy is currently in beta. APIs may evolve. We welcome
-   `feedback and contributions <Your Contribution/Issues Link>`_!
-
-User Guide
-----------
-
-Toponymy is designed to be easy to use.  The user guide provides a quick start to the library,
-and a tour of some of the richer functionality and uses cases.
+Toponymy combines clustering, representative evidence, and language models to
+name groups of objects at several resolutions. This guide describes v0.6.
+The default pipeline uses PLSCAN and exemplar text; optional extractors add
+keyphrases, named child topics, or contrastive TreeSHAP evidence.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Getting Started:
+   :caption: Getting started
 
    intro
    installation
    basic_usage
+   migration
+   benchmark_results
    params_and_options
    saving_loading
    debugging_llm_runs
 
 .. toctree::
    :maxdepth: 1
-   :caption: Getting More out of Toponymy:
+   :caption: Components
 
    how_toponymy_works
    clusterers
    plscan_clusterer
    clustering_options
-   keyphrases
+   cluster_layers
    exemplar_texts
+   keyphrases
    topic_summaries
    llm_wrappers
    embedding_wrappers
-   cluster_layers
-
-For an overview of Toponymy's internal design and extension points, see the
-`Toponymy Architecture <https://github.com/TutteInstitute/toponymy/wiki/Toponymy-Architecture>`_ wiki page.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Examples:
-
-   ml_papers
-   images
-   long_documents
-   audio_samples
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Sundries:
+   :caption: Reference
 
    api
-   faq
-
-Indices and tables
-==================
+   historical_examples
 
 * :ref:`genindex`
 * :ref:`modindex`

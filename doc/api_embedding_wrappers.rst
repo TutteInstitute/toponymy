@@ -1,26 +1,10 @@
-Embedding Wrappers
-------------------
+Embedding API
+=============
 
-The Embedding Wrappers are a set of classes that provide a unified interface for different embedding services.
+.. autoclass:: toponymy.embedding_wrappers.TextEmbedderProtocol
+   :members:
 
-.. currentmodule:: toponymy.embedding_wrappers
-
-.. autoclass:: toponymy.embedding_wrappers.CohereEmbedder
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-.. autoclass:: toponymy.embedding_wrappers.OpenAIEmbedder
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-.. autoclass:: toponymy.embedding_wrappers.AnthropicEmbedder
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
-.. autoclass:: toponymy.embedding_wrappers.AzureAIEmbedder
-    :members:
-    :undoc-members:
-    :show-inheritance:
+``encode`` returns a numeric matrix in the order of the supplied texts.
+See :doc:`embedding_wrappers` for how the pipeline uses it. Provider-specific
+classes are conditional on their installed SDKs; consult the installed module's
+class signatures for provider and model configuration.

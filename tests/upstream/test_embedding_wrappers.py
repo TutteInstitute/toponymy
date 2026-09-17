@@ -1,0 +1,216 @@
+import pytest
+import numpy as np
+from unittest.mock import MagicMock, patch
+
+
+@pytest.fixture
+def embedders():
+    import toponymy.embedding_wrappers
+
+    return toponymy.embedding_wrappers
+
+
+class TestCohereEmbedder:
+    @patch("cohere.ClientV2")
+    def test_encode(self, mock_client_v2, embedders):
+        # Set up mock response
+        mock_client = MagicMock()
+        mock_client_v2.return_value = mock_client
+
+        mock_response = MagicMock()
+        mock_response.embeddings.float_ = [[0.1, 0.2], [0.3, 0.4]]
+        mock_client.embed.return_value = mock_response
+
+        # Create the embedder and call encode
+        embedder = embedders.CohereEmbedder(api_key="fake_key")
+        texts = ["sample text 1", "sample text 2"]
+        result = embedder.encode(texts)
+
+        # Verify the result
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2, 2)
+        np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+        # Verify API was called correctly
+        mock_client.embed.assert_called_once_with(
+            texts=texts,
+            model="embed-multilingual-v3.0",
+            input_type="search_query",
+            embedding_types=["float"],
+        )
+
+    @patch("cohere.ClientV2")
+    def test_legacy_co_api_key(self, mock_client_v2, monkeypatch, embedders):
+        # Verify that CO_API_KEY works with deprecation warning
+        monkeypatch.delenv("COHERE_API_KEY", raising=False)
+        monkeypatch.setenv("CO_API_KEY", "dummy")
+
+        with pytest.warns(
+            FutureWarning, match="CO_API_KEY.*deprecated.*COHERE_API_KEY"
+        ):
+            embedder = embedders.CohereEmbedder()
+
+        # Verify the embedder was created (mock client was called)
+        mock_client_v2.assert_called_once_with(api_key="dummy")
+
+
+class TestOpenAIEmbedder:
+    @patch("openai.OpenAI")
+    def test_encode(self, mock_openai, embedders):
+        # Set up mock response
+        mock_client = MagicMock()
+        mock_openai.return_value = mock_client
+
+        mock_data_item1 = MagicMock()
+        mock_data_item1.embedding = [0.1, 0.2]
+        mock_data_item1.index = 0
+        mock_data_item2 = MagicMock()
+        mock_data_item2.embedding = [0.3, 0.4]
+        mock_data_item2.index = 1
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_data_item1, mock_data_item2]
+        mock_client.embeddings.create.return_value = mock_response
+
+        # Create the embedder and call encode
+        embedder = embedders.OpenAIEmbedder(api_key="fake_key")
+        texts = ["sample text 1", "sample text 2"]
+        result = embedder.encode(texts)
+
+        # Verify the result
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2, 2)
+        np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+        # Verify API was called correctly
+        mock_client.embeddings.create.assert_called_once()
+
+
+class TestAnthropicEmbedder:
+    @patch("anthropic.Anthropic")
+    def test_encode(self, mock_anthropic, embedders):
+        with pytest.raises(NotImplementedError, match="no native embeddings API"):
+            embedders.AnthropicEmbedder(api_key="fake_key")
+        mock_anthropic.assert_not_called()
+
+
+class TestAzureAIEmbedder:
+    @patch("azure.ai.inference.EmbeddingsClient")
+    def test_encode(self, mock_ai_client, embedders):
+        # Set up mock response
+        mock_client = MagicMock()
+        mock_ai_client.return_value = mock_client
+
+        # Create mock embedding results
+        mock_embedding_result1 = MagicMock()
+        mock_embedding_result1.embedding = [0.1, 0.2]
+        mock_embedding_result1.index = 0
+        mock_embedding_result2 = MagicMock()
+        mock_embedding_result2.embedding = [0.3, 0.4]
+        mock_embedding_result2.index = 1
+
+        # Create mock response
+        mock_response = MagicMock()
+        mock_response.data = [mock_embedding_result1, mock_embedding_result2]
+
+        # Configure the mock client to return our mock response
+        mock_client.embed.return_value = mock_response
+
+        # Create the embedder and call encode
+        embedder = embedders.AzureAIEmbedder(
+            api_key="fake_key",
+            endpoint="https://fake-endpoint.azure.com/",
+            model="text-embedding",
+        )
+        texts = ["sample text 1", "sample text 2"]
+        result = embedder.encode(texts)
+
+        # Verify the result
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2, 2)
+        np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+        # Verify API was called correctly
+        mock_client.embed.assert_called_once()
+        # Check that the deployment name was passed correctly
+        args, kwargs = mock_client.embed.call_args
+        assert kwargs["model"] == "text-embedding"
+        # Check that BatchInput was created with correct number of items
+        assert len(kwargs["input"]) == 2
+
+    @patch("azure.ai.inference.EmbeddingsClient")
+    def test_model_required(self, mock_ai_client, embedders):
+        # Verify that model parameter is required
+        with pytest.raises(
+            ValueError,
+            match="No Azure AI model specified.*model='text-embedding-3-small'",
+        ):
+            embedders.AzureAIEmbedder(
+                api_key="fake_key",
+                endpoint="https://fake-endpoint.azure.com/",
+                model=None,
+            )
+
+
+class TestMistralEmbedder:
+    @patch("toponymy.embedding_wrappers.mistralai.client.Mistral")
+    def test_encode(self, mock_mistral_client, embedders):
+        # Set up mock response
+        mock_client = MagicMock()
+        mock_mistral_client.return_value = mock_client
+
+        mock_data_item1 = MagicMock()
+        mock_data_item1.embedding = [0.1, 0.2]
+        mock_data_item1.index = 0
+        mock_data_item2 = MagicMock()
+        mock_data_item2.embedding = [0.3, 0.4]
+        mock_data_item2.index = 1
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_data_item1, mock_data_item2]
+        mock_client.embeddings.create.return_value = mock_response
+
+        # Create the embedder and call encode
+        embedder = embedders.MistralEmbedder(api_key="fake_key")
+        texts = ["sample text 1", "sample text 2"]
+        result = embedder.encode(texts)
+
+        # Verify the result
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2, 2)
+        np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+        # Verify API was called correctly
+        mock_client.embeddings.create.assert_called_once_with(
+            model="mistral-embed", inputs=texts
+        )
+
+
+class TestVoyageAIEmbedder:
+    @patch("requests.post")
+    def test_encode(self, mock_post, embedders):
+        # Set up mock response
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "data": [
+                {"index": 0, "embedding": [0.1, 0.2]},
+                {"index": 1, "embedding": [0.3, 0.4]},
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        # Create the embedder and call encode
+        embedder = embedders.VoyageAIEmbedder(api_key="fake_key")
+        texts = ["sample text 1", "sample text 2"]
+        result = embedder.encode(texts)
+
+        # Verify the result
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (2, 2)
+        np.testing.assert_almost_equal(result, np.array([[0.1, 0.2], [0.3, 0.4]]))
+
+        # Verify API was called correctly
+        mock_post.assert_called_once()
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["model"] == "voyage-2"
+        assert kwargs["json"]["input"] == texts

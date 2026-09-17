@@ -15,7 +15,26 @@ def doc_dir() -> Path:
 
 
 def examples_dir() -> Path:
-    return PACKAGE_ROOT / "examples"
+    """Locate source example data, or an explicitly supplied local directory.
+
+    The example datasets are not installed with the Python package. An explicit
+    directory never falls back to another location or triggers a download.
+    """
+    configured = os.environ.get("TOPONYMY_EXAMPLES_DIR")
+    if configured is not None:
+        if not configured.strip():
+            raise ValueError("TOPONYMY_EXAMPLES_DIR must name a local data directory")
+        directory = Path(configured).expanduser().resolve()
+    else:
+        directory = PACKAGE_ROOT / "examples"
+    if not directory.is_dir():
+        raise FileNotFoundError(
+            f"Example data directory does not exist: {directory}. "
+            "The datasets are supplied in a source checkout, not the installed "
+            "package. Set TOPONYMY_EXAMPLES_DIR to your local examples directory. "
+            "No data was downloaded."
+        )
+    return directory
 
 
 def get_notebooks(doc_dir: Path) -> list[Path]:

@@ -3,12 +3,16 @@ import numpy as np
 from typing import List, Tuple, FrozenSet, Dict, Callable, Any, Optional, Protocol
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs
-from functools import reduce
 from collections import Counter
 from toponymy.utility_functions import diversify_max_alpha as diversify
+from toponymy.utility_functions import (
+    _mean_vector,
+    _center_vectors,
+    _normalize_rows,
+    distance_to_vector,
+)
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from vectorizers.transformers import InformationWeightTransformer
-from sklearn.metrics import pairwise_distances
 from apricot import SaturatedCoverageSelection, GraphCutSelection
 from toponymy.exemplar_texts import FacilityLocationSelection
 from toponymy._utils import handle_verbose_params
@@ -19,8 +23,6 @@ import numba
 from tqdm.auto import tqdm
 
 Ngrammer = Callable[[str], List[str]]
-
-from typing import Union, overload, TypeVar, cast
 
 
 # Define a protocol for objects that behave like Tokenizers
@@ -58,7 +60,7 @@ def create_tokenizers_ngrammer(
         return [
             tokenizer.decode(tokens[i : i + n])
             for n in range(ngram_range[0], ngram_range[1] + 1)
-            for i in range(len(tokens) - n)
+            for i in range(len(tokens) - n + 1)
         ]
 
     return ngrammer
@@ -218,7 +220,6 @@ def build_keyphrase_vocabulary(
     if verbose:
         print("Combining count dictionaries ...")
     # Combine dictionaries and count the most common ngrams
-    # all_vocab_counts = reduce(combine_dicts, chunked_count_dicts, {})
     all_vocab_counts = tree_combine_dicts(
         chunked_count_dicts, max_ngrams=max_features * 10
     )
@@ -451,38 +452,55 @@ class KeyphraseBuilder:
         _, self.verbose = handle_verbose_params(verbose=verbose, default_verbose=False)
 
     def fit(self, objects: List[Any]):
+        for name in (
+            "object_x_keyphrase_matrix_",
+            "keyphrase_list_",
+            "keyphrase_vectors_",
+        ):
+            self.__dict__.pop(name, None)
         if self.object_to_text is None:
             object_texts = objects
         else:
             object_texts = [self.object_to_text(obj) for obj in objects]
 
+        if not all(isinstance(text, str) for text in object_texts):
+            raise TypeError(
+                "Keyphrase extraction requires text or object_to_text returning strings"
+            )
+
+        if not len(object_texts):
+            self.object_x_keyphrase_matrix_ = scipy.sparse.csr_matrix((0, 0))
+            self.keyphrase_list_, self.keyphrase_vectors_ = [], None
+            return self
+
         if self.verbose:
             print("Building keyphrase matrix ... ")
 
-        self.object_x_keyphrase_matrix_, self.keyphrase_list_ = (
-            build_object_x_keyphrase_matrix(
-                object_texts,
-                ngram_range=self.ngram_range,
-                tokenizer=self.tokenizer,
-                token_pattern=self.token_pattern,
-                max_features=self.max_features,
-                min_occurrences=self.min_occurrences,
-                stop_words=self.stop_words,
-                n_jobs=self.n_jobs,
-                verbose=self.verbose,
-            )
+        matrix, vocabulary = build_object_x_keyphrase_matrix(
+            object_texts,
+            ngram_range=self.ngram_range,
+            tokenizer=self.tokenizer,
+            token_pattern=self.token_pattern,
+            max_features=self.max_features,
+            min_occurrences=self.min_occurrences,
+            stop_words=self.stop_words,
+            n_jobs=self.n_jobs,
+            verbose=self.verbose,
         )
 
         if self.embedder is not None:
             if self.verbose:
                 print("Building keyphrase vectors ... ")
 
-            self.keyphrase_vectors_ = self.embedder.encode(
-                self.keyphrase_list_,
-                show_progress_bar=self.verbose,
-            )
+            vectors = _validated_keyphrase_vectors(
+                self.embedder.encode(vocabulary, show_progress_bar=self.verbose),
+                len(vocabulary),
+            ).copy()
         else:
-            self.keyphrase_vectors_ = None
+            vectors = None
+
+        self.object_x_keyphrase_matrix_ = matrix
+        self.keyphrase_list_, self.keyphrase_vectors_ = vocabulary, vectors
 
         return self
 
@@ -498,6 +516,67 @@ class KeyphraseBuilder:
             self.keyphrase_list_,
             self.keyphrase_vectors_,
         )
+
+
+def _validated_keyphrase_vectors(vectors, n_phrases):
+    vectors = np.asarray(vectors)
+    if (
+        vectors.ndim != 2
+        or vectors.shape[0] != n_phrases
+        or (n_phrases and not vectors.shape[1])
+        or vectors.dtype.kind not in "fiu"
+        or not np.isfinite(vectors).all()
+    ):
+        raise ValueError(
+            "Keyphrase vectors must be a finite real matrix aligned with the vocabulary"
+        )
+    return vectors
+
+
+def _keyphrase_vector_mapping(names, vectors, embedding_model):
+    vectors = _validated_keyphrase_vectors(vectors, len(names))
+    # With an embedder, zero rows retain the legacy on-demand sentinel meaning.
+    return {
+        name: vector
+        for name, vector in zip(names, vectors)
+        if embedding_model is None or np.any(vector != 0)
+    }
+
+
+def _fill_keyphrase_vectors(mapping, names, embedding_model, vectors):
+    missing = list(dict.fromkeys(name for name in names if name not in mapping))
+    if not missing:
+        return
+    if embedding_model is None:
+        raise ValueError(
+            "On demand keyphrase vectorization requires an embedding model"
+        )
+    if not vectors.flags.writeable:
+        raise ValueError(
+            "On demand keyphrase vectorization requires a writable vector table"
+        )
+    response = _validated_keyphrase_vectors(
+        embedding_model.encode(missing, show_progress_bar=False), len(missing)
+    )
+    if response.shape[1] != vectors.shape[1]:
+        raise ValueError("Keyphrase embedding dimensions changed")
+    with np.errstate(over="ignore", invalid="ignore", under="ignore"):
+        converted = response.astype(vectors.dtype)
+    if (
+        not np.isfinite(converted).all()
+        or np.any((response != 0) & (converted == 0))
+        or (vectors.dtype.kind in "iu" and converted.tolist() != response.tolist())
+    ):
+        raise ValueError(
+            "Keyphrase vector table dtype cannot represent the embedding response"
+        )
+    mapping.update(zip(missing, converted))
+
+
+def _update_keyphrase_vectors(names, vectors, mapping):
+    for i, name in enumerate(names):
+        if name in mapping and not np.array_equal(vectors[i], mapping[name]):
+            vectors[i] = mapping[name]
 
 
 @numba.njit()
@@ -522,18 +601,58 @@ def subset_matrix_and_class_labels(
     cluster_label_vector: np.ndarray,
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
 ) -> Tuple[scipy.sparse.spmatrix, np.ndarray, np.ndarray]:
+    cluster_label_vector = np.asarray(cluster_label_vector)
+    if (
+        cluster_label_vector.ndim != 1
+        or (cluster_label_vector.size and cluster_label_vector.dtype.kind not in "iu")
+        or np.any(cluster_label_vector < -1)
+        or not scipy.sparse.issparse(object_x_keyphrase_matrix)
+        or object_x_keyphrase_matrix.ndim != 2
+        or len(cluster_label_vector) != object_x_keyphrase_matrix.shape[0]
+    ):
+        raise ValueError(
+            "Cluster labels must be integers aligned with the count matrix"
+        )
+    object_x_keyphrase_matrix = object_x_keyphrase_matrix.tocsr()
+    if (
+        object_x_keyphrase_matrix.dtype.kind not in "fiu"
+        or not np.isfinite(object_x_keyphrase_matrix.data).all()
+        or np.any(object_x_keyphrase_matrix.data < 0)
+    ):
+        raise ValueError("Keyphrase counts must be finite and nonnegative")
     # Mask out noise points, and then columns and rows that then have no entries
     count_matrix = object_x_keyphrase_matrix[cluster_label_vector >= 0, :]
-    column_mask = np.squeeze(np.asarray(count_matrix.sum(axis=0))) > 0.0
+    column_mask = np.ravel(np.asarray((count_matrix > 0).sum(axis=0))) > 0
     count_matrix = count_matrix[:, column_mask]
     column_map = np.arange(object_x_keyphrase_matrix.shape[1])[column_mask]
-    row_mask = np.squeeze(np.asarray(count_matrix.sum(axis=1))) > 0.0
+    row_mask = np.ravel(np.asarray((count_matrix > 0).sum(axis=1))) > 0
     count_matrix = count_matrix[row_mask, :]
 
     # Make a label vector contracted to the appropriate space
     class_labels = cluster_label_vector[cluster_label_vector >= 0][row_mask]
 
     return count_matrix, class_labels, column_map
+
+
+def _information_weighted_matrix(
+    count_matrix, class_labels, prior_strength, weight_power
+):
+    if min(count_matrix.shape) < 2 or np.unique(class_labels).size < 2:
+        return None
+    try:
+        # Constant class distributions can have zero information, making the
+        # transformer's normalization undefined. Use representative selection.
+        with np.errstate(divide="raise", invalid="raise"):
+            transformer = InformationWeightTransformer(
+                prior_strength=prior_strength, weight_power=weight_power
+            ).fit(count_matrix, class_labels)
+    except FloatingPointError:
+        return None
+    if not np.isfinite(transformer.information_weights_).all():
+        return None
+    count_matrix.data = np.log(count_matrix.data + 1)
+    count_matrix.eliminate_zeros()
+    return transformer.transform(count_matrix)
 
 
 def information_weighted_keyphrases(
@@ -590,25 +709,40 @@ def information_weighted_keyphrases(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
 
-    keyphrase_vector_mapping = {
-        keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
-        if not np.all(vector == 0.0)
-    }
+    keyphrase_vector_mapping = _keyphrase_vector_mapping(
+        keyphrase_list, keyphrase_vectors, embedding_model
+    )
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
     )
+    if not len(class_labels):
+        return [
+            ["No notable keyphrases"]
+            for _ in range(
+                int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0
+            )
+        ]
 
-    iwt = InformationWeightTransformer(
-        prior_strength=prior_strength, weight_power=weight_power
-    ).fit(count_matrix, class_labels)
-    count_matrix.data = np.log(count_matrix.data + 1)
-    count_matrix.eliminate_zeros()
-    weighted_matrix = iwt.transform(count_matrix)
+    # Information weighting needs multiple observations, terms, and classes.
+    # Without that contrast, select representative terms using the central strategy.
+    weighted_matrix = _information_weighted_matrix(
+        count_matrix, class_labels, prior_strength, weight_power
+    )
+    if weighted_matrix is None:
+        return central_keyphrases(
+            cluster_label_vector,
+            object_x_keyphrase_matrix,
+            keyphrase_list,
+            keyphrase_vectors,
+            embedding_model,
+            n_keyphrases=n_keyphrases,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+        )
 
     result = []
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc="Generating informative keyphrases",
         disable=not show_progress_bar_val,
         leave=False,
@@ -616,7 +750,7 @@ def information_weighted_keyphrases(
         position=1,
     ):
         # Sum over the cluster; get the top scoring indices
-        contrastive_scores = np.squeeze(
+        contrastive_scores = np.ravel(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
         if sum(contrastive_scores) == 0:
@@ -629,27 +763,17 @@ def information_weighted_keyphrases(
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
         # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [
-            keyphrase
-            for keyphrase in keyphrases_present
-            if keyphrase not in keyphrase_vector_mapping
-        ]
-        if len(missing_keyphrases) > 0:
-            if embedding_model is None:
-                raise ValueError(
-                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
-                )
-            missing_keyphrase_vectors = embedding_model.encode(
-                missing_keyphrases, show_progress_bar=False
-            )
-            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-                keyphrase_vector_mapping[keyphrase] = vector
+        _fill_keyphrase_vectors(
+            keyphrase_vector_mapping,
+            keyphrases_present,
+            embedding_model,
+            keyphrase_vectors,
+        )
 
         # Compute the centroid of the keyphrases present in the cluster
-        centroid_vector = np.average(
+        centroid_vector = _mean_vector(
             [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
-            weights=keyphrase_weights,
-            axis=0,
+            weights=keyphrase_weights / keyphrase_weights.max(),
         )
 
         chosen_indices = np.argsort(contrastive_scores)[-max((n_keyphrases * 4), 16) :]
@@ -679,9 +803,9 @@ def information_weighted_keyphrases(
         result.append(chosen_keyphrases)
 
     # Update keyphrase vectors with vectors from the mapping
-    for i, keyphrase in enumerate(keyphrase_list):
-        if keyphrase in keyphrase_vector_mapping:
-            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+    _update_keyphrase_vectors(
+        keyphrase_list, keyphrase_vectors, keyphrase_vector_mapping
+    )
 
     return result
 
@@ -728,77 +852,84 @@ def central_keyphrases(
     show_progress_bar_val, _ = handle_verbose_params(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    keyphrase_vector_mapping = {
-        keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
-        if not np.all(vector == 0.0)
-    }
+    keyphrase_vector_mapping = _keyphrase_vector_mapping(
+        keyphrase_list, keyphrase_vectors, embedding_model
+    )
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
     )
+    if not len(class_labels):
+        return [
+            ["No notable keyphrases"]
+            for _ in range(
+                int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0
+            )
+        ]
 
+    _fill_keyphrase_vectors(
+        keyphrase_vector_mapping,
+        [keyphrase_list[i] for i in column_map],
+        embedding_model,
+        keyphrase_vectors,
+    )
+    complete_vectors = np.asarray(
+        [
+            keyphrase_vector_mapping.get(name, vector)
+            for name, vector in zip(keyphrase_list, keyphrase_vectors)
+        ]
+    )
+    null_topic = _mean_vector(complete_vectors) if len(complete_vectors) else 0.0
     result = []
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc="Generating central keyphrases",
         disable=not show_progress_bar_val,
         leave=False,
         unit="cluster",
         position=1,
     ):
-        # Sum over the cluster; get the non-zero indices
+        cluster_counts = count_matrix[class_labels == cluster_num]
+        # Presence is independent of the scale used for summing count weights.
         base_candidate_indices = np.where(
-            np.squeeze(
-                np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-            )
-            > 0
+            np.ravel(np.asarray((cluster_counts > 0).sum(axis=0))) > 0
         )[0]
 
-        null_topic = np.mean(keyphrase_vectors, axis=0)
+        if len(base_candidate_indices) == 0:
+            result.append(["No notable keyphrases"])
+            continue
 
         # Map the indices back to the original vocabulary
         base_candidates = [
             keyphrase_list[column_map[j]] for j in base_candidate_indices
         ]
-        # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [
-            keyphrase
-            for keyphrase in base_candidates
-            if keyphrase not in keyphrase_vector_mapping
-        ]
-        if len(missing_keyphrases) > 0:
-            if embedding_model is None:
-                raise ValueError(
-                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
-                )
-            missing_keyphrase_vectors = embedding_model.encode(
-                missing_keyphrases, show_progress_bar=False
-            )
-            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-                keyphrase_vector_mapping[keyphrase] = vector
-
-        base_vectors = (
-            np.asarray([keyphrase_vector_mapping[phrase] for phrase in base_candidates])
-            - null_topic
+        raw_vectors = np.asarray(
+            [keyphrase_vector_mapping[phrase] for phrase in base_candidates]
         )
-        base_weights = np.squeeze(
-            np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-        )[base_candidate_indices]
-        centroid = np.average(base_vectors, axis=0, weights=base_weights)
+        base_vectors = _center_vectors(raw_vectors, null_topic)
+        cluster_counts = cluster_counts.astype(np.float64)
+        cluster_counts.data /= cluster_counts.data.max()
+        base_weights = np.ravel(np.asarray(cluster_counts.sum(axis=0)))[
+            base_candidate_indices
+        ]
+        centroid = _center_vectors(
+            _mean_vector(raw_vectors, weights=base_weights)[None, :],
+            null_topic,
+        )[0]
 
         # Select the central keyphrases as the closest samples to the centroid
-        base_distances = pairwise_distances(
-            centroid.reshape(1, -1), base_vectors, metric="cosine"
-        )
-        base_order = np.argsort(base_distances.flatten())
+        base_distances = distance_to_vector(centroid, base_vectors)
+        base_order = np.argsort(base_distances, kind="stable")
 
         chosen_keyphrases = [base_candidates[i] for i in base_order[: n_keyphrases**2]]
 
         # Extract the longest keyphrases, then diversify the selection
         chosen_keyphrases = longest_keyphrases(chosen_keyphrases)
-        chosen_vectors = np.asarray(
-            [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
+        chosen_vectors = _center_vectors(
+            np.asarray(
+                [keyphrase_vector_mapping[phrase] for phrase in chosen_keyphrases]
+            ),
+            null_topic,
         )
         chosen_indices = diversify(
             centroid,
@@ -811,9 +942,9 @@ def central_keyphrases(
         result.append(chosen_keyphrases)
 
     # Update keyphrase vectors with vectors from the mapping
-    for i, keyphrase in enumerate(keyphrase_list):
-        if keyphrase in keyphrase_vector_mapping:
-            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+    _update_keyphrase_vectors(
+        keyphrase_list, keyphrase_vectors, keyphrase_vector_mapping
+    )
 
     return result
 
@@ -863,15 +994,20 @@ def bm25_keyphrases(
     show_progress_bar_val, _ = handle_verbose_params(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    keyphrase_vector_mapping = {
-        keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
-        if not np.all(vector == 0.0)
-    }
+    keyphrase_vector_mapping = _keyphrase_vector_mapping(
+        keyphrase_list, keyphrase_vectors, embedding_model
+    )
 
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
     )
+    if not len(class_labels):
+        return [
+            ["No notable keyphrases"]
+            for _ in range(
+                int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0
+            )
+        ]
 
     # Build a class based count matrix
     groupby_matrix = scipy.sparse.csr_matrix(
@@ -879,7 +1015,7 @@ def bm25_keyphrases(
             np.ones(class_labels.shape[0]),
             (class_labels, np.arange(class_labels.shape[0])),
         ),
-        shape=(class_labels.max() + 1, class_labels.shape[0]),
+        shape=(cluster_label_vector.max() + 1, class_labels.shape[0]),
     )
     class_count_matrix = groupby_matrix @ count_matrix
 
@@ -888,7 +1024,7 @@ def bm25_keyphrases(
     df = (class_count_matrix > 0).sum(axis=0)
     idf = np.log(1 + (N - df + 0.5) / (df + 0.5))
 
-    doc_lengths = count_matrix.sum(axis=1)
+    doc_lengths = np.asarray(class_count_matrix.sum(axis=1)).ravel()
     avg_doc_length = doc_lengths.mean()
 
     for i in range(class_count_matrix.shape[0]):
@@ -907,7 +1043,7 @@ def bm25_keyphrases(
     # Select the top scoring keyphrases for each cluster based on BM25 scores for the cluster
     result = []
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc="Generating bm25 keyphrases",
         disable=not show_progress_bar_val,
         leave=False,
@@ -926,27 +1062,17 @@ def bm25_keyphrases(
             keyphrase_list[column_map[j]] for j in keyphrases_present_indices
         ]
         # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [
-            keyphrase
-            for keyphrase in keyphrases_present
-            if keyphrase not in keyphrase_vector_mapping
-        ]
-        if len(missing_keyphrases) > 0:
-            if embedding_model is None:
-                raise ValueError(
-                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
-                )
-            missing_keyphrase_vectors = embedding_model.encode(
-                missing_keyphrases, show_progress_bar=False
-            )
-            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-                keyphrase_vector_mapping[keyphrase] = vector
+        _fill_keyphrase_vectors(
+            keyphrase_vector_mapping,
+            keyphrases_present,
+            embedding_model,
+            keyphrase_vectors,
+        )
 
         # Compute the centroid of the keyphrases present in the cluster
-        centroid_vector = np.average(
+        centroid_vector = _mean_vector(
             [keyphrase_vector_mapping[keyphrase] for keyphrase in keyphrases_present],
-            weights=keyphrase_weights,
-            axis=0,
+            weights=keyphrase_weights / keyphrase_weights.max(),
         )
 
         chosen_indices = np.argsort(contrastive_scores)[-(n_keyphrases**2) :]
@@ -974,9 +1100,9 @@ def bm25_keyphrases(
         result.append(chosen_keyphrases)
 
     # Update keyphrase vectors with vectors from the mapping
-    for i, keyphrase in enumerate(keyphrase_list):
-        if keyphrase in keyphrase_vector_mapping:
-            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+    _update_keyphrase_vectors(
+        keyphrase_list, keyphrase_vectors, keyphrase_vector_mapping
+    )
 
     return result
 
@@ -1029,22 +1155,49 @@ def submodular_selection_information_keyphrases(
     show_progress_bar_val, _ = handle_verbose_params(
         verbose=verbose, show_progress_bar=show_progress_bar, default_verbose=False
     )
-    keyphrase_vector_mapping = {
-        keyphrase: vector
-        for keyphrase, vector in zip(keyphrase_list, keyphrase_vectors)
-        if not np.all(vector == 0.0)
-    }
+    keyphrase_vector_mapping = _keyphrase_vector_mapping(
+        keyphrase_list, keyphrase_vectors, embedding_model
+    )
     count_matrix, class_labels, column_map = subset_matrix_and_class_labels(
         cluster_label_vector, object_x_keyphrase_matrix
     )
-    central_vector = keyphrase_vectors.mean(axis=0)
+    if not len(class_labels):
+        return [
+            ["No notable keyphrases"]
+            for _ in range(
+                int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0
+            )
+        ]
 
-    iwt = InformationWeightTransformer(
-        prior_strength=prior_strength, weight_power=weight_power
-    ).fit(count_matrix, class_labels)
-    count_matrix.data = np.log(count_matrix.data + 1)
-    count_matrix.eliminate_zeros()
-    weighted_matrix = iwt.transform(count_matrix)
+    weighted_matrix = _information_weighted_matrix(
+        count_matrix, class_labels, prior_strength, weight_power
+    )
+    if weighted_matrix is None:
+        return central_keyphrases(
+            cluster_label_vector,
+            object_x_keyphrase_matrix,
+            keyphrase_list,
+            keyphrase_vectors,
+            embedding_model,
+            n_keyphrases=n_keyphrases,
+            verbose=verbose,
+            show_progress_bar=show_progress_bar,
+        )
+
+    _fill_keyphrase_vectors(
+        keyphrase_vector_mapping,
+        [keyphrase_list[i] for i in column_map],
+        embedding_model,
+        keyphrase_vectors,
+    )
+    complete_vectors = np.asarray(
+        [
+            keyphrase_vector_mapping.get(name, vector)
+            for name, vector in zip(keyphrase_list, keyphrase_vectors)
+        ]
+    )
+    central_vector = _mean_vector(complete_vectors)
+
     if submodular_function == "facility_location":
         selector = FacilityLocationSelection(
             n_keyphrases, metric="cosine", optimizer="lazy"
@@ -1062,7 +1215,7 @@ def submodular_selection_information_keyphrases(
 
     result = []
     for cluster_num in tqdm(
-        range(cluster_label_vector.max() + 1),
+        range(int(cluster_label_vector.max()) + 1 if len(cluster_label_vector) else 0),
         desc="Generating saturated coverage keyphrases",
         disable=not show_progress_bar_val,
         leave=False,
@@ -1070,7 +1223,7 @@ def submodular_selection_information_keyphrases(
         position=1,
     ):
         # Sum over the cluster; get the top scoring indices
-        contrastive_scores = np.squeeze(
+        contrastive_scores = np.ravel(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
         if sum(contrastive_scores) == 0:
@@ -1082,35 +1235,21 @@ def submodular_selection_information_keyphrases(
         candidate_keyphrases = np.asarray(
             [keyphrase_list[column_map[j]] for j in keyphrases_present_indices]
         )
-        # Update keyphrase mapping with present keyphrases it is missing
-        missing_keyphrases = [
-            keyphrase
-            for keyphrase in candidate_keyphrases
-            if keyphrase not in keyphrase_vector_mapping
-        ]
-        if len(missing_keyphrases) > 0:
-            if embedding_model is None:
-                raise ValueError(
-                    "On demand keyphrase vectorization was requested but no embedding model provided. Please provide an embedding model."
-                )
-            missing_keyphrase_vectors = embedding_model.encode(
-                missing_keyphrases, show_progress_bar=False
-            )
-            for keyphrase, vector in zip(missing_keyphrases, missing_keyphrase_vectors):
-                keyphrase_vector_mapping[keyphrase] = vector
 
         if len(candidate_keyphrases) >= n_keyphrases:
             keyphrase_costs = 1.0 - (
                 keyphrase_weights / (0.01 + keyphrase_weights.max())
             )
-            candidate_vectors = (
-                np.asarray(
-                    [
-                        keyphrase_vector_mapping[phrase]
-                        for phrase in candidate_keyphrases
-                    ]
+            candidate_vectors = _normalize_rows(
+                _center_vectors(
+                    np.asarray(
+                        [
+                            keyphrase_vector_mapping[phrase]
+                            for phrase in candidate_keyphrases
+                        ]
+                    ),
+                    central_vector,
                 )
-                - central_vector
             )
 
             _, chosen_keyphrases = selector.fit_transform(
@@ -1127,8 +1266,8 @@ def submodular_selection_information_keyphrases(
         result.append(chosen_keyphrases)
 
     # Update keyphrase vectors with vectors from the mapping
-    for i, keyphrase in enumerate(keyphrase_list):
-        if keyphrase in keyphrase_vector_mapping:
-            keyphrase_vectors[i] = keyphrase_vector_mapping[keyphrase]
+    _update_keyphrase_vectors(
+        keyphrase_list, keyphrase_vectors, keyphrase_vector_mapping
+    )
 
     return result

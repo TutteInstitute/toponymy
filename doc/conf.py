@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.abspath("."))
 project = "Toponymy"
 copyright = "2025, Leland McInnes and John Healy"
 author = "Leland McInnes and John Healy"
-release = "0.3"
+release = "0.6.0.dev0"
 
 master_doc = "index"
 
@@ -38,7 +38,11 @@ extensions = [
 numpydoc_show_class_members = False
 
 autodoc_default_flags = ["members", "inherited-members"]
+autodoc_default_options = {
+    "exclude-members": "get_metadata_routing,set_fit_request,set_predict_request,set_fit_predict_request"
+}
 autosummary_generate = True
+autosectionlabel_prefix_document = True
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
@@ -48,7 +52,7 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
 html_theme = "sphinx_rtd_theme"
-html_static_path = ["_static"]
+html_static_path = []
 html_theme_options = {"navigation_depth": 3, "logo_only": False}
 
 html_logo = "toponymy_logo_rtd.png"
@@ -60,4 +64,5 @@ intersphinx_mapping = {
     "scikit-learn": ("https://scikit-learn.org/", None),
 }
 
-nbsphinx_allow_errors = True
+nbsphinx_execute = "never"
+nbsphinx_allow_errors = False
