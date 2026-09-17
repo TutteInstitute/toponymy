@@ -175,6 +175,7 @@ class Toponymy:
         exemplar_method: str = "central",
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "central",
+        **clusterer_fit_kwargs,
     ):
         """
         Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
@@ -220,6 +221,7 @@ class Toponymy:
                 exemplar_delimiters=self.exemplar_delimiters,
                 prompt_format=self._effective_prompt_format(),
                 prompt_template=self.prompt_template,
+                **clusterer_fit_kwargs,
             )
 
         self._sync_layer_runtime_config()
