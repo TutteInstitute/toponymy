@@ -1,3 +1,11 @@
+from __future__ import annotations
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
+
+from dataclasses import dataclass
+
 from typing import (
     Any,
     Dict,
@@ -7,18 +15,29 @@ from typing import (
     Optional,
     Protocol,
     runtime_checkable,
-    Self,
     Sequence,
     Tuple,
     TypeVar,
 )
-from collections.abc import Iterator, Mapping, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping, ValuesView
 from collections import defaultdict
 from enum import Enum
+from warnings import warn
 
 T = TypeVar("T")
 
 NODE_NODE = "node-node"
+_RESERVED = {"annotate", "inputs", "optional_inputs", "outputs", "algorithm_type"}
+
+
+def call_method(annotator, method, *args):
+    if method in _RESERVED or not callable(getattr(annotator, method, None)):
+        raise AttributeError(f"annotator has no usable method {method!r}")
+    return getattr(annotator, method)(*args)
+
+
+class NotAvailable(Exception):
+    """Raised by InputSpec.gather when the value doesn't exist for this unit."""
 
 
 class NodeId(NamedTuple):
@@ -60,6 +79,7 @@ class AnnotationTree:
     * The root is a catch-all node, and will not be considered a cluster node or a part of a layer.
     * Layer ids are 0-indexed and there are no empty layers
     * Cluster ids are 0-indexed and the indices are contiguous within each layer
+    * A parent is in a higher layer than its children.
 
     Note: the last two assumptions are for backwards compatibility with the list of lists representations.
     Parameters
@@ -124,6 +144,12 @@ class AnnotationTree:
                 parent_dict[child_node] = parent_node
                 nodes.add(child_node)
 
+        inverted = [(c, p) for c, p in parent_dict.items() if c.layer >= p.layer]
+        if inverted:
+            child, parent = inverted[0]
+            raise InvalidAnnotationTree(
+                f"{child} must be in a lower layer than its parent {parent}"
+            )
         roots = sorted(nodes - parent_dict.keys())
 
         if conflicts:
@@ -321,6 +347,9 @@ class Annotation(MutableMapping[NodeId, T]):
     def __len__(self) -> int:
         return len(self._values)
 
+    def __repr__(self) -> str:
+        return f"Annotation(name={self.name!r}, tree={self.tree!r})"
+
     @property
     def states(self) -> Mapping[NodeId, AnnotationState]:
         return self._states
@@ -329,6 +358,17 @@ class Annotation(MutableMapping[NodeId, T]):
         node = self.tree.check(node)
         self._values.pop(node, None)
         self._states[node] = AnnotationState.FAILED
+
+    def computed(self, nodes: Iterable[NodeId] | None = None) -> dict[NodeId, T]:
+        """Return {node: value} for computed nodes.
+
+        With nodes=None, it covers the whole tree. With nodes, it covers only the given nodes
+        skipping any that aren't computed. Raises KeyError for nodes not in the tree.
+        """
+        if nodes is None:
+            return dict(self._values)
+        checked = (self.tree.check(node) for node in nodes)
+        return {node: self._values[node] for node in checked if node in self._values}
 
     # def _check(self, node: Any) -> NodeId:
     #     if not isinstance(node, NodeId):
@@ -479,17 +519,182 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
 
 @runtime_checkable
 class Annotator(Protocol):
-    """Structural contract for an annotation algorithm."""
+    """Structural contract for an annotation algorithm.
+
+    Required:
+    - inputs: input annotation names that must be present and computed per node
+    - outputs: output annotation names produced by annotate(...)
+    - algorithm_type: type for executor. currently supports "node-node"
+    - annotate(node, **kwargs): returns a mapping with exactly keys in outputs
+
+    Optional:
+    - optional_inputs: input annotation names that are passed only when available
+      and computed for the current node.
+    """
 
     inputs: Sequence[str]
     outputs: Sequence[str]
-    algorithm_type: str
+    algorithm_type: Any
 
     def annotate(
         self,
-        node: NodeId,
+        unit: Any,
         **kwargs: Any,
     ) -> Mapping[str, Any]: ...
+
+
+class Order(Enum):
+    BOTTOM_UP = "bottom-up"
+    TOP_DOWN = "top-down"
+
+
+class InputSpec:
+    source = None
+    from_output = None
+    order = None
+
+    def prepare(self, annotator, annotation, nodes):
+        """Execute once per run, before any annotate(). Good for once-per-run precomputations
+        by the annotator needs. For example, computing a needed aggregate statistic or
+        figuring out what the units need to be, as required for disambiguation."""
+        return None
+
+    def units(self, prepared):
+        """Return the units, that is, groups of nodes each .annotate() will be called on,
+        if this spec defines the units, else None. The executor takes the unit to be a node if None.
+        """
+        return None
+
+    def gather(self, annotation, unit, prepared):
+        """Return the kwarg values per unit."""
+        raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class NodeInput(InputSpec):
+    source: Optional[str] = None
+    from_output: Optional[str] = None
+
+    def gather(self, annotation, unit, prepared):
+        state = annotation.states[unit]
+        if getattr(state, "value", state) != AnnotationState.COMPUTED.value:
+            raise NotAvailable(f"{annotation.name!r} is not computed for {unit}")
+        return annotation[unit]
+
+
+@dataclass(frozen=True)
+class DescendantsInput(InputSpec):
+    order = Order.BOTTOM_UP
+    depth: Optional[int] = None
+    source: Optional[str] = None
+    from_output: Optional[str] = None
+
+    def gather(self, annotation, unit, prepared):
+        below = annotation.tree.descendants(unit, depth=self.depth)
+        return annotation.computed(nodes=below)
+
+
+@dataclass(frozen=True)
+class MultiNodeInput(InputSpec):
+    groups: Optional[str] = (
+        None  # name of the method to call to create the groups of nodes
+    )
+    source: Optional[str] = None
+    from_output: Optional[str] = None
+
+    def prepare(self, annotator, annotation, nodes):
+        if self.groups is None:
+            return None
+        return call_method(annotator, self.groups, annotation.computed(nodes))
+
+    def units(self, prepared):
+        return prepared
+
+    def gather(self, annotation, unit, prepared):
+        return annotation.computed(nodes=unit)
+
+
+@dataclass(frozen=True)
+class PrepareMethodNodeInput(InputSpec):
+    method: str
+    source: Optional[str] = None
+    from_output: Optional[str] = None
+
+    def prepare(self, annotator, annotation, nodes):
+        return call_method(annotator, self.method, annotation.computed(nodes))
+
+    def gather(self, annotation, unit, prepared):
+        return prepared
+
+
+@dataclass(frozen=True)
+class NodeOutput:
+    def write(self, annotation, unit, value):
+        annotation[unit] = value
+
+    def fail(self, annotation, unit):
+        annotation.fail(unit)
+
+
+@dataclass(frozen=True)
+class MultiNodeOutput:
+    def write(self, annotation, unit, values):
+        for node in values:
+            if node not in unit:
+                raise ValueError(
+                    f"{annotation.name!r} got {node}, which is outside {unit}"
+                )
+        for node, value in values.items():
+            annotation[node] = value
+
+    def fail(self, annotation, unit):
+        for node in unit:
+            annotation.fail(node)
+
+
+INPUT_SPECS = {
+    "node": NodeInput,
+    "descendants": DescendantsInput,
+    "multinode": MultiNodeInput,
+    "prepare_method": PrepareMethodNodeInput,
+}
+OUTPUT_SPECS = {
+    "node": NodeOutput,
+    "multinode": MultiNodeOutput,
+}
+
+
+def parse_algorithm_type(annotator):
+    """Given an annotator, format the algorithm_type in the canonical form:
+    return ({input_name: InputSpec}, output_spec)."""
+    names = tuple(annotator.inputs) + tuple(getattr(annotator, "optional_inputs", ()))
+    algorithm_type = annotator.algorithm_type
+
+    if isinstance(algorithm_type, str):
+        lhs, rhs = algorithm_type.split("-")
+        if not names:
+            return {}, OUTPUT_SPECS[rhs]()
+        algorithm_type = {name: (lhs, rhs) for name in names}
+
+    if set(algorithm_type) != set(names):
+        raise ValueError(
+            f"algorithm_type keys {sorted(algorithm_type)} must match "
+            f"inputs + optional_inputs {sorted(names)}"
+        )
+
+    specs, output_specs = {}, set()
+    for name, (lhs, rhs) in algorithm_type.items():
+        spec = INPUT_SPECS[lhs]() if isinstance(lhs, str) else lhs
+        if spec.source is not None and spec.from_output is not None:
+            raise ValueError(f"input {name!r} can't set both source and from_output")
+        specs[name] = spec
+        output_specs.add(OUTPUT_SPECS[rhs]() if isinstance(rhs, str) else rhs)
+
+    if len(output_specs) != 1:
+        raise ValueError(
+            f"all inputs must have the same kind of output, got {output_specs}"
+        )
+    return specs, output_specs.pop()
 
 
 class Executor:
@@ -507,34 +712,100 @@ class Executor:
         annotator: Annotator,
         *,
         nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
     ) -> dict[NodeId, str]:
-        """Run one node-to-node annotator over selected nodes.
+        """Run an annotator, reading and writing the store names given by
+        input_names={kwarg: store_name} and output_names={output: store_name}.
+        Unlisted names map to themselves.
 
-        Return ``{node: reason}`` for nodes whose annotation failed."""
+        Return ``{unit: reason}`` for nodes whose annotation failed."""
 
         if not isinstance(annotator, Annotator):
             raise TypeError(
-                "an Annotator needs inputs, outputs, algorithm_type, "
-                "and annotate(node, **kwargs)"
+                "an Annotator needs inputs, outputs, algorithm_type, " "and annotate"
             )
 
-        if annotator.algorithm_type != NODE_NODE:
-            raise NotImplementedError(
-                f"algorithm_type {annotator.algorithm_type!r} " "is not supported yet"
-            )
+        required_inputs = set(annotator.inputs)
+        optional_inputs = set(getattr(annotator, "optional_inputs", ()))
+        if len(set(required_inputs)) != len(required_inputs):
+            raise ValueError("annotator.inputs do not match")
 
-        inputs = tuple(annotator.inputs)
+        if len(set(optional_inputs)) != len(optional_inputs):
+            raise ValueError("annotator.optional_inputs contains duplicate names")
+
+        specs, output = parse_algorithm_type(annotator)
+        required_inputs = set(annotator.inputs)
         outputs = tuple(annotator.outputs)
+        input_names = dict(input_names or {})
+        output_names = dict(output_names or {})
 
-        if len(set(inputs)) != len(inputs):
-            raise ValueError("annotator.inputs contains duplicate names")
+        # Wiring of the annotator's inputs and outputs to the store names
+        if set(output_names) - set(outputs):
+            raise ValueError(
+                f"output_names has unknown outputs: {sorted(set(output_names) - set(outputs))}"
+            )
+        writes_to = {name: output_names.get(name, name) for name in outputs}
+        if len(set(writes_to.values())) != len(writes_to):
+            raise ValueError(f"two outputs write to the same annotation: {writes_to}")
 
-        if len(set(outputs)) != len(outputs):
-            raise ValueError("annotator.outputs contains duplicate names")
+        if set(input_names) - set(specs):
+            raise ValueError(
+                f"input_names has unknown inputs: {sorted(set(input_names) - set(specs))}"
+            )
+        reads_from = {}
+        for name, spec in specs.items():
+            if spec.from_output is None:
+                reads_from[name] = input_names.get(name, spec.source or name)
+            elif name in input_names:
+                raise ValueError(
+                    f"input {name!r} reads from an output; rewire the output instead"
+                )
+            elif spec.from_output not in writes_to:
+                raise ValueError(
+                    f"input {name!r} reads from unknown output {spec.from_output!r}"
+                )
+            else:
+                reads_from[name] = writes_to[spec.from_output]
 
-        missing = [name for name in inputs if name not in self.store]
-        if missing:
-            raise KeyError(f"missing input annotation(s): {missing}")
+        available = set(self.store) | set(writes_to.values())
+        missing_required = [
+            name
+            for name in required_inputs
+            if name in specs and reads_from[name] not in available
+        ]
+        if missing_required:
+            missing_store_names = sorted(
+                {reads_from[name] for name in missing_required}
+            )
+            raise KeyError(f"missing input annotation(s): {missing_store_names}")
+
+        missing_optional = [
+            name
+            for name in optional_inputs
+            if name in specs and reads_from[name] not in available
+        ]
+        if missing_optional:
+            explicit_missing = [
+                name for name in missing_optional if name in input_names
+            ]
+            if explicit_missing:
+                missing_store_names = sorted(
+                    {reads_from[name] for name in explicit_missing}
+                )
+                warn(
+                    f"missing explicitly-wired optional input annotation(s) will be ignored: "
+                    f"{missing_store_names}"
+                )
+            specs = {
+                name: spec
+                for name, spec in specs.items()
+                if name not in missing_optional
+            }
+
+        for store_name in writes_to.values():
+            if store_name not in self.store:
+                self.store.add(Annotation(store_name, self.tree))
 
         selected_nodes = (
             self.store.tree.nodes
@@ -542,29 +813,106 @@ class Executor:
             else tuple(self.store.tree.check(node) for node in nodes)
         )
 
-        for name in outputs:
-            if name not in self.store:
-                self.store.add(Annotation(name, self.store.tree))
+        # Run the prepare step on each input spec if it defines one
+        # Note that this runs on the subset of nodes to be run on the annotator, which
+        # might not be the behaviour expected for some of the preparation steps.
+        # will adapt this later as needed.
+        prepared = {
+            name: spec.prepare(annotator, self.store[reads_from[name]], selected_nodes)
+            for name, spec in specs.items()
+        }
+        # Determine the units to apply .annotate to
+        unit_sources = [
+            groups
+            for name, spec in specs.items()
+            if (groups := spec.units(prepared[name])) is not None
+        ]
+        if len(unit_sources) > 1:
+            raise ValueError("only one input may define the units")
+        if unit_sources:
+            unit_groups = unit_sources[0]
+            allowed, seen, result = set(selected_nodes), set(), []
+            for group in unit_groups:
+                group = tuple(sorted(self.tree.check(n) for n in group))
+                if not allowed.issuperset(group):
+                    raise ValueError(f"group {group} has nodes outside the selection")
+                if seen.intersection(group):
+                    raise ValueError(f"group {group} overlaps another group")
+                seen.update(group)
+                result.append(group)
+            units = sorted(result)
+        elif isinstance(output, NodeOutput):
+            units = selected_nodes
+        else:
+            raise ValueError("a multinode annotator needs an input that defines groups")
+        units = self._order_units(units, specs, reads_from, writes_to)
 
-        failures: dict[NodeId, str] = {}
+        # A write to an annotation this run also reads keeps its old value on failure.
+        # Replace with more explicit instructions for handling in-place updates later
+        in_place = set(writes_to.values()) & {reads_from[n] for n in specs}
 
-        for node in selected_nodes:
+        # Finally run .annotate over the units
+        failures = {}
+        for unit in units:
+            prior_output_state = {
+                store_name: self.store[store_name].states[unit]
+                for store_name in writes_to.values()
+            }
+
             try:
-                values = {name: self.store[name][node] for name in inputs}
-                result = annotator.annotate(node, **values)
+                kwargs = {}
+                for name, spec in specs.items():
+                    try:
+                        kwargs[name] = spec.gather(
+                            self.store[reads_from[name]], unit, prepared[name]
+                        )
+                    except NotAvailable as e:
+                        if name in required_inputs:
+                            raise e
+                result = annotator.annotate(unit, **kwargs)
             except Exception as error:
-                for name in outputs:
-                    self.store[name].fail(node)
-
-                failures[node] = f"{type(error).__name__}: {error}"
+                for store_name in writes_to.values():
+                    was_computed = (
+                        prior_output_state[store_name] is AnnotationState.COMPUTED
+                    )
+                    keep_old_value = store_name in in_place and was_computed
+                    if not keep_old_value:
+                        output.fail(self.store[store_name], unit)
+                failures[unit] = f"{type(error).__name__}: {error}"
                 continue
 
             if set(result) != set(outputs):
-                raise ValueError(
-                    f"expected outputs {outputs!r}, " f"got {tuple(result)!r}"
-                )
-
+                raise ValueError(f"expected outputs {outputs!r}, got {tuple(result)!r}")
             for name, value in result.items():
-                self.store[name][node] = value
+                output.write(self.store[writes_to[name]], unit, value)
 
         return failures
+
+    def _order_units(self, units, specs, reads_from, writes_to):
+        """
+        Reorders the units based on the specified layer order in the specs, or
+        return them as-is if no order is specified.
+
+        Only matters when the output of one unit affects the input of another unit.
+        """
+        written = set(writes_to.values())
+        orders = {
+            spec.order
+            for name, spec in specs.items()
+            if spec.order is not None and reads_from[name] in written
+        }
+        if len(orders) > 1:
+            raise ValueError(f"Input specs require conflicting orders: {orders}")
+        if not orders:
+            return units
+        order = orders.pop()
+
+        def layer(unit):
+            layers = {n.layer for n in ((unit,) if isinstance(unit, NodeId) else unit)}
+            if len(layers) > 1:
+                raise ValueError(
+                    f"{order.value} order can't place {unit}, which spans layers {sorted(layers)}"
+                )
+            return layers.pop()
+
+        return sorted(units, key=layer, reverse=order is Order.TOP_DOWN)

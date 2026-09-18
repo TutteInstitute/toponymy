@@ -1,7 +1,7 @@
 import numpy as np
 
 from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_KINDS, SUMMARY_PROMPT_TEMPLATES
-
+from toponymy.annotation import NodeId
 from collections import defaultdict
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import pairwise_distances
@@ -401,7 +401,7 @@ def topic_name_prompt(
             ]
 
         if layer_id > 1:
-            other_subtopics = subtopics[topic_index][:max_num_subtopics]
+            other_subtopics = subtopics[topic_index]
         else:
             other_subtopics = []
     else:
@@ -410,15 +410,99 @@ def topic_name_prompt(
         other_subtopics = []
 
     current_keyphrases = (
-        keyphrases[topic_index][:max_num_keyphrases]
-        if topic_index < len(keyphrases)
-        else []
+        keyphrases[topic_index] if topic_index < len(keyphrases) else []
     )
     current_exemplars = (
-        exemplar_texts[topic_index][:max_num_exemplars]
-        if topic_index < len(exemplar_texts)
-        else []
+        exemplar_texts[topic_index] if topic_index < len(exemplar_texts) else []
     )
+
+    prompt = topic_name_prompt_by_node(
+        node=(layer_id, topic_index),
+        major_subtopics=major_subtopics,
+        minor_subtopics=minor_subtopics,
+        other_subtopics=other_subtopics,
+        current_exemplars=current_exemplars,
+        current_keyphrases=current_keyphrases,
+        object_description=object_description,
+        corpus_description=corpus_description,
+        summary_kind=summary_kind,
+        max_num_keyphrases=max_num_keyphrases,
+        max_num_subtopics=max_num_subtopics,
+        max_num_exemplars=max_num_exemplars,
+        exemplar_start_delimiter=exemplar_start_delimiter,
+        exemplar_end_delimiter=exemplar_end_delimiter,
+        prompt_format=prompt_format,
+        prompt_template=prompt_template,
+    )
+
+    return prompt
+
+
+def topic_name_prompt_by_node(
+    node: NodeId,
+    major_subtopics: List[str],
+    minor_subtopics: List[str],
+    other_subtopics: List[str],
+    current_exemplars: List[List[str]],
+    current_keyphrases: List[List[str]],
+    object_description: str,
+    corpus_description: str,
+    summary_kind: str,
+    max_num_keyphrases: int = 32,
+    max_num_subtopics: int = 16,
+    max_num_exemplars: int = 128,
+    exemplar_start_delimiter: str = '    * "',
+    exemplar_end_delimiter: str = '"\n',
+    prompt_format: Optional[str] = None,
+    prompt_template: Optional[Dict[str, Any]] = None,
+) -> Union[str, Dict[str, str]]:
+    """
+    Construct a prompt for naming a topic.
+
+    Parameters
+    ----------
+    node: NodeId
+        Identifier for the cluster/topic node
+    current_exemplar_texts : List[str]
+        List of exemplar texts for the topic.
+    current_keyphrases : List[str]
+        List of keyphrases for the topic.
+    subtopics : Optional[List[List[str]]], optional
+        List of subtopics for each cliuster in this layer.
+    cluster_tree : Optional[dict], optional
+        Dictionary of the cluster tree, by default None.
+    object_description : str
+        Description of the object being clustered.
+    corpus_description : str
+        Description of the corpus being clustered.
+    summary_kind : str
+        Kind of summary to generate.
+    max_num_keyphrases : int, optional
+        Maximum number of keyphrases to include, by default 32.
+    max_num_subtopics : int, optional
+        Maximum number of subtopics to include, by default 16.
+    max_num_exemplars : int, optional
+        Maximum number of exemplar texts to include, by default 128.
+    exemplar_start_delimiter : str, optional
+        Start delimiter for exemplar texts, by default "    * \""
+    exemplar_end_delimiter : str, optional
+        End delimiter for exemplar texts, by default "\"\n"
+    prompt_format : str, optional
+        Deprecated and ignored. Prompts now carry every rendering and the LLM
+        wrapper selects one at call time.
+    prompt_template : Optional[str], optional
+        Custom prompt template to use, by default None. If provided, this will override
+        the default prompt template. Custom templates must provide a template for each
+        of "system", "user" and "combined".
+
+    Returns
+    -------
+    prompt: dict or str
+        LLM Prompt for naming the topic, keyed by rendering ("system", "user" and
+        "combined"). A topic with a single already-named subtopic needs no LLM call,
+        and is returned instead as a "[!SKIP!]: <name>" string.
+    """
+    handle_deprecated_prompt_format(prompt_format)
 
     is_very_specific = "very specific" in summary_kind
     is_general = "general" in summary_kind
@@ -426,13 +510,13 @@ def topic_name_prompt(
     render_params = {
         "document_type": object_description,
         "corpus_description": corpus_description,
-        "cluster_keywords": current_keyphrases,
+        "cluster_keywords": current_keyphrases[:max_num_keyphrases],
         "cluster_subtopics": {
-            "major": major_subtopics,
-            "minor": minor_subtopics,
-            "misc": other_subtopics,
+            "major": major_subtopics[:max_num_subtopics],
+            "minor": minor_subtopics[:max_num_subtopics],
+            "misc": other_subtopics[:max_num_subtopics],
         },
-        "cluster_sentences": current_exemplars,
+        "cluster_sentences": current_exemplars[:max_num_exemplars],
         "summary_kind": summary_kind,
         "exemplar_start_delimiter": exemplar_start_delimiter,
         "exemplar_end_delimiter": exemplar_end_delimiter,
