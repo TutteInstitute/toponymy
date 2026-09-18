@@ -615,13 +615,13 @@ class MultiNodeInput(InputSpec):
 
 
 @dataclass(frozen=True)
-class Aggregate(InputSpec):
+class PrepareMethodNodeInput(InputSpec):
     method: str
     source: Optional[str] = None
     from_output: Optional[str] = None
 
     def prepare(self, annotator, annotation, nodes):
-        return call_method(annotator, self.method, computed_values(annotation))
+        return call_method(annotator, self.method, annotation.computed(nodes))
 
     def gather(self, annotation, unit, prepared):
         return prepared
@@ -656,7 +656,7 @@ INPUT_SPECS = {
     "node": NodeInput,
     "descendants": DescendantsInput,
     "multinode": MultiNodeInput,
-    "aggregate": Aggregate,
+    "prepare_method": PrepareMethodNodeInput,
 }
 OUTPUT_SPECS = {
     "node": NodeOutput,
