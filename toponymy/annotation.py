@@ -30,6 +30,12 @@ NODE_NODE = "node-node"
 _RESERVED = {"annotate", "inputs", "optional_inputs", "outputs", "algorithm_type"}
 
 
+def call_method(annotator, method, *args):
+    if method in _RESERVED or not callable(getattr(annotator, method, None)):
+        raise AttributeError(f"annotator has no usable method {method!r}")
+    return getattr(annotator, method)(*args)
+
+
 class NotAvailable(Exception):
     """Raised by InputSpec.gather when the value doesn't exist for this unit."""
 
@@ -590,20 +596,35 @@ class DescendantsInput(InputSpec):
 
 @dataclass(frozen=True)
 class MultiNodeInput(InputSpec):
-    groups: Optional[str] = None
+    groups: Optional[str] = (
+        None  # name of the method to call to create the groups of nodes
+    )
     source: Optional[str] = None
     from_output: Optional[str] = None
 
     def prepare(self, annotator, annotation, nodes):
         if self.groups is None:
             return None
-        return call_method(annotator, self.groups, computed_values(annotation, nodes))
+        return call_method(annotator, self.groups, annotation.computed(nodes))
 
     def units(self, prepared):
         return prepared
 
     def gather(self, annotation, unit, prepared):
-        return computed_values(annotation, unit)
+        return annotation.computed(nodes=unit)
+
+
+@dataclass(frozen=True)
+class Aggregate(InputSpec):
+    method: str
+    source: Optional[str] = None
+    from_output: Optional[str] = None
+
+    def prepare(self, annotator, annotation, nodes):
+        return call_method(annotator, self.method, computed_values(annotation))
+
+    def gather(self, annotation, unit, prepared):
+        return prepared
 
 
 @dataclass(frozen=True)
@@ -635,6 +656,7 @@ INPUT_SPECS = {
     "node": NodeInput,
     "descendants": DescendantsInput,
     "multinode": MultiNodeInput,
+    "aggregate": Aggregate,
 }
 OUTPUT_SPECS = {
     "node": NodeOutput,
