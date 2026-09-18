@@ -1,11 +1,16 @@
 import pytest
 
 from toponymy.annotation import (
-    InvalidAnnotationTree,
-    NodeId,
-    AnnotationTree,
     Annotation,
     AnnotationState,
+    AnnotationStore,
+    AnnotationTree,
+    DescendantsInput,
+    Executor,
+    InvalidAnnotationTree,
+    NodeId,
+    NodeInput,
+    NodeOutput,
 )
 
 
@@ -176,7 +181,9 @@ def test_tree_rejects_no_root():
         (1, 1): [(1, 0)],
     }
 
-    with pytest.raises(InvalidAnnotationTree, match="No root found"):
+    with pytest.raises(
+        InvalidAnnotationTree, match="must be in a lower layer than its parent"
+    ):
         AnnotationTree(invalid_cluster_tree)
 
 
@@ -517,3 +524,105 @@ def test_annotation_from_layered_list_raises_on_incomplete_input(valid_cluster_t
 
     with pytest.raises(IndexError):
         Annotation.from_layered_list("topics", tree, incomplete_layered_values)
+
+
+def test_executor_node_node_string_algorithm_type_contract(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class EchoAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    failures = executor.run(EchoAnnotator())
+
+    assert failures == {}
+    assert "named_topic" in store
+    assert len(store["named_topic"]) == len(tree)
+    assert store["named_topic"][NodeId(0, 0)] == "name:T0-0"
+    assert store["named_topic"][NodeId(1, 2)] == "name:T1-2"
+
+
+def test_executor_explicit_node_and_descendants_input_contract(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class NodeAndDescendantsAnnotator:
+        inputs = ("topic", "desc_topics")
+        outputs = ("summary",)
+        algorithm_type = {
+            "topic": (NodeInput(), NodeOutput()),
+            "desc_topics": (DescendantsInput(source="topic", depth=1), NodeOutput()),
+        }
+
+        def annotate(self, unit, topic, desc_topics):
+            return {"summary": {"topic": topic, "desc": tuple(desc_topics.values())}}
+
+    failures = executor.run(NodeAndDescendantsAnnotator())
+
+    assert failures == {}
+
+    summary = store["summary"]
+
+    # Leaf nodes have no descendants at depth=1
+    assert summary[NodeId(0, 0)] == {"topic": "T0-0", "desc": ()}
+
+    # Layer-1 node (1,2) has children (0,5), (0,6), (0,7)
+    assert summary[NodeId(1, 2)]["topic"] == "T1-2"
+    assert set(summary[NodeId(1, 2)]["desc"]) == {"T0-5", "T0-6", "T0-7"}
+
+
+def test_executor_in_place_failure_preserves_only_existing_values(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    precomputed_node = NodeId(0, 0)
+    empty_node = NodeId(0, 1)
+    original_value = "original-topic"
+
+    topic = Annotation("topic", tree)
+    topic[precomputed_node] = original_value
+    # empty_node is intentionally left EMPTY
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class AlwaysFailInPlaceAnnotator:
+        # No required inputs, so annotate is called even when optional input is missing.
+        inputs = ()
+        optional_inputs = ("topic",)
+        outputs = ("topic",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, **kwargs):
+            raise RuntimeError("boom")
+
+    failures = executor.run(
+        AlwaysFailInPlaceAnnotator(),
+        nodes=(precomputed_node, empty_node),
+    )
+
+    assert set(failures) == {precomputed_node, empty_node}
+    assert all("RuntimeError: boom" in message for message in failures.values())
+
+    # Precomputed value is preserved for in-place failure.
+    assert store["topic"].states[precomputed_node] is AnnotationState.COMPUTED
+    assert store["topic"][precomputed_node] == original_value
+
+    # Empty in-place value is marked failed on failure.
+    assert store["topic"].states[empty_node] is AnnotationState.FAILED
