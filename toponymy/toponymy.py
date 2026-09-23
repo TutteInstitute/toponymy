@@ -192,6 +192,7 @@ class Toponymy:
         exemplar_method: str = "central",
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "central",
+        **clusterer_kwd_args,
     ):
         """
         Vectorizes using the classes embedding_model and constructs a low dimension data map with UMAP if object_vectors and object_map aren't spec.
@@ -236,6 +237,7 @@ class Toponymy:
                 show_progress_bar=self.show_progress_bars,
                 exemplar_delimiters=self.exemplar_delimiters,
                 prompt_template=self.prompt_template,
+                **clusterer_kwd_args,
             )
 
         self._sync_layer_runtime_config()
