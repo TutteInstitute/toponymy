@@ -1673,7 +1673,10 @@ try:
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
-            self.semaphore = asyncio.Semaphore(max_concurrent_requests)
+            self._max_concurrent = max_concurrent_requests  # whatever the arg is called
+            self._semaphore = None
+            self._semaphore_loop = None
+            print("Using new safe semaphore...")
 
             self.use_json_object = use_json_object
             self._resolved_use_json_object: bool | None = None
@@ -1682,6 +1685,13 @@ try:
             self.max_tokens_topic_name = max_tokens_topic_name
             self.max_tokens_cluster_names = max_tokens_cluster_names
             self.provider_kwargs = dict(provider_kwargs) if provider_kwargs else {}
+
+        def _get_semaphore(self) -> asyncio.Semaphore:
+            loop = asyncio.get_running_loop()
+            if self._semaphore is None or self._semaphore_loop is not loop:
+                self._semaphore = asyncio.Semaphore(self._max_concurrent)
+                self._semaphore_loop = loop
+            return self._semaphore
 
         @property
         def supports_system_prompts(self) -> bool:
@@ -1765,7 +1775,7 @@ try:
             temperature: float,
             max_tokens: int,
         ) -> str:
-            async with self.semaphore:
+            async with self._get_semaphore():
                 response = await litellm.acompletion(
                     **self._provider_kwargs(
                         messages=messages,
