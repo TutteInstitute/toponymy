@@ -1676,7 +1676,7 @@ try:
             )
             self._max_concurrent = max_concurrent_requests
             self._semaphores = weakref.WeakKeyDictionary()
-            print("Using new safe semaphore...")
+            logger.debug("Initialized loop-local semaphore support")
 
             self.use_json_object = use_json_object
             self._resolved_use_json_object: bool | None = None

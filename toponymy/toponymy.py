@@ -229,14 +229,17 @@ class Toponymy:
             self.cluster_layers_ = self.clusterer.cluster_layers_
             self.cluster_tree_ = self.clusterer.cluster_tree_
         else:
+            clusterer_kwd_args = {
+                "verbose": self.verbose,
+                "show_progress_bar": self.show_progress_bars,
+                "exemplar_delimiters": self.exemplar_delimiters,
+                "prompt_template": self.prompt_template,
+                **clusterer_kwd_args,
+            }
             self.cluster_layers_, self.cluster_tree_ = self.clusterer.fit_predict(
                 clusterable_vectors,
                 embedding_vectors,
                 self.layer_class,
-                verbose=self.verbose,
-                show_progress_bar=self.show_progress_bars,
-                exemplar_delimiters=self.exemplar_delimiters,
-                prompt_template=self.prompt_template,
                 **clusterer_kwd_args,
             )
 
