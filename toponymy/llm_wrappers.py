@@ -3,6 +3,7 @@ from unittest import result
 from warnings import warn, filterwarnings
 import tokenizers
 import transformers
+import weakref
 
 from toponymy.templates import (
     GET_TOPIC_CLUSTER_NAMES_REGEX,
@@ -1673,9 +1674,8 @@ try:
             self.extra_prompting = (
                 "\n\n" + llm_specific_instructions if llm_specific_instructions else ""
             )
-            self._max_concurrent = max_concurrent_requests  # whatever the arg is called
-            self._semaphore = None
-            self._semaphore_loop = None
+            self._max_concurrent = max_concurrent_requests
+            self._semaphores = weakref.WeakKeyDictionary()
             print("Using new safe semaphore...")
 
             self.use_json_object = use_json_object
@@ -1688,10 +1688,11 @@ try:
 
         def _get_semaphore(self) -> asyncio.Semaphore:
             loop = asyncio.get_running_loop()
-            if self._semaphore is None or self._semaphore_loop is not loop:
-                self._semaphore = asyncio.Semaphore(self._max_concurrent)
-                self._semaphore_loop = loop
-            return self._semaphore
+            sem = self._semaphores.get(loop)
+            if sem is None:
+                sem = asyncio.Semaphore(self._max_concurrent)
+                self._semaphores[loop] = sem
+            return sem
 
         @property
         def supports_system_prompts(self) -> bool:
