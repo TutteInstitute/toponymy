@@ -1676,7 +1676,7 @@ try:
             self._max_concurrent = max_concurrent_requests  # whatever the arg is called
             self._semaphore = None
             self._semaphore_loop = None
-            print("Using new safe semaphore...")
+            logger.debug("Initialized loop-local semaphore support")
 
             self.use_json_object = use_json_object
             self._resolved_use_json_object: bool | None = None
