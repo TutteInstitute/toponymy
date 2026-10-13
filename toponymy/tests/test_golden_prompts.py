@@ -12,6 +12,7 @@ from toponymy.tests.conftest import ollama_has_model
 from toponymy.tests.helpers.llm_test_config import SYNC_SUPPORTED_NAMERS
 from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 from toponymy.tools.load_prompt_examples import load_prompt_params
+from toponymy.tests.test_llm_wrapper_base import DummySingleWrapper
 
 
 def load_json(filename):
@@ -34,8 +35,8 @@ def test_ollama_sync_smoke_test(ollama_running):
         pytest.skip("Ollama service is not available or failed to start")
     if not ollama_has_model(model):
         pytest.skip(f"{model} not available in local Ollama")
-    namer = OllamaNamer(model=model)
-    result = namer.connectivity_status()
+    namer = OllamaNamer(model=model, temperature_override=0.0)
+    assert namer.connectivity_status()["success"] == True
 
     render_params = load_prompt_params("hockey_masks")
     prompt = render_prompt(PROMPT_TEMPLATES["layer"], render_params)
@@ -63,6 +64,7 @@ def test_supported_models_sync_smoke_test(namer_class, api_key_name, namer_kwarg
 
     namer = namer_class(**namer_kwargs)
     result = namer.connectivity_status()
+    assert namer.connectivity_status()["success"] == True
 
     render_params = load_prompt_params("hockey_masks")
     prompt = render_prompt(PROMPT_TEMPLATES["layer"], render_params)
@@ -78,3 +80,66 @@ def test_supported_models_sync_smoke_test(namer_class, api_key_name, namer_kwarg
     assert type(result) == str
     assert len(result) > 0
     assert matches_expected_patterns(result, accepted_patterns)
+
+
+## Test user facing run_example api
+def test_ollama_run_prompt_example_topic_name_smoke(ollama_running):
+    model = get_test_ollama_model()
+    if not ollama_running:
+        pytest.skip("Ollama service is not available or failed to start")
+    if not ollama_has_model(model):
+        pytest.skip(f"{model} not available in local Ollama")
+
+    namer = OllamaNamer(model=model, temperature_override=0.0)
+
+    accepted_patterns = [
+        r"\bgoalie\b",
+        r"\bgoaltend",
+        r"\bmask",
+    ]
+
+    result = namer.run_prompt_example(
+        example_id="hockey_masks",
+        verbose=True,
+    )
+
+    assert result["success"] is True, result
+    assert result["prompt_kind"] == "topic_name"
+    assert result["prompt"] is not None
+    assert isinstance(result["topic_names"], str)
+    assert len(result["topic_names"]) > 0
+    assert matches_expected_patterns(result["topic_names"], accepted_patterns)
+
+
+def test_ollama_run_prompt_example_invalid_example_id_raises():
+    namer = DummySingleWrapper()
+    with pytest.raises(ValueError, match="example_id must be in"):
+        namer.run_prompt_example(example_id="not_a_real_example")
+
+
+def test_ollama_run_prompt_example_invalid_prompt_kind_raises():
+    namer = DummySingleWrapper()
+    with pytest.raises(ValueError, match="prompt_kind must be"):
+        namer.run_prompt_example(example_id="hockey_masks", prompt_kind="bad_kind")
+
+
+def test_ollama_run_prompt_example_connectivity_failure_returns_error(monkeypatch):
+    namer = DummySingleWrapper()
+
+    monkeypatch.setattr(
+        namer,
+        "connectivity_status",
+        lambda: {
+            "success": False,
+            "error_type": "RuntimeError",
+            "error_message": "boom",
+            "original_exception": RuntimeError("boom"),
+        },
+    )
+
+    result = namer.run_prompt_example(example_id="hockey_masks")
+
+    assert result["success"] is False
+    assert result["error_type"] == "RuntimeError"
+    assert result["error_message"] == "boom"
+    assert isinstance(result["original_exception"], RuntimeError)
