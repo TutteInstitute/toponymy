@@ -11,6 +11,7 @@ from toponymy.annotation import (
     NodeId,
     NodeInput,
     NodeOutput,
+    parse_algorithm_type,
 )
 
 
@@ -626,3 +627,141 @@ def test_executor_in_place_failure_preserves_only_existing_values(valid_cluster_
 
     # Empty in-place value is marked failed on failure.
     assert store["topic"].states[empty_node] is AnnotationState.FAILED
+
+
+def test_parse_algorithm_type_shorthand_returns_output_instance():
+    class EmptyInputsAnnotator:
+        inputs = ()
+        outputs = ("topic",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, **kwargs):
+            return {"topic": "x"}
+
+    specs, output = parse_algorithm_type(EmptyInputsAnnotator())
+    assert specs == {}
+    assert isinstance(output, NodeOutput)
+
+
+def test_executor_explicit_contract_with_node_output_type(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class ExplicitAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+        algorithm_output_type = "node"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    failures = executor.run(ExplicitAnnotator())
+
+    assert failures == {}
+    assert "named_topic" in store
+    assert store["named_topic"][NodeId(0, 0)] == "name:T0-0"
+
+
+def test_executor_explicit_contract_with_node_output_dict(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class ExplicitAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+        algorithm_output_type = {"named_topic": "node"}
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    failures = executor.run(ExplicitAnnotator())
+
+    assert failures == {}
+    assert store["named_topic"][NodeId(1, 2)] == "name:T1-2"
+
+
+def test_executor_explicit_contract_requires_output_types(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    store = AnnotationStore(tree, [])
+    executor = Executor(store)
+
+    class MissingOutputTypeAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+
+        def annotate(self, unit, **kwargs):
+            return {"topic": "x"}
+
+    with pytest.raises(
+        TypeError,
+        match="explicit algorithm contract requires both algorithm_input_type and algorithm_output_type",
+    ):
+        executor.run(MissingOutputTypeAnnotator())
+
+
+def test_executor_explicit_contract_rejects_unknown_output_spec(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class BadOutputSpecAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+        algorithm_output_type = "unknown_output_spec"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    with pytest.raises(ValueError, match="unknown output spec"):
+        executor.run(BadOutputSpecAnnotator())
+
+
+def test_parse_algorithm_type_prefers_algorithm_type_when_both_present(
+    valid_cluster_tree,
+):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class BothContractsAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_type = "node-node"
+        algorithm_input_type = {"wrong_name": "node"}
+        algorithm_output_type = "node"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    specs, output = parse_algorithm_type(BothContractsAnnotator())
+    assert set(specs) == {"topic"}
+    assert isinstance(output, NodeOutput)
+    with pytest.warns(
+        UserWarning,
+        match="defines both algorithm_type and \\(algorithm_input_type, algorithm_output_type\\)",
+    ) as w:
+        failures = executor.run(BothContractsAnnotator())
+    assert failures == {}
+    assert len(w) == 1
