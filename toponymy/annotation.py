@@ -27,7 +27,15 @@ from warnings import warn
 T = TypeVar("T")
 
 NODE_NODE = "node-node"
-_RESERVED = {"annotate", "inputs", "optional_inputs", "outputs", "algorithm_type"}
+_RESERVED = {
+    "annotate",
+    "inputs",
+    "optional_inputs",
+    "outputs",
+    "algorithm_type",
+    "algorithm_input_type",
+    "algorithm_output_type",
+}
 
 
 def call_method(annotator, method, *args):
@@ -664,37 +672,144 @@ OUTPUT_SPECS = {
 }
 
 
-def parse_algorithm_type(annotator):
+def _normalize_output_spec(output_spec):
+    if isinstance(output_spec, str):
+        try:
+            return OUTPUT_SPECS[output_spec]()
+        except KeyError as e:
+            raise ValueError(f"unknown output spec {output_spec!r}") from e
+    return output_spec
+
+
+def _resolve_algorithm_contract(annotator):
+    has_algorithm_type = hasattr(annotator, "algorithm_type")
+    has_algorithm_input_type = hasattr(annotator, "algorithm_input_type")
+    has_algorithm_output_type = hasattr(annotator, "algorithm_output_type")
+
+    if has_algorithm_type:
+        return "shorthand", getattr(annotator, "algorithm_type")
+
+    if has_algorithm_input_type or has_algorithm_output_type:
+        if not (has_algorithm_input_type and has_algorithm_output_type):
+            raise TypeError(
+                "explicit algorithm contract requires both algorithm_input_type "
+                "and algorithm_output_type"
+            )
+        return "explicit", (
+            getattr(annotator, "algorithm_input_type"),
+            getattr(annotator, "algorithm_output_type"),
+        )
+
+    raise TypeError(
+        "an Annotator needs either algorithm_type or "
+        "(algorithm_input_type and algorithm_output_type)"
+    )
+
+
+def _validate_annotator_contract(annotator):
+    required = ("inputs", "outputs", "annotate")
+    missing = [name for name in required if not hasattr(annotator, name)]
+    if missing:
+        raise TypeError(
+            "an Annotator needs inputs, outputs, annotate, and algorithm "
+            f"contract fields; missing {missing}"
+        )
+    if not callable(getattr(annotator, "annotate", None)):
+        raise TypeError("annotator.annotate must be callable")
+
+    return _resolve_algorithm_contract(annotator)
+
+
+def _has_both_algorithm_contract_forms(annotator) -> bool:
+    return (
+        hasattr(annotator, "algorithm_type")
+        and hasattr(annotator, "algorithm_input_type")
+        and hasattr(annotator, "algorithm_output_type")
+    )
+
+
+def parse_algorithm_type(annotator, *, resolved_contract=None):
     """Given an annotator, format the algorithm_type in the canonical form:
     return ({input_name: InputSpec}, output_spec)."""
     names = tuple(annotator.inputs) + tuple(getattr(annotator, "optional_inputs", ()))
-    algorithm_type = annotator.algorithm_type
+    mode, algorithm_contract = (
+        resolved_contract
+        if resolved_contract is not None
+        else _resolve_algorithm_contract(annotator)
+    )
 
-    if isinstance(algorithm_type, str):
-        lhs, rhs = algorithm_type.split("-")
-        if not names:
-            return {}, OUTPUT_SPECS[rhs]()
-        algorithm_type = {name: (lhs, rhs) for name in names}
+    if mode == "shorthand":
+        algorithm_type = algorithm_contract
 
-    if set(algorithm_type) != set(names):
+        if isinstance(algorithm_type, str):
+            lhs, rhs = algorithm_type.split("-")
+            specs = {
+                name: (INPUT_SPECS[lhs]() if isinstance(lhs, str) else lhs)
+                for name in names
+            }
+            for name, spec in specs.items():
+                if spec.source is not None and spec.from_output is not None:
+                    raise ValueError(
+                        f"input {name!r} can't set both source and from_output"
+                    )
+            return specs, _normalize_output_spec(rhs)
+
+        if set(algorithm_type) != set(names):
+            raise ValueError(
+                f"algorithm_type keys {sorted(algorithm_type)} must match "
+                f"inputs + optional_inputs {sorted(names)}"
+            )
+
+        specs, output_specs = {}, set()
+        for name, (lhs, rhs) in algorithm_type.items():
+            spec = INPUT_SPECS[lhs]() if isinstance(lhs, str) else lhs
+            if spec.source is not None and spec.from_output is not None:
+                raise ValueError(
+                    f"input {name!r} can't set both source and from_output"
+                )
+            specs[name] = spec
+            output_specs.add(_normalize_output_spec(rhs))
+
+        if len(output_specs) != 1:
+            raise ValueError(
+                f"all inputs must have the same kind of output, got {output_specs}"
+            )
+        return specs, output_specs.pop()
+
+    algorithm_input_type, algorithm_output_type = algorithm_contract
+
+    if set(algorithm_input_type) != set(names):
         raise ValueError(
-            f"algorithm_type keys {sorted(algorithm_type)} must match "
+            f"algorithm_input_type keys {sorted(algorithm_input_type)} must match "
             f"inputs + optional_inputs {sorted(names)}"
         )
 
-    specs, output_specs = {}, set()
-    for name, (lhs, rhs) in algorithm_type.items():
+    specs = {}
+    for name, lhs in algorithm_input_type.items():
         spec = INPUT_SPECS[lhs]() if isinstance(lhs, str) else lhs
         if spec.source is not None and spec.from_output is not None:
             raise ValueError(f"input {name!r} can't set both source and from_output")
         specs[name] = spec
-        output_specs.add(OUTPUT_SPECS[rhs]() if isinstance(rhs, str) else rhs)
 
-    if len(output_specs) != 1:
-        raise ValueError(
-            f"all inputs must have the same kind of output, got {output_specs}"
-        )
-    return specs, output_specs.pop()
+    if isinstance(algorithm_output_type, Mapping):
+        outputs = tuple(annotator.outputs)
+        if set(algorithm_output_type) != set(outputs):
+            raise ValueError(
+                f"algorithm_output_type keys {sorted(algorithm_output_type)} must "
+                f"match outputs {sorted(outputs)}"
+            )
+        output_specs = {
+            _normalize_output_spec(spec) for spec in algorithm_output_type.values()
+        }
+        if len(output_specs) != 1:
+            raise ValueError(
+                "all outputs must have the same output kind in this executor"
+            )
+        output_spec = output_specs.pop()
+    else:
+        output_spec = _normalize_output_spec(algorithm_output_type)
+
+    return specs, output_spec
 
 
 class Executor:
@@ -721,11 +836,14 @@ class Executor:
 
         Return ``{unit: reason}`` for nodes whose annotation failed."""
 
-        if not isinstance(annotator, Annotator):
-            raise TypeError(
-                "an Annotator needs inputs, outputs, algorithm_type, " "and annotate"
-            )
+        resolved_contract = _validate_annotator_contract(annotator)
 
+        if _has_both_algorithm_contract_forms(annotator):
+            warn(
+                "annotator defines both algorithm_type and "
+                "(algorithm_input_type, algorithm_output_type); "
+                "using algorithm_type and ignoring explicit fields"
+            )
         required_inputs = set(annotator.inputs)
         optional_inputs = set(getattr(annotator, "optional_inputs", ()))
         if len(set(required_inputs)) != len(required_inputs):
@@ -734,7 +852,9 @@ class Executor:
         if len(set(optional_inputs)) != len(optional_inputs):
             raise ValueError("annotator.optional_inputs contains duplicate names")
 
-        specs, output = parse_algorithm_type(annotator)
+        specs, output = parse_algorithm_type(
+            annotator, resolved_contract=resolved_contract
+        )
         required_inputs = set(annotator.inputs)
         outputs = tuple(annotator.outputs)
         input_names = dict(input_names or {})

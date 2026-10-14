@@ -335,7 +335,7 @@ def topic_name_prompt(
     keyphrases : List[List[str]]
         List of keyphrases for each topic.
     subtopics : Optional[List[List[str]]], optional
-        List of subtopics for each cliuster in this layer.
+        List of subtopics for each cluster in this layer.
     cluster_tree : Optional[dict], optional
         Dictionary of the cluster tree, by default None.
     object_description : str
@@ -570,7 +570,7 @@ def topic_summary_prompt(
     keyphrases : List[List[str]]
         List of keyphrases for each topic.
     subtopics : Optional[List[List[str]]], optional
-        List of subtopics for each cliuster in this layer.
+        List of subtopics for each cluster in this layer.
     cluster_tree : Optional[dict], optional
         Dictionary of the cluster tree, by default None.
     object_description : str
