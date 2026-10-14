@@ -190,3 +190,10 @@ SYNC_SUPPORTED_NAMERS = [
     (CohereNamer, "COHERE_API_KEY", {}),
     (GoogleGeminiNamer, "GEMINI_API_KEY", {}),
 ]
+
+ASYNC_SUPPORTED_NAMERS = [
+    (AsyncAnthropicNamer, "ANTHROPIC_API_KEY", {}),
+    (AsyncOpenAINamer, "OPEN_AI_API_KEY", {}),
+    (AsyncCohereNamer, "COHERE_API_KEY", {}),
+    (AsyncGoogleGeminiNamer, "GEMINI_API_KEY", {}),
+]
