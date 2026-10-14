@@ -347,7 +347,7 @@ class ClusterLayer(ABC):
                 self._update_topic_names(new_names, topic_indices)
         else:
             raise ValueError(
-                "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
+                f"LLM must be an instance of LLMWrapper or AsyncLLMWrapper. Got LLM {llm} of {type(llm)} instead."
             )
 
     # pragma: no cover

@@ -1,0 +1,43 @@
+{
+    "cluster_keywords": [
+        "mask",
+        "malarchuk",
+        "helmet",
+        "goalie",
+        "grant fuhr",
+        "clint",
+        "ihl",
+        "tommy soderstrom",
+        "curtis joseph",
+        "bruins",
+        "cage",
+        "pts",
+        "belfour",
+        "hextall",
+        "poll",
+        "painted"
+    ],
+    "cluster_sentences": [
+        "Current votes for favorite goalie masks (3pts - 1st, 2pts - 2nd, 1pt - 3rd)\n\nPlayer                    Team                 Pts       Votes\n--------------------------------------------------------------\n1. Ed Belfour             Chicago              31         14\n2. Andy Moog              Boston               30         13\n3. Curtis Joseph          St. Louis            26         11 \n   Brian Hayward          San Jose             26         10 \n5. Ron Hextall            Quebec               16          8\n6. Gerry Cheevers         Boston (retired)     11          6 \n7. John Vanbeisbrouck     NY Rangers           10          4\n   Grant Fuhr             Buffalo              10          4 \n9. Mike Richter           NY Rangers            6          3\n10. Manon Rheaume         Atlanta (IHL)         5          2\n11. Don Beaupre           Washington            4          2\n    Ken Dryden            Montreal (retired)    4          2\n--------------------------------------------------------------\nOthers receiving less than 4pts: Mike Vernon (Cal), Clint\n Malarchuk (Buf/SD,IHL), Tommy Soderstrom (Phil), Ray LeBlanc (USA),\n Artus Irbe (SJ), Tim Cheveldae (Det), Sean Burke (NJ),\n Rick Wamsley (Tor,ret), Jon Casey (Minn), Bob Essensa (Win),\n Glenn Healy (NYI), Toy Espo (???), Gilles Gratton (???),\n Rod Stauber (LA), Gump Worsley (???), Pat Jablonski (TB),\n Grant Fuhr (Tor), Felix Potvin (Tor), Stephane Beauregard (Win),\n Mark Fitzpatrick (NYI), Chico Resch (NYI)\n\n\nCan someone please tell me which teams the (???) play(ed) for? Thanks.",
+        "Actually, this part was really interesting.  It turns out that the mask is\ncustom-fit to the goalie's face.  The goalie puts his/her face through a\npiece of wood (or was it plastic?) with a hole in it that allows only the face\nand forehead to show.  Hair is covered by a cap, eyes are covered by a plastic\nwrap-type material, and vaseline is put on the goaltender's face.  Then, a\nplaster is spread on their cheeks, forehead, and chin which takes about 12\nminutes to dry sufficiently.  When it dries, it is effectively a mold of the\ngoalie's face.  This is used as the basis of the mask (the rest involves\npadding the inside, hardening the exterior, fitting the cage, etc. etc.  \nJohn Blue of the Bruins actually demonstrated the procedure on the show. \n\n\nYeah, Essensa's mask looked really good.\n \n\nActually, I thought I heard him say that it _was_ Potvin's for certain.  I\nwould bet money on it either way...and it did look awesome!",
+        "Tom Barrasso wore a great mask, one time, last season.  He unveiled it\nat a game in Boston.  \n\nIt was all black, with Pgh city scenes on it.  The \"Golden Triangle\"\n(Pgh's downtown area where the 3 rivers meet) graced the top, along\nwith a steel mill on one side and the Civic Arena (I think) on the \nother.   On the back of the helmet was the old Pens' logo (the really\nfat little penguin with the blue scarf) the current (at the time) Pens\nlogo, and a space for the \"new\" (now current) logo.\n\nTommy had designed the mask, and his mother (an artist) painted it\nfor him.  \n\nBut while wearing the mask, the Pens got thumped by the Bruins.  The\nvery next game, Tommy was back to the old paint job.  A great mask\ndone in by a goalie's superstition.",
+        "Heh, someone mentioned Tommy Soderstrom (Flyers) for the besk mask poll\ntoo (in the mentioned below part).  All he has is a plain white helmet\nwith a big cage.\nI found this pretty amusing.\n\n\t\t\t\t\t-John Santore\n\nPhiladelphia Flyers in '93-'94!\n\n=============================================================================\n ____________________                                \n/                    \\                   \"We break the surface tension \n\\_________     ____   \\                   with our wild kinetic dreams\"\n/             /    \\   \\                        -Rush, Grand Designs\n\\_______     /  (*) )   )\n/           / /\\___/   /                 Go Philadelphia Flyers!\n\\_____     / /        /\n/         /  \\_______/                   John Santore (jsbh@andrew.cmu.edu)\n\\________/",
+        "I saw a mask once that had drawings of band-aids, presumably for every puck\nthat goalie stopped with his face/head.  I can't remember who it was or even\nif it was NHL (I see quite a few AHL games here).\n\nThis is by far the funniest mask I've seen, and for me funny=cool",
+        "^^^^^^^^^^^^^^^^^^^^^^\n\nSoderstrom plays with Philly, but he doesn't have a moulded mask.\nHe's got the helmet and cage variety, in white.  Or at least that's\nwhat he wore thirteen hours ago.",
+        "My vote goes to John Vanbiesbrouck.  His mask has a skyline of New York\nCity, and on the sides there are a bunch of bees (Beezer).  It looks\nreally sharp.\n\n--\n    Keith Keller\t\t\t\tLET'S GO RANGERS!!!!!\n\t\t\t\t\t\tLET'S GO QUAKERS!!!!!\n\tkkeller@mail.sas.upenn.edu\t\tIVY LEAGUE CHAMPS!!!!",
+        "if\nteam! \nYeah but Soderstrom's mask has always appeared to be a lot bigger than the  \naverage helmet-and-cage variety.  It has a certain appeal on its own\n\njosh"
+    ],
+    "cluster_subtopics": {
+        "major": [],
+        "minor": [],
+        "misc": []
+    },
+    "corpus_description": "20-newsgroups dataset",
+    "document_type": "newsgroup posts",
+    "exemplar_end_delimiter": "\n</EXAMPLE_POST>\n\n",
+    "exemplar_start_delimiter": "<EXAMPLE_POST>\n",
+    "has_major_subtopics": false,
+    "is_general_summary": false,
+    "is_very_specific_summary": false,
+    "summary_kind": "domain expert level (8 to 15 word)"
+}
