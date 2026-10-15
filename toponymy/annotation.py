@@ -529,15 +529,52 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
 class Annotator(Protocol):
     """Structural contract for an annotation algorithm.
 
-    Required:
-    - inputs: input annotation names that must be present and computed per node
-    - outputs: output annotation names produced by annotate(...)
-    - algorithm_type: type for executor. currently supports "node-node"
-    - annotate(node, **kwargs): returns a mapping with exactly keys in outputs
+    An annotator declares which annotations it reads and writes, and how each
+    input is consumed. ``Executor.run`` gathers the inputs for each unit, calls
+    ``annotate`` and writes the returned values to the output annotations.
+    Annotators are duck-typed: any object with these attributes works; no base
+    class is needed.
 
-    Optional:
-    - optional_inputs: input annotation names that are passed only when available
-      and computed for the current node.
+    Attributes
+    ----------
+    inputs : Sequence[str]
+        Names of the input annotations, passed to ``annotate`` as keyword arguments.
+        Each must exist in the store, otherwise the run raises ``KeyError``, and be
+        computed for a unit, otherwise that unit is recorded as failed.
+    outputs : Sequence[str]
+        Names of the annotations ``annotate`` produces.
+    algorithm_type : str or Mapping
+        The shorthand contract. Either a string ``"<input kind>-<output kind>"``
+        such as ``"node-node"``, applied to every input, or a mapping
+        ``{input name: (input kind, output kind)}`` with one entry for each name in
+        ``inputs`` and ``optional_inputs``. All the output kinds must be the same.
+
+    The following are not declared on the protocol because they can be omitted:
+
+    optional_inputs : Sequence[str]
+        Input names passed to ``annotate`` only when the annotation exists in the
+        store and is computed for the unit.
+    algorithm_input_type, algorithm_output_type : Mapping, str
+        The explicit contract, an alternative to ``algorithm_type`` that must define
+        both. ``algorithm_input_type`` maps each name in ``inputs`` and
+        ``optional_inputs`` to an input kind. ``algorithm_output_type`` is an output
+        kind, or a mapping from each name in ``outputs`` to one, all the same. If both
+        forms are defined, ``algorithm_type`` is used and a warning is issued.
+
+    Notes
+    -----
+    An input kind is a string or an ``InputSpec`` instance. Use an instance to set
+    options such as ``source`` and ``from_output`` (read an output of the same run).
+
+    - ``"node"``: the annotation's value at the unit.
+    - ``"descendants"``: a mapping of the computed values of the unit's descendants,
+      run bottom-up when they are outputs of the same run.
+    - ``"multinode"``: a mapping of the computed values for the nodes in a group
+      of nodes. ``MultiNodeInput(groups=name)`` names an annotator method that
+      returns the groups.
+
+    An output kind is ``"node"`` (one value per node) or ``"multinode"`` (one mapping
+    of node to value for each group).
     """
 
     inputs: Sequence[str]
@@ -548,7 +585,31 @@ class Annotator(Protocol):
         self,
         unit: Any,
         **kwargs: Any,
-    ) -> Mapping[str, Any]: ...
+    ) -> Mapping[str, Any]:
+        """Compute the output values for one unit.
+
+        Parameters
+        ----------
+        unit : NodeId or tuple of NodeId
+            The node being annotated, or the group of nodes for a multinode
+            annotator.
+        **kwargs
+            One value for each name in ``inputs``, as selected by its input kind.
+            Optional inputs are left out when they are not available.
+
+        Returns
+        -------
+        Mapping[str, Any]
+            A value for each name in ``outputs`` and no others, otherwise the run
+            raises ``ValueError``. For a ``"multinode"`` output, each value is a
+            mapping from node to value over the nodes in ``unit``.
+
+        Notes
+        -----
+        An exception raised here marks the unit's outputs as failed and is recorded
+        in the failures that ``Executor.run`` returns. The run then continues.
+        """
+        ...
 
 
 class Order(Enum):
