@@ -25,6 +25,7 @@ from enum import Enum
 from warnings import warn
 
 import numpy as np
+from sklearn.exceptions import NotFittedError
 
 T = TypeVar("T")
 
@@ -69,16 +70,6 @@ class _HasClusterAnnotationTree(Protocol):
     def cluster_tree_(self) -> Mapping: ...
 
 
-class _HasClusterLayers(_HasClusterAnnotationTree, Protocol):
-    """Anything exposing a cluster_tree_ and fitted cluster_layers_.
-
-    Each layer needs ``cluster_labels``.
-    """
-
-    @property
-    def cluster_layers_(self) -> Sequence[Any]: ...
-
-
 def _members_by_cluster(
     labels: np.ndarray, cluster_ids: Sequence[int]
 ) -> dict[int, np.ndarray]:
@@ -92,7 +83,7 @@ def _members_by_cluster(
 
 
 def _check_clusterer_inputs(
-    clusterer: _HasClusterLayers,
+    clusterer: Any,
     objects: Iterable[Any] | None,
     object_vectors: np.ndarray | None,
 ) -> tuple[AnnotationTree, list[np.ndarray], list[Any] | None, np.ndarray | None]:
@@ -101,6 +92,12 @@ def _check_clusterer_inputs(
     Returns the tree, each layer's labels, and the objects and vectors as a list
     and a 2-D array (or None).
     """
+    missing = [
+        a for a in ("cluster_tree_", "cluster_layers_") if not hasattr(clusterer, a)
+    ]
+    if missing:
+        raise NotFittedError(f"clusterer is missing {missing}; fit it first")
+
     tree = AnnotationTree.from_clusterer(clusterer)
     layers = clusterer.cluster_layers_
     if len(layers) != tree.n_layers:
@@ -508,7 +505,7 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
     @classmethod
     def from_clusterer(
         cls,
-        clusterer: _HasClusterLayers,
+        clusterer: Any,
         objects: Iterable[Any] | None = None,
         object_vectors: np.ndarray | None = None,
     ) -> Self:
@@ -545,6 +542,8 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
 
         Raises
         ------
+        NotFittedError
+            If the clusterer has no ``cluster_tree_`` or ``cluster_layers_``.
         InvalidAnnotationTree
             If the clusterer's tree is not valid, for example if cluster ids are not
             contiguous from 0 in every layer.

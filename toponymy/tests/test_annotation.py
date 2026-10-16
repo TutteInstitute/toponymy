@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.exceptions import NotFittedError
 
 from toponymy.annotation import (
     Annotation,
@@ -950,6 +951,13 @@ def test_store_from_clusterer_with_real_clusterer(
         labels = clusterer.cluster_layers_[node.layer].cluster_labels
         expected = np.where(labels == node.cluster)[0]
         assert np.array_equal(store.cluster_object_indices[node], expected)
+
+
+def test_store_from_clusterer_rejects_unfitted_clusterer(two_layer_clusterer):
+    del two_layer_clusterer.cluster_layers_
+
+    with pytest.raises(NotFittedError, match="cluster_layers_"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
 
 
 def test_store_from_clusterer_rejects_one_dimensional_vectors(
