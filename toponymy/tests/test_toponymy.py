@@ -30,6 +30,24 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def test_toponymy_clusterer_keyword_args_override_defaults():
+    clusterer = MagicMock(spec=["fit_predict"])
+    clusterer.fit_predict.side_effect = RuntimeError("stop after clusterer call")
+    model = Toponymy(MagicMock(), MagicMock(), clusterer, verbose=True)
+
+    with pytest.raises(RuntimeError, match="stop after clusterer call"):
+        model.fit(
+            [],
+            np.empty((0, 2)),
+            np.empty((0, 2)),
+            verbose=False,
+            show_progress_bar=False,
+        )
+
+    assert clusterer.fit_predict.call_args.kwargs["verbose"] is False
+    assert clusterer.fit_predict.call_args.kwargs["show_progress_bar"] is False
+
+
 def test_toponymy(
     llm,
     embedder,
