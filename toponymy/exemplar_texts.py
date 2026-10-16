@@ -325,7 +325,44 @@ class FacilityLocationSelection(BaseGraphSelection):
 
 
 class SubmodularExemplarAnnotator:
-    inputs = ("cluster_objects", "cluster_label_vector", "cluster_object_vectors")
+    """Select a node's exemplars by submodular optimization over its object vectors.
+
+    Chooses ``n_exemplars`` objects that represent the node's object vectors well,
+    using a facility location (the default) or saturated coverage submodular
+    function with a cosine metric. The vectors are centred by ``null_topic`` first.
+    Nodes with more than 16384 objects are randomly subsampled to 16384 before
+    selection, and a node with fewer objects than ``n_exemplars`` returns all of them.
+
+    Parameters
+    ----------
+    n_exemplars : int, optional
+        The number of exemplars to select for each node, by default 4.
+    object_to_text_function : Callable[[List[Any]], List[str]], optional
+        A function that turns the chosen objects into exemplar strings. If None,
+        the objects are returned as they are.
+    null_topic : np.ndarray, optional
+        A background vector, with the same dimension as the object vectors, that is
+        subtracted from them before selection. This is typically the mean of all
+        object vectors in the corpus. If None, the vectors are not centred.
+    submodular_function : {"facility_location", "saturated_coverage"}, optional
+        The submodular function to maximise, by default "facility_location".
+
+    Attributes
+    ----------
+    inputs : tuple of str
+        ``cluster_objects``, ``cluster_object_vectors`` and ``cluster_object_indices``.
+    outputs : tuple of str
+        ``exemplars`` and ``exemplar_original_indices``.
+    algorithm_type : str
+        ``"node-node"``: each node is annotated from its own inputs.
+
+    Raises
+    ------
+    ValueError
+        If ``submodular_function`` is not one of the supported values.
+    """
+
+    inputs = ("cluster_objects", "cluster_object_vectors", "cluster_object_indices")
     outputs = ("exemplars", "exemplar_original_indices")
     algorithm_type = "node-node"
 
@@ -333,12 +370,12 @@ class SubmodularExemplarAnnotator:
         self,
         n_exemplars: int = 4,
         object_to_text_function=None,
-        cluster_label_vector: np.ndarray = None,
+        null_topic: np.ndarray = None,
         submodular_function: str = "facility_location",
     ):
         self.n_exemplars = n_exemplars
         self.object_to_text_function = object_to_text_function
-        self.cluster_label_vector = cluster_label_vector
+        self.null_topic = null_topic  # subtracted from vectors; None means no centering
         self.submodular_function = submodular_function
         if submodular_function == "facility_location":
             self.selector = FacilityLocationSelection(
@@ -359,15 +396,36 @@ class SubmodularExemplarAnnotator:
         *,
         cluster_objects,
         cluster_object_vectors,
+        cluster_object_indices,
     ):
+        """Select exemplars for one node.
+
+        Parameters
+        ----------
+        node : NodeId
+            The node being annotated. It is not used in the selection.
+        cluster_objects : Sequence
+            The objects in the node's cluster.
+        cluster_object_vectors : np.ndarray
+            One uncentred vector for each entry of ``cluster_objects``.
+        cluster_object_indices : Sequence[int]
+            The position in the corpus of each entry of ``cluster_objects``.
+
+        Returns
+        -------
+        dict
+            ``{"exemplars": ..., "exemplar_original_indices": ...}``, the chosen
+            exemplars (as strings if ``object_to_text_function`` is given) and their
+            positions in the corpus. Both are empty for a node with no objects.
+        """
         if len(cluster_objects) == 0:
             return {"exemplars": [], "exemplar_original_indices": []}
 
         # Subsample if cluster is too large
         subsample_indices = None
         if len(cluster_objects) > 16384:
-            subsample_indices = np.random.choice(
-                len(cluster_objects), size=16384, replace=False
+            subsample_indices = np.sort(
+                np.random.choice(len(cluster_objects), size=16384, replace=False)
             )
             subsampled_objects = [cluster_objects[i] for i in subsample_indices]
             subsampled_vectors = cluster_object_vectors[subsample_indices]
@@ -375,9 +433,9 @@ class SubmodularExemplarAnnotator:
             subsampled_objects = cluster_objects
             subsampled_vectors = cluster_object_vectors
 
-        # Compute null topic for this cluster
-        null_topic_vector = np.mean(subsampled_vectors, axis=0)
-        centered_vectors = subsampled_vectors - null_topic_vector
+        centered_vectors = subsampled_vectors
+        if self.null_topic is not None:
+            centered_vectors = subsampled_vectors - self.null_topic
         cluster_indices = np.arange(centered_vectors.shape[0])
 
         # Select exemplars
@@ -393,17 +451,9 @@ class SubmodularExemplarAnnotator:
         if self.object_to_text_function is not None:
             chosen_exemplars = self.object_to_text_function(chosen_exemplars)
 
-        # Remap indices: subsampled indices to cluster-relative indices
-        # (these will be mapped to global indices in the next step)
         if subsample_indices is not None:
-            chosen_original_indices = subsample_indices[candidate_indices]
-        else:
-            chosen_original_indices = candidate_indices
-
-        # Map cluster-relative to global indices
-        cluster_mask = self.cluster_label_vector == node.cluster
-        original_indices = np.where(cluster_mask)[0]
-        chosen_original_indices = [original_indices[i] for i in chosen_original_indices]
+            candidate_indices = subsample_indices[candidate_indices]
+        chosen_original_indices = [cluster_object_indices[i] for i in candidate_indices]
 
         return {
             "exemplars": chosen_exemplars,
@@ -422,8 +472,8 @@ def submodular_selection_exemplars(
     show_progress_bar: bool = None,
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
-    These exemplars are selected to be the closest vectors to the cluster centroid while retaining
-    sufficient diversity.
+    These exemplars are selected by submodular optimization over the object vectors,
+    which are centred on the mean of all object vectors before selection.
 
     Parameters
     ----------
@@ -431,20 +481,18 @@ def submodular_selection_exemplars(
         A vector of cluster labels for each object.
     objects : List[str]
         A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
-    object_vectors = np.ndarray
+    object_vectors : np.ndarray
         An ndarray of topic vectors for each object.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
     n_exemplars : int, optional
         The number of exemplars to sample for each cluster, by default 4.
-    diversify_alpha : float, optional
-        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
     object_to_text_function: Callable[List[Any], List[str]]
         A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
     submodular_function : str, optional
         The sampling method for selecting exemplars 'facility_location' or 'saturated_coverage', by default it is 'facility_location'.
+    verbose : bool, optional
+        Whether to show a progress bar; takes precedence over ``show_progress_bar``.
     show_progress_bar : bool, optional
-        Whether to show a progress bar, by default False.
+        Deprecated, use ``verbose``. Whether to show a progress bar, by default False.
 
     Returns
     -------
@@ -459,7 +507,7 @@ def submodular_selection_exemplars(
     submodular_annotator = SubmodularExemplarAnnotator(
         n_exemplars=n_exemplars,
         object_to_text_function=object_to_text_function,
-        cluster_label_vector=cluster_label_vector,
+        null_topic=np.mean(object_vectors, axis=0),
         submodular_function=submodular_function,
     )
 
@@ -490,6 +538,7 @@ def submodular_selection_exemplars(
             node=node,
             cluster_objects=cluster_objects,
             cluster_object_vectors=cluster_object_vectors,
+            cluster_object_indices=original_indices,
         )
         chosen_exemplars = result["exemplars"]
         chosen_original_indices = result["exemplar_original_indices"]
@@ -501,7 +550,32 @@ def submodular_selection_exemplars(
 
 
 class RandomExemplarAnnotator:
-    inputs = ("cluster_objects",)
+    """Select a node's exemplars uniformly at random.
+
+    Draws ``n_exemplars`` objects without replacement from the node's cluster. The
+    draw uses NumPy's global random state, so call ``np.random.seed`` beforehand for
+    reproducible results.
+
+    Parameters
+    ----------
+    n_exemplars : int, optional
+        The number of exemplars to select for each node, by default 4. A node with
+        fewer objects returns all of them.
+    object_to_text_function : Callable[[List[Any]], List[str]], optional
+        A function that turns the chosen objects into exemplar strings. If None,
+        the objects are returned as they are.
+
+    Attributes
+    ----------
+    inputs : tuple of str
+        ``cluster_objects`` and ``cluster_object_indices``.
+    outputs : tuple of str
+        ``exemplars`` and ``exemplar_original_indices``.
+    algorithm_type : str
+        ``"node-node"``: each node is annotated from its own inputs.
+    """
+
+    inputs = ("cluster_objects", "cluster_object_indices")
     outputs = ("exemplars", "exemplar_original_indices")
     algorithm_type = "node-node"
 
@@ -509,18 +583,36 @@ class RandomExemplarAnnotator:
         self,
         n_exemplars: int = 4,
         object_to_text_function=None,
-        cluster_label_vector=None,
     ):
         self.n_exemplars = n_exemplars
         self.object_to_text_function = object_to_text_function
-        self.cluster_label_vector = cluster_label_vector
 
     def annotate(
         self,
         node,
         *,
         cluster_objects,
+        cluster_object_indices,
     ):
+        """Select exemplars for one node.
+
+        Parameters
+        ----------
+        node : NodeId
+            The node being annotated. It is not used in the selection.
+        cluster_objects : Sequence
+            The objects in the node's cluster.
+        cluster_object_indices : Sequence[int]
+            The position in the corpus of each entry of ``cluster_objects``.
+
+        Returns
+        -------
+        dict
+            ``{"exemplars": ..., "exemplar_original_indices": ...}``, the chosen
+            exemplars (as strings if ``object_to_text_function`` is given) and their
+            positions in the corpus, in the order drawn. Both are empty for a node
+            with no objects.
+        """
         if len(cluster_objects) == 0:
             return {"exemplars": [], "exemplar_original_indices": []}
 
@@ -532,10 +624,7 @@ class RandomExemplarAnnotator:
         if self.object_to_text_function is not None:
             chosen_exemplars = self.object_to_text_function(chosen_exemplars)
 
-        # Map cluster-relative indices back to global indices using cluster mask
-        cluster_mask = self.cluster_label_vector == node.cluster
-        original_indices = np.where(cluster_mask)[0]
-        chosen_original_indices = [original_indices[i] for i in exemplar_order]
+        chosen_original_indices = [cluster_object_indices[i] for i in exemplar_order]
 
         return {
             "exemplars": chosen_exemplars,
@@ -561,12 +650,14 @@ def random_exemplars(
         explected to be integers ranging from 0 to the number_of_clusters.
     objects : List[str]
         A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
-    n_samples : int, optional
+    n_exemplars : int, optional
         The number of exemplars to sample for each cluster, by default 4.
     object_to_text_function: Callable[List[Any], List[str]]
         A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
+    verbose : bool, optional
+        Whether to show a progress bar; takes precedence over ``show_progress_bar``.
     show_progress_bar : bool, optional
-        Whether to show a progress bar, by default False.
+        Deprecated, use ``verbose``. Whether to show a progress bar, by default False.
 
     Returns
     -------
@@ -586,7 +677,6 @@ def random_exemplars(
     random_annotator = RandomExemplarAnnotator(
         n_exemplars=n_exemplars,
         object_to_text_function=object_to_text_function,
-        cluster_label_vector=cluster_label_vector,
     )
 
     for cluster_num in tqdm(
@@ -613,6 +703,7 @@ def random_exemplars(
         result = random_annotator.annotate(
             node=node,
             cluster_objects=cluster_objects,
+            cluster_object_indices=original_indices,
         )
         chosen_exemplars = result["exemplars"]
         chosen_original_indices = result["exemplar_original_indices"]
@@ -635,48 +726,61 @@ def diverse_exemplars_by_cluster(
     verbose: bool = None,
     show_progress_bar: bool = None,
 ) -> Tuple[List[str], List[int], List[int]]:
-    """Generates a list of exemplar text for each cluster in a cluster layer.
-    These exemplars are selected to be the closest vectors to the cluster centroid while retaining
-    sufficient diversity.
+    """Select exemplars for a single cluster.
+
+    Candidates are ranked by cosine distance to the centroid (``method="centroid"``)
+    or randomly (``method="random"``), then thinned for diversity. The centroid and
+    the object vectors are both centred by ``null_topic`` before any distance is
+    computed, so pass them uncentred.
 
     Parameters
     ----------
-    cluster_label_vector : np.ndarray
-        A vector of cluster labels for each object.
-    objects : List[str]
-        A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
-    object_vectors = np.ndarray
-        An ndarray of topic vectors for each object.
-    centroid_vectors : np.ndarray
-        An ndarray of centroid vectors for each cluster.
+    cluster_objects : List[str]
+        The objects in the cluster.
+    cluster_centroid : np.ndarray
+        The centroid vector of the cluster.
+    cluster_object_vectors : np.ndarray
+        One vector per entry of ``cluster_objects``.
+    null_topic : np.ndarray
+        Background vector subtracted from the centroid and the object vectors,
+        typically the mean of all object vectors in the corpus.
     n_exemplars : int, optional
-        The number of exemplars to sample for each cluster, by default 4.
+        The number of exemplars to select, by default 4.
     diversify_alpha : float, optional
-        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
-    object_to_text_function: Callable[List[Any], List[str]]
-        A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
+        The largest diversification alpha to try; the largest alpha up to this value
+        that still retains ``n_exemplars`` candidates is used. By default 1.0.
+    object_to_text_function: Callable[List[Any], List[str]], optional
+        A function which takes a list of objects and returns exemplar strings, by default
+        for strings it is lambda x: x. If None, the objects are returned as they are.
     method : str, optional
-        The sampling method for selecting exemplars 'centroid' or 'random', by default it is 'centroid'.
-    show_progress_bar : bool, optional
-        Whether to show a progress bar, by default False.
+        How to rank candidates, 'centroid' or 'random', by default 'centroid'.
+    verbose, show_progress_bar : bool, optional
+        Unused; accepted for consistency with the other exemplar functions.
 
     Returns
     -------
-    Tuple[List[List[str]], List[List[int]]]
-        A tuple containing:
-        - A list of lists of exemplar texts for each cluster
-        - A list of lists of indices indicating the position of each exemplar in the original object list
+    Tuple[List[str], np.ndarray, List[int]]
+        - the chosen exemplar texts
+        - ``exemplar_order``: positions within ``cluster_objects``, ranked by ``method``
+        - ``chosen_indices``: positions of the chosen exemplars within the top-ranked
+          candidates, so chosen exemplar ``i`` is at position
+          ``exemplar_order[chosen_indices[i]]`` of ``cluster_objects``
+
+        An empty cluster returns three empty lists.
     """
 
     # If there is an empty cluster emit empty lists
     if len(cluster_objects) == 0:
         return [], [], []
 
+    centered_centroid = cluster_centroid - null_topic
+    centered_vectors = cluster_object_vectors - null_topic
+
     if method == "centroid":
         # Select the central exemplars as the objects to each centroid
         exemplar_distances = pairwise_distances(
-            cluster_centroid.reshape(1, -1) - null_topic,
-            cluster_object_vectors,
+            centered_centroid.reshape(1, -1),
+            centered_vectors,
             metric="cosine",
         )
         exemplar_order = np.argsort(exemplar_distances.flatten())
@@ -693,11 +797,11 @@ def diverse_exemplars_by_cluster(
         cluster_objects[i] for i in exemplar_order[:n_exemplars_to_take]
     ]
     candidate_vectors = np.asarray(
-        [cluster_object_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
+        [centered_vectors[i] for i in exemplar_order[:n_exemplars_to_take]]
     )
 
     chosen_indices = diversify(
-        cluster_centroid - null_topic,
+        centered_centroid,
         candidate_vectors,
         n_exemplars,
         max_alpha=diversify_alpha,
@@ -715,10 +819,51 @@ def diverse_exemplars_by_cluster(
 
 
 class DiverseExemplarAnnotator:
+    """Select a node's exemplars closest to its centroid, thinned for diversity.
+
+    Objects are ranked by cosine distance to the node's centroid (or randomly, if
+    ``method="random"``), and a diverse subset of the top candidates is kept. The
+    centroid and object vectors are both centred by ``null_topic`` before any
+    distance is computed, so the annotation inputs should be uncentred.
+
+    Parameters
+    ----------
+    n_exemplars : int, optional
+        The number of exemplars to select for each node, by default 4.
+    diversify_alpha : float, optional
+        The largest diversification alpha to try. The largest alpha up to this
+        value that still retains ``n_exemplars`` candidates is used. By default 1.0.
+    object_to_text_function : Callable[[List[Any]], List[str]], optional
+        A function that turns the chosen objects into exemplar strings. If None,
+        the objects are returned as they are.
+    null_topic : np.ndarray, optional
+        A background vector, with the same dimension as the object vectors, that is
+        subtracted from the centroid and the object vectors. This is typically the
+        mean of all object vectors in the corpus. If None, nothing is subtracted.
+    method : {"centroid", "random"}, optional
+        How candidates are ranked before diversification, by default "centroid".
+
+    Attributes
+    ----------
+    inputs : tuple of str
+        ``cluster_objects``, ``cluster_centroid``, ``cluster_object_vectors`` and
+        ``cluster_object_indices``.
+    outputs : tuple of str
+        ``exemplars`` and ``exemplar_original_indices``.
+    algorithm_type : str
+        ``"node-node"``: each node is annotated from its own inputs.
+
+    Raises
+    ------
+    ValueError
+        At annotation time, if ``method`` is not one of the supported values.
+    """
+
     inputs = (
         "cluster_objects",
-        "cluster_centroids",
+        "cluster_centroid",
         "cluster_object_vectors",
+        "cluster_object_indices",
     )
     outputs = ("exemplars", "exemplar_original_indices")
     algorithm_type = "node-node"
@@ -726,15 +871,15 @@ class DiverseExemplarAnnotator:
     def __init__(
         self,
         n_exemplars: int = 4,
-        diversify_alpha=None,
+        diversify_alpha: float = 1.0,
         object_to_text_function=None,
-        cluster_label_vector=None,
+        null_topic: np.ndarray = None,
         method="centroid",
     ):
         self.n_exemplars = n_exemplars
         self.diversify_alpha = diversify_alpha
         self.object_to_text_function = object_to_text_function
-        self.cluster_label_vector = cluster_label_vector
+        self.null_topic = null_topic  # subtracted from vectors; None means no centering
         self.method = method
 
     def annotate(
@@ -743,10 +888,35 @@ class DiverseExemplarAnnotator:
         *,
         cluster_objects,
         cluster_centroid,
-        cluster_object_vectors,  # has to match inputs name
+        cluster_object_vectors,
+        cluster_object_indices,  # has to match inputs name
     ):
+        """Select exemplars for one node.
 
-        null_topic = np.mean(cluster_object_vectors, axis=0)
+        Parameters
+        ----------
+        node : NodeId
+            The node being annotated. It is not used in the selection.
+        cluster_objects : Sequence
+            The objects in the node's cluster.
+        cluster_centroid : np.ndarray
+            The node's centroid vector, uncentred.
+        cluster_object_vectors : np.ndarray
+            One uncentred vector for each entry of ``cluster_objects``.
+        cluster_object_indices : Sequence[int]
+            The position in the corpus of each entry of ``cluster_objects``.
+
+        Returns
+        -------
+        dict
+            ``{"exemplars": ..., "exemplar_original_indices": ...}``, the chosen
+            exemplars (as strings if ``object_to_text_function`` is given) and their
+            positions in the corpus, closest to the centroid first when
+            ``method="centroid"``. Both are empty for a node with no objects.
+        """
+        null_topic = self.null_topic
+        if null_topic is None:
+            null_topic = np.zeros_like(cluster_centroid)
 
         node_result = diverse_exemplars_by_cluster(
             cluster_objects=cluster_objects,
@@ -759,10 +929,8 @@ class DiverseExemplarAnnotator:
             method=self.method,
         )
         chosen_exemplars, exemplar_order, chosen_indices = node_result
-        cluster_mask = self.cluster_label_vector == node.cluster
-        original_indices = np.where(cluster_mask)[0]
         chosen_original_indices = [
-            original_indices[exemplar_order[i]] for i in chosen_indices
+            cluster_object_indices[exemplar_order[i]] for i in chosen_indices
         ]
         return {
             "exemplars": chosen_exemplars,
@@ -784,7 +952,8 @@ def diverse_exemplars(
 ) -> Tuple[List[List[str]], List[List[int]]]:
     """Generates a list of exemplar text for each cluster in a cluster layer.
     These exemplars are selected to be the closest vectors to the cluster centroid while retaining
-    sufficient diversity.
+    sufficient diversity. Object vectors and centroids are centred on the mean of all
+    object vectors before distances are computed.
 
     Parameters
     ----------
@@ -792,20 +961,22 @@ def diverse_exemplars(
         A vector of cluster labels for each object.
     objects : List[str]
         A list of objects; these are text objects a sample of which are returned as exemplars for each cluster.
-    object_vectors = np.ndarray
+    object_vectors : np.ndarray
         An ndarray of topic vectors for each object.
     centroid_vectors : np.ndarray
         An ndarray of centroid vectors for each cluster.
     n_exemplars : int, optional
         The number of exemplars to sample for each cluster, by default 4.
     diversify_alpha : float, optional
-        The alpha parameter for diversifying the keyphrase selection, by default 1.0.
+        The largest diversification alpha to try, by default 1.0.
     object_to_text_function: Callable[List[Any], List[str]]
         A function which takes an object and returns an exemplar string, by default for strings it is lambda x: x
     method : str, optional
         The sampling method for selecting exemplars 'centroid' or 'random', by default it is 'centroid'.
+    verbose : bool, optional
+        Whether to show a progress bar; takes precedence over ``show_progress_bar``.
     show_progress_bar : bool, optional
-        Whether to show a progress bar, by default False.
+        Deprecated, use ``verbose``. Whether to show a progress bar, by default False.
 
     Returns
     -------
@@ -826,7 +997,8 @@ def diverse_exemplars(
         n_exemplars=n_exemplars,
         diversify_alpha=diversify_alpha,
         object_to_text_function=object_to_text_function,
-        cluster_label_vector=cluster_label_vector,
+        null_topic=np.mean(object_vectors, axis=0),
+        method=method,
     )
 
     for cluster_num in tqdm(
@@ -852,6 +1024,7 @@ def diverse_exemplars(
             cluster_objects=cluster_objects,
             cluster_centroid=cluster_centroid,
             cluster_object_vectors=cluster_object_vectors,
+            cluster_object_indices=original_indices,
         )
         chosen_exemplars = result["exemplars"]
         chosen_original_indices = result["exemplar_original_indices"]
