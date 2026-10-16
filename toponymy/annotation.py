@@ -91,6 +91,55 @@ def _members_by_cluster(
     return {int(c): order[a:b] for c, a, b in zip(ids, starts, stops)}
 
 
+def _check_clusterer_inputs(
+    clusterer: _HasClusterLayers,
+    objects: Iterable[Any] | None,
+    object_vectors: np.ndarray | None,
+) -> tuple[AnnotationTree, list[np.ndarray], list[Any] | None, np.ndarray | None]:
+    """Validate the inputs of AnnotationStore.from_clusterer.
+
+    Returns the tree, each layer's labels, and the objects and vectors as a list
+    and a 2-D array (or None).
+    """
+    tree = AnnotationTree.from_clusterer(clusterer)
+    layers = clusterer.cluster_layers_
+    if len(layers) != tree.n_layers:
+        raise ValueError(
+            f"the clusterer has {len(layers)} cluster layers but its tree has "
+            f"{tree.n_layers}"
+        )
+
+    labels_by_layer = [np.asarray(layer.cluster_labels) for layer in layers]
+    n_objects = labels_by_layer[0].shape[0]
+    for layer_id, labels in enumerate(labels_by_layer):
+        if labels.shape[0] != n_objects:
+            raise ValueError(
+                f"layer {layer_id} has {labels.shape[0]} labels "
+                f"but layer 0 has {n_objects}"
+            )
+        cluster_ids = [node.cluster for node in tree.layer(layer_id)]
+        unknown = np.setdiff1d(labels[labels >= 0], cluster_ids)
+        if unknown.size:
+            raise ValueError(
+                f"layer {layer_id} has labels not in the tree: {unknown.tolist()}"
+            )
+
+    object_list = None if objects is None else list(objects)
+    if object_list is not None and len(object_list) != n_objects:
+        raise ValueError(
+            f"got {len(object_list)} objects for {n_objects} cluster labels"
+        )
+
+    vectors = None if object_vectors is None else np.asarray(object_vectors)
+    if vectors is not None and (vectors.ndim != 2 or vectors.shape[0] != n_objects):
+        raise ValueError(
+            f"expected {n_objects} object vectors in a 2-dimensional "
+            f"array, got shape {vectors.shape}"
+        )
+
+    return tree, labels_by_layer, object_list, vectors
+
+
 class InvalidAnnotationTree(ValueError):
     """Raised when the input mapping is not a single well-formed tree."""
 
@@ -473,11 +522,10 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
         - ``cluster_objects``, if ``objects`` is given;
         - ``cluster_object_vectors``, if ``object_vectors`` is given.
 
-        ``cluster_objects`` holds, for each node, a list of references to the objects
-        you passed in. The objects are not copied, but the store keeps the clustered
-        ones alive. ``cluster_object_vectors`` holds a copy of each node's vectors,
-        which is costly because every object appears once in every layer. Pass only
-        what you need.
+        ``cluster_objects`` holds references to your objects, not copies.
+        ``cluster_object_vectors`` holds a copy of each node's vectors, which is
+        costly because every object appears once in every layer. Pass only what you
+        need.
 
         Parameters
         ----------
@@ -486,12 +534,9 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
             layer provides ``cluster_labels``, one label per object.
         objects : Iterable, optional
             The corpus objects (strings, images, ...), in the order the clusterer was
-            fitted on. They are held by reference and never converted, so any type of
-            object works.
+            fitted on.
         object_vectors : array-like of shape (n_objects, n_dimensions), optional
-            One vector per object, in the same order, typically the embeddings the
-            clusterer was fitted on. The centroid of a node is the mean of its
-            vectors.
+            One vector per object, in the same order.
 
         Returns
         -------
@@ -509,53 +554,19 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
 
         Notes
         -----
-        A -1 label marks a noise point. Noise points belong to no cluster, so
-        they appear in no node's objects, vectors or indices. To have fewer of them,
-        change the clustering algorithm or reassign them, for example by label
-        propagation, before building the store.
+        Noise points (label -1) belong to no cluster, so they appear in no node.
 
         The centroid of a node with no objects is NaN, not zero as in the legacy
         ``centroids_from_labels``, so that a mistake shows up instead of looking like
         a real point.
         """
-        tree = AnnotationTree.from_clusterer(clusterer)
-        layers = clusterer.cluster_layers_
-        if len(layers) != tree.n_layers:
-            raise ValueError(
-                f"the clusterer has {len(layers)} cluster layers but its tree has "
-                f"{tree.n_layers}"
-            )
-
-        labels_by_layer = [np.asarray(layer.cluster_labels) for layer in layers]
-        n_objects = labels_by_layer[0].shape[0]
-        if objects is not None:
-            objects = list(objects)
-            if len(objects) != n_objects:
-                raise ValueError(
-                    f"got {len(objects)} objects for {n_objects} cluster labels"
-                )
-        if object_vectors is not None:
-            object_vectors = np.asarray(object_vectors)
-            if object_vectors.ndim != 2 or object_vectors.shape[0] != n_objects:
-                raise ValueError(
-                    f"expected {n_objects} object vectors in a 2-dimensional "
-                    f"array, got shape {object_vectors.shape}"
-                )
-
-        members_by_layer = []
-        for layer_id, labels in enumerate(labels_by_layer):
-            cluster_ids = [node.cluster for node in tree.layer(layer_id)]
-            if labels.shape[0] != n_objects:
-                raise ValueError(
-                    f"layer {layer_id} has {labels.shape[0]} labels "
-                    f"but layer 0 has {n_objects}"
-                )
-            unknown = np.setdiff1d(labels[labels >= 0], cluster_ids)
-            if unknown.size:
-                raise ValueError(
-                    f"layer {layer_id} has labels not in the tree: {unknown.tolist()}"
-                )
-            members_by_layer.append(_members_by_cluster(labels, cluster_ids))
+        tree, labels_by_layer, objects, object_vectors = _check_clusterer_inputs(
+            clusterer, objects, object_vectors
+        )
+        members_by_layer = [
+            _members_by_cluster(labels, [node.cluster for node in tree.layer(layer_id)])
+            for layer_id, labels in enumerate(labels_by_layer)
+        ]
 
         indices = Annotation("cluster_object_indices", tree)
         for node in tree.nodes:
@@ -574,7 +585,7 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
             for node in tree.nodes:
                 members = members_by_layer[node.layer][node.cluster]
                 vectors = object_vectors[members]
-                # NaN, not zero, for an empty cluster; float64 sums even for float32 input.
+                # NaN, not zero, for an empty cluster.
                 centroids[node] = (
                     vectors.mean(axis=0, dtype=np.float64)
                     if len(members)

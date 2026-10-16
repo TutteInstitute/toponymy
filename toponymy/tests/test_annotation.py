@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from toponymy.annotation import (
@@ -16,6 +17,11 @@ from toponymy.annotation import (
     NodeOutput,
     _members_by_cluster,
     parse_algorithm_type,
+)
+from toponymy.exemplar_texts import (
+    DiverseExemplarAnnotator,
+    RandomExemplarAnnotator,
+    SubmodularExemplarAnnotator,
 )
 
 
@@ -773,7 +779,9 @@ def test_parse_algorithm_type_prefers_algorithm_type_when_both_present(
 
 @pytest.fixture
 def two_layer_clusterer(subtopic_label_vector, cluster_label_vector):
+    # 5 topics of 5 subtopics each, nested the way the conftest label vectors are.
     tree = {(1, i): [(0, 5 * i + j) for j in range(5)] for i in range(5)}
+    # The root above the top layer is dropped by AnnotationTree.
     tree[(2, 0)] = [(1, i) for i in range(5)]
     return SimpleNamespace(
         cluster_tree_=tree,
@@ -782,6 +790,28 @@ def two_layer_clusterer(subtopic_label_vector, cluster_label_vector):
             SimpleNamespace(cluster_labels=cluster_label_vector),
         ],
     )
+
+
+def test_members_by_cluster_handles_gaps_noise_and_empty_clusters():
+    labels = np.array([7, -1, 3, 7, 3, 9])
+
+    members = _members_by_cluster(labels, [3, 5, 7])
+
+    assert {k: v.tolist() for k, v in members.items()} == {
+        3: [2, 4],
+        5: [],
+        7: [0, 3],
+    }
+
+
+def test_members_by_cluster_matches_a_scan_for_each_id():
+    labels = np.random.default_rng(0).choice([-1, 0, 2, 5, 11], size=200)
+    cluster_ids = [0, 2, 5, 11]
+
+    members = _members_by_cluster(labels, cluster_ids)
+
+    for cluster in cluster_ids:
+        assert np.array_equal(members[cluster], np.flatnonzero(labels == cluster))
 
 
 def test_store_from_clusterer_defaults_to_indices_only(
@@ -840,9 +870,9 @@ def test_store_from_clusterer_adds_objects_and_vectors_when_given(
 def test_store_from_clusterer_accepts_any_iterable_of_objects(
     two_layer_clusterer, all_sentences
 ):
-    import pandas as pd
-
-    shuffled_index = pd.Series(all_sentences, index=range(1000, 1125))
+    shuffled_index = pd.Series(
+        all_sentences, index=range(1000, 1000 + len(all_sentences))
+    )
     for objects in (tuple(all_sentences), iter(all_sentences), shuffled_index):
         store = AnnotationStore.from_clusterer(two_layer_clusterer, objects)
         for node in store.tree.nodes:
@@ -850,8 +880,10 @@ def test_store_from_clusterer_accepts_any_iterable_of_objects(
             assert store.cluster_objects[node] == [all_sentences[i] for i in indices]
 
 
-def test_store_from_clusterer_holds_objects_by_reference(two_layer_clusterer):
-    images = [np.full((8, 8), i) for i in range(125)]
+def test_store_from_clusterer_holds_objects_by_reference(
+    two_layer_clusterer, all_sentences
+):
+    images = [np.zeros((8, 8)) for _ in all_sentences]
 
     store = AnnotationStore.from_clusterer(two_layer_clusterer, images)
 
@@ -872,13 +904,6 @@ def test_store_from_clusterer_accepts_vectors_as_lists(
     assert np.allclose(store.cluster_object_vectors[node], object_vectors[indices])
 
 
-def test_store_from_clusterer_rejects_one_dimensional_vectors(two_layer_clusterer):
-    with pytest.raises(ValueError, match="2-dimensional"):
-        AnnotationStore.from_clusterer(
-            two_layer_clusterer, object_vectors=np.zeros(125)
-        )
-
-
 def test_store_from_clusterer_omits_noise_points(
     two_layer_clusterer, subtopic_label_vector
 ):
@@ -891,8 +916,8 @@ def test_store_from_clusterer_omits_noise_points(
     in_a_node = np.concatenate(
         [store.cluster_object_indices[n] for n in store.tree.layer(0)]
     )
-    assert sorted(set(range(125)) - set(in_a_node)) == [0, 7, 100]
-    assert len(in_a_node) == 122
+    assert set(range(len(noisy))) - set(in_a_node) == {0, 7, 100}
+    assert len(in_a_node) == len(noisy) - 3
 
 
 def test_store_from_clusterer_runs_under_executor(two_layer_clusterer):
@@ -927,42 +952,29 @@ def test_store_from_clusterer_with_real_clusterer(
         assert np.array_equal(store.cluster_object_indices[node], expected)
 
 
+def test_store_from_clusterer_rejects_one_dimensional_vectors(
+    two_layer_clusterer, all_sentences
+):
+    with pytest.raises(ValueError, match="2-dimensional"):
+        AnnotationStore.from_clusterer(
+            two_layer_clusterer, object_vectors=np.zeros(len(all_sentences))
+        )
+
+
 def test_store_from_clusterer_rejects_wrong_object_count(
     two_layer_clusterer, all_sentences
 ):
-    with pytest.raises(ValueError, match="objects for 125 cluster labels"):
+    with pytest.raises(ValueError, match="objects for"):
         AnnotationStore.from_clusterer(two_layer_clusterer, all_sentences[:-1])
 
 
 def test_store_from_clusterer_rejects_wrong_vector_count(
     two_layer_clusterer, object_vectors
 ):
-    with pytest.raises(ValueError, match="125 object vectors in a 2-dimensional"):
+    with pytest.raises(ValueError, match="object vectors in a 2-dimensional"):
         AnnotationStore.from_clusterer(
             two_layer_clusterer, object_vectors=object_vectors[:-1]
         )
-
-
-def test_members_by_cluster_handles_gaps_noise_and_empty_clusters():
-    labels = np.array([7, -1, 3, 7, 3, 9])
-
-    members = _members_by_cluster(labels, [3, 5, 7])
-
-    assert {k: v.tolist() for k, v in members.items()} == {
-        3: [2, 4],
-        5: [],
-        7: [0, 3],
-    }
-
-
-def test_members_by_cluster_matches_a_scan_for_each_id():
-    labels = np.random.default_rng(0).choice([-1, 0, 2, 5, 11], size=200)
-    cluster_ids = [0, 2, 5, 11]
-
-    members = _members_by_cluster(labels, cluster_ids)
-
-    for cluster in cluster_ids:
-        assert np.array_equal(members[cluster], np.flatnonzero(labels == cluster))
 
 
 def test_store_from_clusterer_rejects_label_beyond_the_tree(
@@ -973,6 +985,15 @@ def test_store_from_clusterer_rejects_label_beyond_the_tree(
     two_layer_clusterer.cluster_layers_[1].cluster_labels = bad
 
     with pytest.raises(ValueError, match=r"labels not in the tree: \[9\]"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_layer_length_mismatch(
+    two_layer_clusterer, cluster_label_vector
+):
+    two_layer_clusterer.cluster_layers_[1].cluster_labels = cluster_label_vector[:-1]
+
+    with pytest.raises(ValueError, match="layer 1 has .* labels but layer 0 has"):
         AnnotationStore.from_clusterer(two_layer_clusterer)
 
 
@@ -990,28 +1011,29 @@ def test_store_from_clusterer_rejects_non_contiguous_cluster_ids(two_layer_clust
         AnnotationStore.from_clusterer(two_layer_clusterer)
 
 
-@pytest.mark.parametrize(
-    "annotator_name",
-    [
-        "RandomExemplarAnnotator",
-        "DiverseExemplarAnnotator",
-        "SubmodularExemplarAnnotator",
+@pytest.fixture(
+    params=[
+        RandomExemplarAnnotator,
+        DiverseExemplarAnnotator,
+        SubmodularExemplarAnnotator,
     ],
+    ids=lambda cls: cls.__name__,
 )
-def test_store_from_clusterer_feeds_the_exemplar_annotators(
-    two_layer_clusterer, all_sentences, object_vectors, annotator_name
-):
-    import toponymy.exemplar_texts as exemplar_texts
+def exemplar_annotator(request, object_vectors):
+    kwargs = {}
+    if request.param is not RandomExemplarAnnotator:
+        kwargs["null_topic"] = object_vectors.mean(axis=0)
+    return request.param(n_exemplars=3, **kwargs)
 
+
+def test_store_from_clusterer_feeds_the_exemplar_annotators(
+    two_layer_clusterer, all_sentences, object_vectors, exemplar_annotator
+):
     store = AnnotationStore.from_clusterer(
         two_layer_clusterer, all_sentences, object_vectors
     )
-    kwargs = {"n_exemplars": 3}
-    if annotator_name != "RandomExemplarAnnotator":
-        kwargs["null_topic"] = object_vectors.mean(axis=0)
-    annotator = getattr(exemplar_texts, annotator_name)(**kwargs)
 
-    failures = Executor(store).run(annotator)
+    failures = Executor(store).run(exemplar_annotator)
 
     assert failures == {}
     for node in store.tree.nodes:
@@ -1023,23 +1045,13 @@ def test_store_from_clusterer_feeds_the_exemplar_annotators(
         assert list(store.exemplars[node]) == [all_sentences[i] for i in indices]
 
 
-@pytest.mark.parametrize(
-    "annotator_name",
-    [
-        "RandomExemplarAnnotator",
-        "DiverseExemplarAnnotator",
-        "SubmodularExemplarAnnotator",
-    ],
-)
 def test_store_from_clusterer_empty_cluster_has_nan_centroid_and_is_skipped(
     two_layer_clusterer,
     subtopic_label_vector,
     all_sentences,
     object_vectors,
-    annotator_name,
+    exemplar_annotator,
 ):
-    import toponymy.exemplar_texts as exemplar_texts
-
     emptied = subtopic_label_vector.copy()
     emptied[emptied == 0] = -1
     two_layer_clusterer.cluster_layers_[0].cluster_labels = emptied
@@ -1051,10 +1063,7 @@ def test_store_from_clusterer_empty_cluster_has_nan_centroid_and_is_skipped(
     assert len(store.cluster_object_indices[empty_node]) == 0
     assert np.isnan(store.cluster_centroid[empty_node]).all()
 
-    kwargs = {"n_exemplars": 3}
-    if annotator_name != "RandomExemplarAnnotator":
-        kwargs["null_topic"] = object_vectors.mean(axis=0)
-    failures = Executor(store).run(getattr(exemplar_texts, annotator_name)(**kwargs))
+    failures = Executor(store).run(exemplar_annotator)
 
     assert failures == {}
     assert list(store.exemplars[empty_node]) == []
