@@ -1,4 +1,9 @@
+from types import SimpleNamespace
+
+import numpy as np
+import pandas as pd
 import pytest
+from sklearn.exceptions import NotFittedError
 
 from toponymy.annotation import (
     Annotation,
@@ -11,7 +16,13 @@ from toponymy.annotation import (
     NodeId,
     NodeInput,
     NodeOutput,
+    _members_by_cluster,
     parse_algorithm_type,
+)
+from toponymy.exemplar_texts import (
+    DiverseExemplarAnnotator,
+    RandomExemplarAnnotator,
+    SubmodularExemplarAnnotator,
 )
 
 
@@ -765,3 +776,303 @@ def test_parse_algorithm_type_prefers_algorithm_type_when_both_present(
         failures = executor.run(BothContractsAnnotator())
     assert failures == {}
     assert len(w) == 1
+
+
+@pytest.fixture
+def two_layer_clusterer(subtopic_label_vector, cluster_label_vector):
+    # 5 topics of 5 subtopics each, nested the way the conftest label vectors are.
+    tree = {(1, i): [(0, 5 * i + j) for j in range(5)] for i in range(5)}
+    # The root above the top layer is dropped by AnnotationTree.
+    tree[(2, 0)] = [(1, i) for i in range(5)]
+    return SimpleNamespace(
+        cluster_tree_=tree,
+        cluster_layers_=[
+            SimpleNamespace(cluster_labels=subtopic_label_vector),
+            SimpleNamespace(cluster_labels=cluster_label_vector),
+        ],
+    )
+
+
+def test_members_by_cluster_handles_gaps_noise_and_empty_clusters():
+    labels = np.array([7, -1, 3, 7, 3, 9])
+
+    members = _members_by_cluster(labels, [3, 5, 7])
+
+    assert {k: v.tolist() for k, v in members.items()} == {
+        3: [2, 4],
+        5: [],
+        7: [0, 3],
+    }
+
+
+def test_members_by_cluster_matches_a_scan_for_each_id():
+    labels = np.random.default_rng(0).choice([-1, 0, 2, 5, 11], size=200)
+    cluster_ids = [0, 2, 5, 11]
+
+    members = _members_by_cluster(labels, cluster_ids)
+
+    for cluster in cluster_ids:
+        assert np.array_equal(members[cluster], np.flatnonzero(labels == cluster))
+
+
+def test_store_from_clusterer_defaults_to_indices_only(
+    two_layer_clusterer, subtopic_label_vector, cluster_label_vector
+):
+    store = AnnotationStore.from_clusterer(two_layer_clusterer)
+
+    assert set(store) == {"cluster_object_indices"}
+    assert store.tree == AnnotationTree.from_clusterer(two_layer_clusterer)
+    for annotation in store.values():
+        assert all(s is AnnotationState.COMPUTED for s in annotation.states.values())
+    labels = [subtopic_label_vector, cluster_label_vector]
+    for node in store.tree.nodes:
+        expected = np.where(labels[node.layer] == node.cluster)[0]
+        assert np.array_equal(store.cluster_object_indices[node], expected)
+
+
+def test_store_from_clusterer_computes_centroids_from_vectors(
+    two_layer_clusterer,
+    object_vectors,
+    subtopic_centroid_vectors,
+    cluster_centroid_vectors,
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, object_vectors=object_vectors
+    )
+
+    expected = [subtopic_centroid_vectors, cluster_centroid_vectors]
+    for node in store.tree.nodes:
+        assert np.allclose(
+            store.cluster_centroid[node], expected[node.layer][node.cluster]
+        )
+
+
+def test_store_from_clusterer_adds_objects_and_vectors_when_given(
+    two_layer_clusterer, all_sentences, object_vectors
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, all_sentences, object_vectors
+    )
+
+    assert set(store) == {
+        "cluster_centroid",
+        "cluster_object_indices",
+        "cluster_objects",
+        "cluster_object_vectors",
+    }
+    for node in store.tree.nodes:
+        indices = store.cluster_object_indices[node]
+        assert store.cluster_objects[node] == [all_sentences[i] for i in indices]
+        assert np.array_equal(
+            store.cluster_object_vectors[node], object_vectors[indices]
+        )
+
+
+def test_store_from_clusterer_accepts_any_iterable_of_objects(
+    two_layer_clusterer, all_sentences
+):
+    shuffled_index = pd.Series(
+        all_sentences, index=range(1000, 1000 + len(all_sentences))
+    )
+    for objects in (tuple(all_sentences), iter(all_sentences), shuffled_index):
+        store = AnnotationStore.from_clusterer(two_layer_clusterer, objects)
+        for node in store.tree.nodes:
+            indices = store.cluster_object_indices[node]
+            assert store.cluster_objects[node] == [all_sentences[i] for i in indices]
+
+
+def test_store_from_clusterer_holds_objects_by_reference(
+    two_layer_clusterer, all_sentences
+):
+    images = [np.zeros((8, 8)) for _ in all_sentences]
+
+    store = AnnotationStore.from_clusterer(two_layer_clusterer, images)
+
+    for node in store.tree.nodes:
+        indices = store.cluster_object_indices[node]
+        assert all(o is images[i] for o, i in zip(store.cluster_objects[node], indices))
+
+
+def test_store_from_clusterer_accepts_vectors_as_lists(
+    two_layer_clusterer, object_vectors
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, object_vectors=object_vectors.tolist()
+    )
+
+    node = NodeId(1, 2)
+    indices = store.cluster_object_indices[node]
+    assert np.allclose(store.cluster_object_vectors[node], object_vectors[indices])
+
+
+def test_store_from_clusterer_omits_noise_points(
+    two_layer_clusterer, subtopic_label_vector
+):
+    noisy = subtopic_label_vector.copy()
+    noisy[[0, 7, 100]] = -1
+    two_layer_clusterer.cluster_layers_[0].cluster_labels = noisy
+
+    store = AnnotationStore.from_clusterer(two_layer_clusterer)
+
+    in_a_node = np.concatenate(
+        [store.cluster_object_indices[n] for n in store.tree.layer(0)]
+    )
+    assert set(range(len(noisy))) - set(in_a_node) == {0, 7, 100}
+    assert len(in_a_node) == len(noisy) - 3
+
+
+def test_store_from_clusterer_runs_under_executor(two_layer_clusterer):
+    store = AnnotationStore.from_clusterer(two_layer_clusterer)
+
+    class CountAnnotator:
+        inputs = ("cluster_object_indices",)
+        outputs = ("n_objects",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, cluster_object_indices):
+            return {"n_objects": len(cluster_object_indices)}
+
+    assert Executor(store).run(CountAnnotator()) == {}
+    assert {store.n_objects[n] for n in store.tree.layer(0)} == {5}
+    assert {store.n_objects[n] for n in store.tree.layer(1)} == {25}
+
+
+def test_store_from_clusterer_with_real_clusterer(
+    clusterer, clusterable_vectors, object_vectors, all_sentences
+):
+    clusterer.fit(
+        clusterable_vectors, object_vectors, show_progress_bar=False, verbose=False
+    )
+
+    store = AnnotationStore.from_clusterer(clusterer, all_sentences, object_vectors)
+
+    assert store.tree.n_layers == len(clusterer.cluster_layers_)
+    for node in store.tree.nodes:
+        labels = clusterer.cluster_layers_[node.layer].cluster_labels
+        expected = np.where(labels == node.cluster)[0]
+        assert np.array_equal(store.cluster_object_indices[node], expected)
+
+
+def test_store_from_clusterer_rejects_unfitted_clusterer(two_layer_clusterer):
+    del two_layer_clusterer.cluster_layers_
+
+    with pytest.raises(NotFittedError, match="cluster_layers_"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_one_dimensional_vectors(
+    two_layer_clusterer, all_sentences
+):
+    with pytest.raises(ValueError, match="2-dimensional"):
+        AnnotationStore.from_clusterer(
+            two_layer_clusterer, object_vectors=np.zeros(len(all_sentences))
+        )
+
+
+def test_store_from_clusterer_rejects_wrong_object_count(
+    two_layer_clusterer, all_sentences
+):
+    with pytest.raises(ValueError, match="objects for"):
+        AnnotationStore.from_clusterer(two_layer_clusterer, all_sentences[:-1])
+
+
+def test_store_from_clusterer_rejects_wrong_vector_count(
+    two_layer_clusterer, object_vectors
+):
+    with pytest.raises(ValueError, match="object vectors in a 2-dimensional"):
+        AnnotationStore.from_clusterer(
+            two_layer_clusterer, object_vectors=object_vectors[:-1]
+        )
+
+
+def test_store_from_clusterer_rejects_label_beyond_the_tree(
+    two_layer_clusterer, cluster_label_vector
+):
+    bad = cluster_label_vector.copy()
+    bad[0] = 9
+    two_layer_clusterer.cluster_layers_[1].cluster_labels = bad
+
+    with pytest.raises(ValueError, match=r"labels not in the tree: \[9\]"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_layer_length_mismatch(
+    two_layer_clusterer, cluster_label_vector
+):
+    two_layer_clusterer.cluster_layers_[1].cluster_labels = cluster_label_vector[:-1]
+
+    with pytest.raises(ValueError, match="layer 1 has .* labels but layer 0 has"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_layer_count_mismatch(two_layer_clusterer):
+    two_layer_clusterer.cluster_layers_ = two_layer_clusterer.cluster_layers_[:1]
+
+    with pytest.raises(ValueError, match="1 cluster layers but its tree has 2"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_non_contiguous_cluster_ids(two_layer_clusterer):
+    two_layer_clusterer.cluster_tree_[(1, 1)].remove((0, 7))
+
+    with pytest.raises(InvalidAnnotationTree):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+@pytest.fixture(
+    params=[
+        RandomExemplarAnnotator,
+        DiverseExemplarAnnotator,
+        SubmodularExemplarAnnotator,
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def exemplar_annotator(request, object_vectors):
+    kwargs = {}
+    if request.param is not RandomExemplarAnnotator:
+        kwargs["null_topic"] = object_vectors.mean(axis=0)
+    return request.param(n_exemplars=3, **kwargs)
+
+
+def test_store_from_clusterer_feeds_the_exemplar_annotators(
+    two_layer_clusterer, all_sentences, object_vectors, exemplar_annotator
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, all_sentences, object_vectors
+    )
+
+    failures = Executor(store).run(exemplar_annotator)
+
+    assert failures == {}
+    for node in store.tree.nodes:
+        members = set(store.cluster_object_indices[node])
+        indices = list(store.exemplar_original_indices[node])
+        assert 0 < len(indices) <= 3
+        assert len(set(indices)) == len(indices)
+        assert set(indices) <= members
+        assert list(store.exemplars[node]) == [all_sentences[i] for i in indices]
+
+
+def test_store_from_clusterer_empty_cluster_has_nan_centroid_and_is_skipped(
+    two_layer_clusterer,
+    subtopic_label_vector,
+    all_sentences,
+    object_vectors,
+    exemplar_annotator,
+):
+    emptied = subtopic_label_vector.copy()
+    emptied[emptied == 0] = -1
+    two_layer_clusterer.cluster_layers_[0].cluster_labels = emptied
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, all_sentences, object_vectors
+    )
+
+    empty_node = NodeId(0, 0)
+    assert len(store.cluster_object_indices[empty_node]) == 0
+    assert np.isnan(store.cluster_centroid[empty_node]).all()
+
+    failures = Executor(store).run(exemplar_annotator)
+
+    assert failures == {}
+    assert list(store.exemplars[empty_node]) == []
+    assert list(store.exemplar_original_indices[empty_node]) == []
