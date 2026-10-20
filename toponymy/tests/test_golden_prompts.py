@@ -1,25 +1,30 @@
+import asyncio
 import json
 import os
 import re
 
-from unittest.mock import AsyncMock
-from prompt_toolkit import prompt
 import pytest
+from unittest.mock import AsyncMock
 
-from toponymy.llm_wrappers import AsyncOllamaNamer, OllamaNamer
+from toponymy.llm_wrappers import AsyncOllamaNamer, OllamaNamer, _SyncBridge
 from toponymy.prompt_construction import render_prompt
-from toponymy.templates import PROMPT_TEMPLATES
-from toponymy.tests.conftest import ollama_has_model
-from toponymy.tests.helpers.llm_test_config import (
-    ASYNC_SUPPORTED_NAMERS,
-    SYNC_SUPPORTED_NAMERS,
-)
-from toponymy.tools.notebook_test_helpers import get_test_ollama_model
 from toponymy.tools.load_prompt_examples import load_prompt_params
+from toponymy.templates import PROMPT_TEMPLATES
+from toponymy.tests.helpers.llm_test_config import (
+    EXTERNAL_SUPPORTED_NAMERS,
+)
 from toponymy.tests.test_llm_wrapper_base import DummySingleWrapper
 from toponymy.tests.test_async_llm_wrappers_base import (
     DummySingleWrapper as DummyAsyncSingleWrapper,
 )
+
+ACCEPTED_PATTERNS = {
+    "hockey_masks": [
+        r"\bgoalie\b",
+        r"\bgoaltend",
+        r"\bmask",
+    ]  # Note: do not match on hockey since it's too broad
+}
 
 
 def load_json(filename):
@@ -36,86 +41,44 @@ def matches_expected_patterns(result, patterns):
     return any(re.search(p, normalized) for p in patterns)
 
 
-def test_ollama_sync_smoke_test(ollama_running):
-    model = get_test_ollama_model()
-    if not ollama_running:
-        pytest.skip("Ollama service is not available or failed to start")
-    if not ollama_has_model(model):
-        pytest.skip(f"{model} not available in local Ollama")
-    namer = OllamaNamer(model=model, temperature_override=0.0)
-    assert namer.connectivity_status()["success"] == True
+def test_ollama_sync_smoke_test(ollama_test_model):
+    namer = OllamaNamer(model=ollama_test_model, temperature_override=0.0)
+    status = namer.connectivity_status()
+    assert status["success"] == True, status
 
-    render_params = load_prompt_params("hockey_masks")
-    prompt = render_prompt(PROMPT_TEMPLATES["layer"], render_params)
-
-    # Note: do not match on hockey since it's too broad
-    accepted_patterns = [
-        r"\bgoalie\b",
-        r"\bgoaltend",  # matches goaltender/goaltending
-        r"\bmask",  # matches mask/masks
-    ]
-
-    result = namer.generate_topic_name(prompt)
-    assert type(result) == str
-    assert len(result) > 0
-    assert matches_expected_patterns(result, accepted_patterns)
-
-
-@pytest.mark.external
-@pytest.mark.parametrize(
-    "namer_class, api_key_name, namer_kwargs", SYNC_SUPPORTED_NAMERS
-)
-def test_supported_models_sync_smoke_test(namer_class, api_key_name, namer_kwargs):
-    if os.getenv(api_key_name) is None:
-        pytest.skip(f"{api_key_name} is not set in the environment")
-
-    namer = namer_class(**namer_kwargs)
-    result = namer.connectivity_status()
-    assert namer.connectivity_status()["success"] == True
-
-    render_params = load_prompt_params("hockey_masks")
-    prompt = render_prompt(PROMPT_TEMPLATES["layer"], render_params)
-
-    # Note: do not match on hockey since it's too broad
-    accepted_patterns = [
-        r"\bgoalie\b",
-        r"\bgoaltend",  # matches goaltender/goaltending
-        r"\bmask",  # matches mask/masks
-    ]
-
-    result = namer.generate_topic_name(prompt)
-    assert type(result) == str
-    assert len(result) > 0
-    assert matches_expected_patterns(result, accepted_patterns)
-
-
-## Test user facing run_example api
-def test_ollama_run_prompt_example_topic_name_smoke(ollama_running):
-    model = get_test_ollama_model()
-    if not ollama_running:
-        pytest.skip("Ollama service is not available or failed to start")
-    if not ollama_has_model(model):
-        pytest.skip(f"{model} not available in local Ollama")
-
-    namer = OllamaNamer(model=model, temperature_override=0.0)
-
-    accepted_patterns = [
-        r"\bgoalie\b",
-        r"\bgoaltend",
-        r"\bmask",
-    ]
-
+    example_id = "hockey_masks"
     result = namer.run_prompt_example(
-        example_id="hockey_masks",
+        example_id=example_id,
         verbose=True,
     )
 
     assert result["success"] is True, result
-    assert result["prompt_kind"] == "topic_name"
-    assert result["prompt"] is not None
-    assert isinstance(result["topic_names"], str)
-    assert len(result["topic_names"]) > 0
-    assert matches_expected_patterns(result["topic_names"], accepted_patterns)
+    assert isinstance(result["topic_result"], str), result
+    assert len(result["topic_result"]) > 0, result
+    assert matches_expected_patterns(
+        result["topic_result"], ACCEPTED_PATTERNS[example_id]
+    ), result
+
+
+def test_ollama_run_prompt_example_topic_name_smoke(ollama_test_model):
+    """Test user facing run_prompt_example API"""
+    namer = OllamaNamer(model=ollama_test_model, temperature_override=0.0)
+
+    example_id = "hockey_masks"
+
+    result = namer.run_prompt_example(
+        example_id=example_id,
+        verbose=True,
+    )
+
+    assert result["success"] is True, result
+    assert result["prompt_kind"] == "topic_name", result
+    assert result["prompt"] is not None, result
+    assert isinstance(result["topic_result"], str), result
+    assert len(result["topic_result"]) > 0, result
+    assert matches_expected_patterns(
+        result["topic_result"], ACCEPTED_PATTERNS[example_id]
+    ), result
 
 
 def test_run_prompt_example_invalid_example_id_raises():
@@ -146,115 +109,62 @@ def test_run_prompt_example_connectivity_failure_returns_error(monkeypatch):
 
     result = namer.run_prompt_example(example_id="hockey_masks")
 
-    assert result["success"] is False
-    assert result["error_type"] == "RuntimeError"
-    assert result["error_message"] == "boom"
-    assert isinstance(result["original_exception"], RuntimeError)
+    assert result["success"] is False, result
+    assert result["error_type"] == "RuntimeError", result
+    assert result["error_message"] == "boom", result
+    assert isinstance(result["original_exception"], RuntimeError), result
 
 
 # Async
 @pytest.mark.asyncio
-async def test_ollama_async_smoke_test(ollama_running):
-    model = get_test_ollama_model()
-    if not ollama_running:
-        pytest.skip("Ollama service is not available or failed to start")
-    if not ollama_has_model(model):
-        pytest.skip(f"{model} not available in local Ollama")
-    namer = AsyncOllamaNamer(model=model, temperature_override=0.0)
-    result = await namer.connectivity_status()
-    assert result["success"] is True
+async def test_ollama_async_smoke_test(ollama_test_model):
+    namer = AsyncOllamaNamer(model=ollama_test_model, temperature_override=0.0)
+    example_id = "hockey_masks"
 
-    render_params = load_prompt_params("hockey_masks")
-    prompt = render_prompt(PROMPT_TEMPLATES["layer"], render_params)
+    try:
+        status = await namer.aconnectivity_status()
+        assert status["success"] is True, status
 
-    # Note: do not match on hockey since it's too broad
-    accepted_patterns = [
-        r"\bgoalie\b",
-        r"\bgoaltend",  # matches goaltender/goaltending
-        r"\bmask",  # matches mask/masks
-    ]
-
-    result_list = await namer.generate_topic_names([prompt])
-    result = result_list[0]
-    assert type(result) == str
-    assert len(result) > 0
-    assert matches_expected_patterns(result, accepted_patterns)
-
-
-@pytest.mark.asyncio
-@pytest.mark.external
-@pytest.mark.parametrize(
-    "namer_class, api_key_name, namer_kwargs", ASYNC_SUPPORTED_NAMERS
-)
-async def test_supported_models_async_smoke_test(
-    namer_class, api_key_name, namer_kwargs
-):
-    if os.getenv(api_key_name) is None:
-        pytest.skip(f"{api_key_name} is not set in the environment")
-
-    namer = namer_class(**namer_kwargs)
-    result = await namer.connectivity_status()
-    assert result["success"] is True
-
-    render_params = load_prompt_params("hockey_masks")
-    prompt = render_prompt(PROMPT_TEMPLATES["layer"], render_params)
-
-    # Note: do not match on hockey since it's too broad
-    accepted_patterns = [
-        r"\bgoalie\b",
-        r"\bgoaltend",  # matches goaltender/goaltending
-        r"\bmask",  # matches mask/masks
-    ]
-
-    result_list = await namer.generate_topic_names([prompt])
-    result = result_list[0]
-    assert type(result) == str
-    assert len(result) > 0
-    assert matches_expected_patterns(result, accepted_patterns)
-
-
-## Test user facing run_example api
-@pytest.mark.asyncio
-async def test_async_ollama_run_prompt_example_topic_name_smoke(ollama_running):
-    model = get_test_ollama_model()
-    if not ollama_running:
-        pytest.skip("Ollama service is not available or failed to start")
-    if not ollama_has_model(model):
-        pytest.skip(f"{model} not available in local Ollama")
-
-    namer = AsyncOllamaNamer(model=model, temperature_override=0.0)
-
-    accepted_patterns = [
-        r"\bgoalie\b",
-        r"\bgoaltend",
-        r"\bmask",
-    ]
-
-    result = await namer.run_prompt_example(
-        example_id="hockey_masks",
-        verbose=True,
-    )
+        result = await namer.arun_prompt_example(example_id=example_id)
+    finally:
+        await namer.close()
 
     assert result["success"] is True, result
-    assert result["prompt_kind"] == "topic_name"
-    assert result["prompt"] is not None
-    assert isinstance(result["topic_names"], str)
-    assert len(result["topic_names"]) > 0
-    assert matches_expected_patterns(result["topic_names"], accepted_patterns)
+    assert isinstance(result["topic_result"], str), result
+    assert len(result["topic_result"]) > 0, result
+    assert matches_expected_patterns(
+        result["topic_result"], ACCEPTED_PATTERNS[example_id]
+    ), result
+
+
+def test_async_ollama_run_prompt_example_topic_name_smoke(ollama_test_model):
+    """Test user facing run_prompt_example API for Async Ollama Namer"""
+    namer = AsyncOllamaNamer(model=ollama_test_model, temperature_override=0.0)
+    example_id = "hockey_masks"
+    result = namer.run_prompt_example(example_id=example_id, verbose=True)
+
+    assert result["success"] is True, result
+    assert result["prompt_kind"] == "topic_name", result
+    assert result["prompt"] is not None, result
+    assert isinstance(result["topic_result"], str), result
+    assert len(result["topic_result"]) > 0, result
+    assert matches_expected_patterns(
+        result["topic_result"], ACCEPTED_PATTERNS[example_id]
+    ), result
 
 
 @pytest.mark.asyncio
 async def test_async_run_prompt_example_invalid_example_id_raises():
     namer = DummyAsyncSingleWrapper()
     with pytest.raises(ValueError, match="example_id must be in"):
-        await namer.run_prompt_example(example_id="not_a_real_example")
+        await namer.arun_prompt_example(example_id="not_a_real_example")
 
 
 @pytest.mark.asyncio
 async def test_async_run_prompt_example_invalid_prompt_kind_raises():
     namer = DummyAsyncSingleWrapper()
     with pytest.raises(ValueError, match="prompt_kind must be"):
-        await namer.run_prompt_example(
+        await namer.arun_prompt_example(
             example_id="hockey_masks", prompt_kind="bad_kind"
         )
 
@@ -267,7 +177,7 @@ async def test_async_run_prompt_example_connectivity_failure_returns_error(
 
     monkeypatch.setattr(
         namer,
-        "connectivity_status",
+        "aconnectivity_status",
         AsyncMock(
             return_value={
                 "success": False,
@@ -278,9 +188,95 @@ async def test_async_run_prompt_example_connectivity_failure_returns_error(
         ),
     )
 
-    result = await namer.run_prompt_example(example_id="hockey_masks")
+    result = await namer.arun_prompt_example(example_id="hockey_masks")
 
     assert result["success"] is False
     assert result["error_type"] == "RuntimeError"
     assert result["error_message"] == "boom"
     assert isinstance(result["original_exception"], RuntimeError)
+
+
+@pytest.mark.external
+@pytest.mark.parametrize(
+    "namer_class, api_key_name, namer_kwargs",
+    EXTERNAL_SUPPORTED_NAMERS,
+)
+def test_supported_models_smoke_test(namer_class, api_key_name, namer_kwargs):
+    if os.getenv(api_key_name) is None:
+        pytest.skip(f"{api_key_name} is not set in the environment")
+
+    namer = namer_class(**namer_kwargs)
+    result = namer.connectivity_status()
+    assert namer.connectivity_status()["success"] == True
+
+    example_id = "hockey_masks"
+
+    result = namer.run_prompt_example(
+        example_id=example_id,
+        verbose=True,
+    )
+
+    assert result["success"] is True, result
+    assert isinstance(result["topic_result"], str), result
+    assert len(result["topic_result"]) > 0, result
+    assert matches_expected_patterns(
+        result["topic_result"], ACCEPTED_PATTERNS[example_id]
+    ), result
+
+
+def test_sync_and_async_run_prompt_example_return_same_result_verbose():
+    namer = DummyAsyncSingleWrapper()
+    sync_result = namer.run_prompt_example(example_id="hockey_masks", verbose=True)
+    async_result = asyncio.run(
+        namer.arun_prompt_example(example_id="hockey_masks", verbose=True)
+    )
+    assert sync_result == async_result
+
+
+def test_sync_and_async_run_prompt_example_return_same_result_non_verbose():
+    namer = DummyAsyncSingleWrapper()
+    sync_result = namer.run_prompt_example(example_id="hockey_masks", verbose=False)
+    async_result = asyncio.run(
+        namer.arun_prompt_example(example_id="hockey_masks", verbose=False)
+    )
+    assert sync_result == async_result
+
+
+def test_sync_run_prompt_example_on_async_wrapper_propagates_exceptions():
+    namer = DummyAsyncSingleWrapper()
+    with pytest.raises(ValueError, match="prompt_kind must be"):
+        namer.run_prompt_example(example_id="hockey_masks", prompt_kind="bad_kind")
+
+
+@pytest.mark.asyncio
+async def test_sync_run_prompt_example_works_inside_running_loop():
+    """
+    Tests that the synchronous run_prompt_example method works correctly
+    when called inside an already running asyncio event loop.
+    This simulates the behavior in environments like Jupyter notebooks.
+    """
+    asyncio.get_running_loop()  # Ensures we are inside a running event loop
+    namer = DummyAsyncSingleWrapper()
+    result = namer.run_prompt_example(example_id="hockey_masks")
+    assert result["success"]
+
+
+def test_sync_method_called_from_bridge_loop_raises():
+    namer = DummyAsyncSingleWrapper()
+
+    async def call_sync_from_inside_bridge():
+        return namer.connectivity_status()
+
+    with pytest.raises(RuntimeError, match="sync bridge loop"):
+        _SyncBridge.run(call_sync_from_inside_bridge())
+
+
+def test_sync_bridge_reuses_one_loop():
+    loops = []
+
+    async def record_loop():
+        loops.append(asyncio.get_running_loop())
+
+    _SyncBridge.run(record_loop())
+    _SyncBridge.run(record_loop())
+    assert loops[0] is loops[1]

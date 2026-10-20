@@ -1,6 +1,9 @@
+import asyncio
+import os
 import string
 from unittest import result
 from warnings import warn, filterwarnings
+import threading
 import tokenizers
 import transformers
 import weakref
@@ -19,7 +22,17 @@ from toponymy.tools.notebook_test_helpers import (
 from toponymy.tools.load_prompt_examples import example_ids, load_prompt_params
 from toponymy._utils import resolve_api_key
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
+from typing import (
+    List,
+    Optional,
+    Union,
+    Dict,
+    Generic,
+    TypeVar,
+    Callable,
+    Any,
+    Coroutine,
+)
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -51,6 +64,13 @@ filterwarnings(
     message="Support for class-based `config` is deprecated",
     category=DeprecationWarning,
     module="litellm",
+)
+
+
+DEFAULT_CONNECTIVITY_PROMPT = (
+    "Respond with exactly this JSON and nothing else.\n"
+    "Do not use markdown or code blocks.\n\n"
+    '{"status": "ok"}'
 )
 
 
@@ -91,6 +111,66 @@ class FailFastLLMError(RuntimeError):
     def __init__(self, message: str = "", original_exception: Exception | None = None):
         super().__init__(message)
         self.original_exception = original_exception
+
+
+class _SyncBridge:
+    """
+    Runs coroutines to completion from synchronous code.
+
+    Uses one persistent event loop on a daemon thread, so it works whether or not
+    the caller already has a running loop (e.g. Jupyter), and loop-bound resources
+    created through the bridge stay valid across calls.
+    """
+
+    _loop: asyncio.AbstractEventLoop | None = None
+    _thread: threading.Thread | None = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def _ensure_loop(cls) -> asyncio.AbstractEventLoop:
+        with cls._lock:
+            if (
+                cls._loop is None
+                or cls._loop.is_closed()
+                or cls._thread is None
+                or not cls._thread.is_alive()
+            ):
+                loop = asyncio.new_event_loop()
+                thread = threading.Thread(
+                    target=loop.run_forever,
+                    daemon=True,
+                    name="toponymy-sync-bridge",
+                )
+                thread.start()
+                cls._loop, cls._thread = loop, thread
+            return cls._loop
+
+    @classmethod
+    def _reset_after_fork(cls) -> None:
+        # Threads don't survive fork, and the lock may have been held at fork time.
+        cls._loop = None
+        cls._thread = None
+        cls._lock = threading.Lock()
+
+    @classmethod
+    def run(cls, coro: Coroutine[Any, Any, T]) -> T:
+        if threading.current_thread() is cls._thread:
+            coro.close()  # avoid a "coroutine was never awaited" warning
+            raise RuntimeError(
+                "Sync wrapper method called from inside the sync bridge loop. "
+                "Use the a-prefixed async method (e.g. aconnectivity_status) instead."
+            )
+
+        future = asyncio.run_coroutine_threadsafe(coro, cls._ensure_loop())
+        try:
+            return future.result()
+        except KeyboardInterrupt:
+            future.cancel()
+            raise
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_SyncBridge._reset_after_fork)
 
 
 def _should_retry(e: Exception) -> bool:
@@ -672,11 +752,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
     def connectivity_status(
         self,
-        prompt: str = (
-            "Respond with exactly this JSON and nothing else.\n"
-            "Do not use markdown or code blocks.\n\n"
-            '{"status": "ok"}'
-        ),
+        prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
         system_prompt: str | None = None,
     ) -> dict:
         result = {
@@ -712,6 +788,18 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             result["original_exception"] = e
 
         return result
+
+    async def aconnectivity_status(self, *args, **kwargs) -> dict:
+        """
+        Helper method to keep async and sync interfaces consistent.
+        """
+        return await asyncio.to_thread(self.connectivity_status, *args, **kwargs)
+
+    async def arun_prompt_example(self, *args, **kwargs) -> dict:
+        """
+        Helper method to keep async and sync interfaces consistent.
+        """
+        return await asyncio.to_thread(self.run_prompt_example, *args, **kwargs)
 
     def run_prompt_example(
         self,
@@ -758,7 +846,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             "prompt_kind": prompt_kind,
             "prompt": None,
             "response": None,
-            "topic_names": None,
+            "topic_result": None,
             "error_type": None,
             "error_message": None,
             "original_exception": None,
@@ -783,6 +871,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
+                result["topic_result"] = topic_payloads
             else:
                 if verbose:
                     response = self._generate_topic_name_with_raw_response(
@@ -791,7 +880,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         max_tokens=max_tokens,
                     )
                     result["response"] = response.raw_response
-                    result["topic_names"] = response.topic_payload
+                    result["topic_result"] = response.topic_payload
 
                     if response.error is not None:
                         result["error_type"] = type(response.error).__name__
@@ -804,7 +893,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         temperature=temperature,
                         max_tokens=max_tokens,
                     )
-                    result["topic_names"] = topic_payloads
+                    result["topic_result"] = topic_payloads
             result["success"] = True
 
         except Exception as e:
@@ -1269,12 +1358,9 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return "<error>"
 
-    async def connectivity_status(
+    async def aconnectivity_status(
         self,
-        prompt: str = (
-            "Identify yourself and explain that you will be providing "
-            "topic names for clusters in JSON format"
-        ),
+        prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
         *,
         system_prompt: str | None = None,
     ) -> dict:
@@ -1335,7 +1421,26 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return result
 
-    async def run_prompt_example(
+    def connectivity_status(
+        self,
+        prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
+        *,
+        system_prompt: str | None = None,
+    ) -> dict:
+        """
+        Synchronous wrapper for connectivity_status.
+
+        This method provides a synchronous interface to the async connectivity_status method,
+        making it easier to use in synchronous code contexts.
+
+        Returns:
+            dict: The same result dictionary as connectivity_status
+        """
+        return _SyncBridge.run(
+            self.aconnectivity_status(prompt, system_prompt=system_prompt)
+        )
+
+    async def arun_prompt_example(
         self,
         example_id: str | None = "hockey_masks",
         prompt_kind: str = "topic_name",
@@ -1380,13 +1485,13 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             "prompt_kind": prompt_kind,
             "prompt": None,
             "response": None,
-            "topic_names": None,
+            "topic_result": None,
             "error_type": None,
             "error_message": None,
             "original_exception": None,
         }
 
-        connection_result = await self.connectivity_status()
+        connection_result = await self.aconnectivity_status()
         if not connection_result["success"]:
             warn(f"Connectivity check failed.")
             result["error_message"] = connection_result["error_message"]
@@ -1405,7 +1510,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                     temperature=temperature,
                     max_tokens=max_tokens,
                 )
-                result["topic_names"] = (
+                result["topic_result"] = (
                     cluster_results[0]
                     if cluster_results
                     else prompt_params.get("old_names", [])
@@ -1419,7 +1524,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                     )
                     parsed = parsed_results[0]
                     result["response"] = parsed.raw_response
-                    result["topic_names"] = parsed.topic_payload
+                    result["topic_result"] = parsed.topic_payload
 
                     if parsed.error is not None:
                         result["error_type"] = type(parsed.error).__name__
@@ -1432,7 +1537,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         temperature=temperature,
                         max_tokens=max_tokens,
                     )
-                    result["topic_names"] = topic_results[0]
+                    result["topic_result"] = topic_results[0]
             result["success"] = True
 
         except Exception as e:
@@ -1442,6 +1547,44 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             result["original_exception"] = e
 
         return result
+
+    def run_prompt_example(
+        self,
+        example_id: str | None = "hockey_masks",
+        prompt_kind: str = "topic_name",
+        *,
+        prompt_templates: Dict[str, Any] | None = None,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        verbose: bool = False,
+    ) -> dict:
+        """
+        Synchronous wrapper for run_prompt_example.
+
+        This method provides a synchronous interface to the async arun_prompt_example method,
+        making it easier to use in synchronous code contexts.
+
+        Args:
+            example_id: The example ID to use for the prompt
+            prompt_kind: The kind of prompt to generate ('topic_name' or 'topic_cluster_names')
+            prompt_templates: Optional custom prompt templates
+            temperature: Temperature parameter for LLM
+            max_tokens: Maximum tokens for LLM response
+            verbose: Whether to include the full prompt in the result
+
+        Returns:
+            dict: The same result dictionary as run_prompt_example
+        """
+        return _SyncBridge.run(
+            self.arun_prompt_example(
+                example_id,
+                prompt_kind,
+                prompt_templates=prompt_templates,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                verbose=verbose,
+            )
+        )
 
     async def close(self) -> None:
         """

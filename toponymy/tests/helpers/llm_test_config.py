@@ -184,14 +184,11 @@ ASYNC_LITELLM_NAMERS = [
     (AsyncOllamaNamer, {"api_key": "dummy"}),
 ]
 
-SYNC_SUPPORTED_NAMERS = [
+EXTERNAL_SUPPORTED_NAMERS = [
     (AnthropicNamer, "ANTHROPIC_API_KEY", {}),
     (OpenAINamer, "OPEN_AI_API_KEY", {}),
     (CohereNamer, "COHERE_API_KEY", {}),
     (GoogleGeminiNamer, "GEMINI_API_KEY", {}),
-]
-
-ASYNC_SUPPORTED_NAMERS = [
     (AsyncAnthropicNamer, "ANTHROPIC_API_KEY", {}),
     (AsyncOpenAINamer, "OPEN_AI_API_KEY", {}),
     (AsyncCohereNamer, "COHERE_API_KEY", {}),

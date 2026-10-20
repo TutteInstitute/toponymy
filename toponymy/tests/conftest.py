@@ -19,7 +19,7 @@ import umap
 from sentence_transformers import SentenceTransformer
 from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
-from toponymy.tools.notebook_test_helpers import OLLAMA_CI_MODELS
+from toponymy.tools.notebook_test_helpers import OLLAMA_CI_MODELS, get_test_ollama_model
 from toponymy.tests.helpers.llm_test_config import make_mock_data
 
 logger = logging.getLogger(__name__)
@@ -70,6 +70,17 @@ def ollama_has_model(model_or_family: str, family=False) -> bool:
 
     except Exception:
         return False
+
+
+@pytest.fixture
+def ollama_test_model(ollama_running):
+
+    model = get_test_ollama_model()
+    if not ollama_running:
+        pytest.skip("Ollama service is not available or failed to start")
+    if not ollama_has_model(model):
+        pytest.skip(f"{model} not available in local Ollama")
+    return model
 
 
 def _ollama_service_up() -> bool:

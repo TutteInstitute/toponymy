@@ -45,10 +45,10 @@ class DummySingleWrapper(AsyncLLMWrapper):
     model = "dummy-model"
 
     async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
+        return '{"topic_name": "single-ok", "topic_specificity": 0.9}'
 
     async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        return "single-system-ok"
+        return '{"topic_name": "single-system-ok", "topic_specificity": 0.9}'
 
 
 class DummyBatchWrapper(AsyncLLMWrapper):
