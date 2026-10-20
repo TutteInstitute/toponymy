@@ -76,7 +76,7 @@ dev = [
     "bm25s",
     "cohere",
     "datamapplot>=0.7",
-    "evoc",
+    "evoc>=0.3.2",
     "huggingface-hub<1.0",
     "ipykernel",
     "isort",
