@@ -1,16 +1,28 @@
-"""Tests for the cluster types and the hierarchy helpers."""
+"""Tests for the cluster types, the hierarchy helpers and EVoCClusterer.
 
+EVoCClusterer is tested here against a stand-in for ``evoc.EVoC``, so these tests
+run whether or not EVoC is installed. The real estimator is covered by
+``test_clusterers_evoc.py``.
+"""
+
+import builtins
 import copy
 from dataclasses import FrozenInstanceError
 import pickle
+import sys
+from types import SimpleNamespace
 
 from hypothesis import HealthCheck, given, settings, strategies as st
 import numpy as np
 import pytest
+from scipy import sparse
+from sklearn.base import clone
+from sklearn.exceptions import NotFittedError
 
 from toponymy.clusterers import (
     Cluster,
     ClusterLayer,
+    EVoCClusterer,
     build_cluster_layers,
     build_cluster_tree,
     validate_cluster_tree,
@@ -324,3 +336,295 @@ def test_generated_id_relabelling_preserves_tree(labels, offset):
         for parent, children in original.items()
     }
     assert build_cluster_tree(renamed) == expected
+
+
+@pytest.fixture
+def evoc_double(monkeypatch):
+    """Install a stand-in for ``evoc.EVoC`` and return its class.
+
+    The class lists the instances created. Set ``layers`` or ``error`` on it to
+    change what a fit returns or raises.
+    """
+
+    class EVoCDouble:
+        instances = []
+        layers = [
+            np.array([4, 4, 19, 19, -1, -1]),
+            np.array([2, 3, 2, 2, -1, -1]),
+        ]
+        error = None
+
+        def __init__(self, **options):
+            self.options = options
+            self.fitted_on = []
+            type(self).instances.append(self)
+
+        def fit(self, vectors):
+            self.fitted_on.append(vectors)
+            if self.error is not None:
+                raise self.error
+            self.cluster_layers_ = [layer.copy() for layer in self.layers]
+            # EVoC's own tree, which EVoCClusterer must not use.
+            self.cluster_tree_ = {(1, 2): [(0, 4), (0, 19)]}
+            return self
+
+    monkeypatch.setitem(sys.modules, "evoc", SimpleNamespace(EVoC=EVoCDouble))
+    return EVoCDouble
+
+
+def test_evoc_clusterer_forwards_all_parameters_and_keeps_native_ids(evoc_double):
+    vectors = np.ones((6, 2))
+    clusterer = EVoCClusterer(random_state=31, approx_n_clusters=2, n_neighbors=8)
+    assert clusterer.fit(vectors) is clusterer
+
+    (native,) = evoc_double.instances
+    assert native.options == clusterer.get_params()
+    assert native.fitted_on[0] is vectors
+    assert clusterer.evoc_ is native
+    assert [[cluster.label for cluster in layer] for layer in clusterer] == [
+        [4, 19],
+        [2, 3],
+    ]
+
+
+@pytest.mark.usefixtures("evoc_double")
+def test_evoc_clusterer_builds_its_tree_from_the_layers():
+    clusterer = EVoCClusterer().fit(np.ones((6, 2)))
+    # Cluster 4 straddles clusters 2 and 3 of the layer above, so it skips to the
+    # root, although EVoC's own tree puts it under (1, 2).
+    assert clusterer.cluster_tree_ == {
+        (1, 2): [(0, 19)],
+        (2, 0): [(0, 4), (1, 2), (1, 3)],
+    }
+    validate_cluster_tree(clusterer.cluster_tree_, clusterer.cluster_layers_)
+
+
+@pytest.mark.usefixtures("evoc_double")
+def test_evoc_clusterer_layers_do_not_share_memory_with_evoc():
+    clusterer = EVoCClusterer().fit(np.ones((6, 2)))
+    expected = [layer.labels.copy() for layer in clusterer]
+    for labels in clusterer.evoc_.cluster_layers_:
+        labels[:] = -1
+    for layer, labels in zip(clusterer, expected):
+        np.testing.assert_array_equal(layer.labels, labels)
+
+
+@pytest.mark.parametrize(
+    "options,runs_evoc",
+    [
+        ({}, True),
+        ({"min_samples": 6}, True),
+        ({"min_samples": 7}, False),
+        ({"base_min_cluster_size": 6}, True),
+        ({"base_min_cluster_size": 7}, False),
+    ],
+)
+def test_evoc_runs_only_on_enough_observations(evoc_double, options, runs_evoc):
+    clusterer = EVoCClusterer(**options).fit(np.ones((6, 2)))
+    assert bool(evoc_double.instances) is runs_evoc
+    assert (clusterer.evoc_ is not None) is runs_evoc
+    if not runs_evoc:
+        assert [layer.labels.tolist() for layer in clusterer] == [[-1] * 6]
+        assert clusterer.cluster_tree_ == {}
+
+
+@pytest.mark.parametrize(
+    "n_observations,expected_labels", [(0, []), (1, [[-1]])], ids=["empty", "single"]
+)
+def test_empty_and_tiny_input_does_not_import_evoc(
+    monkeypatch, n_observations, expected_labels
+):
+    monkeypatch.setitem(sys.modules, "evoc", None)
+    clusterer = clone(EVoCClusterer())
+    assert clusterer.fit(np.ones((n_observations, 2))) is clusterer
+    assert [layer.labels.tolist() for layer in clusterer] == expected_labels
+    assert clusterer.cluster_tree_ == {}
+    assert clusterer.evoc_ is None
+
+
+@pytest.mark.parametrize("n_observations", [0, 1], ids=["empty", "single"])
+def test_refitting_on_tiny_input_drops_the_previous_evoc(evoc_double, n_observations):
+    clusterer = EVoCClusterer().fit(np.ones((6, 2)))
+    assert clusterer.evoc_ is not None
+
+    clusterer.fit(np.ones((n_observations, 2)))
+    assert clusterer.evoc_ is None
+    assert len(evoc_double.instances) == 1
+
+
+def test_constructor_stores_every_parameter_unchanged():
+    options = {
+        "noise_level": 0.25,
+        "base_min_cluster_size": 7,
+        "base_n_clusters": 30,
+        "approx_n_clusters": 12,
+        "n_neighbors": np.int64(9),
+        "min_samples": 3,
+        "n_epochs": 11,
+        "node_embedding_init": None,
+        "symmetrize_graph": False,
+        "node_embedding_dim": 6,
+        "neighbor_scale": 1.5,
+        "random_state": np.random.RandomState(0),
+        "min_similarity_threshold": 0.4,
+        "max_layers": 4,
+        "n_label_prop_iter": 8,
+    }
+    assert options.keys() == EVoCClusterer().get_params().keys()
+
+    clusterer = EVoCClusterer(**options)
+    assert all(getattr(clusterer, name) is value for name, value in options.items())
+    assert clusterer.get_params() == options
+
+
+def test_sparse_vectors_are_rejected_with_an_explanation():
+    with pytest.raises(ValueError, match="sparse"):
+        EVoCClusterer().fit(sparse.eye(6))
+
+
+@pytest.mark.parametrize(
+    "vectors",
+    [
+        np.array([1.0, 2.0]),
+        np.zeros((2, 0)),
+        np.zeros((1, 2, 3)),
+        np.array([[np.nan]]),
+        np.array([[np.inf]]),
+        np.array([[1 + 0j]]),
+        np.array([[True]]),
+        np.array([["1"]]),
+        np.array([[0]], dtype=object),
+        sparse.eye(3),
+        # EVoC supports float, int8 and uint8 vectors, but no other integer type.
+        np.ones((6, 2), dtype=np.int16),
+        np.ones((6, 2), dtype=np.int64),
+        np.ones((6, 2), dtype=np.uint32),
+    ],
+)
+def test_invalid_vectors_are_rejected_before_evoc_runs(evoc_double, vectors):
+    with pytest.raises(ValueError):
+        EVoCClusterer().fit(vectors)
+    assert not evoc_double.instances
+
+
+@pytest.mark.parametrize(
+    "dtype", [np.float16, np.float32, np.float64, np.int8, np.uint8]
+)
+def test_vectors_of_every_dtype_evoc_supports_reach_it_as_given(evoc_double, dtype):
+    vectors = np.ones((6, 2), dtype=dtype)
+    EVoCClusterer().fit(vectors)
+    assert evoc_double.instances[0].fitted_on[0] is vectors
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"min_samples": 0},
+        {"base_min_cluster_size": 1},
+        {"max_layers": 0},
+        {"max_layers": None},
+        {"min_samples": True},
+        {"max_layers": 1.5},
+    ],
+)
+def test_invalid_parameters_are_not_masked_by_empty_data(options):
+    with pytest.raises(ValueError):
+        EVoCClusterer(**options).fit(np.empty((0, 2)))
+
+
+def test_missing_evoc_says_how_to_install_it(monkeypatch):
+    monkeypatch.setitem(sys.modules, "evoc", None)
+    with pytest.raises(ImportError, match=r"pip install .*evoc>=0\.3\.2"):
+        EVoCClusterer().fit(np.ones((6, 2)))
+
+
+def test_a_missing_dependency_of_evoc_is_not_disguised(monkeypatch):
+    original_import = builtins.__import__
+
+    def import_with_missing_dependency(name, *args, **kwargs):
+        if name == "evoc":
+            raise ModuleNotFoundError("EVoC dependency is missing", name="numba")
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_with_missing_dependency)
+    with pytest.raises(ModuleNotFoundError, match="dependency is missing"):
+        EVoCClusterer().fit(np.ones((6, 2)))
+
+
+def _fitted_state(clusterer):
+    return clusterer.cluster_layers_, clusterer.cluster_tree_, clusterer.evoc_
+
+
+@pytest.mark.parametrize(
+    "attribute,value,error",
+    [
+        ("error", RuntimeError("external implementation failed"), RuntimeError),
+        ("layers", [np.array([0.5, 1.5, 0, 0, 0, 0])], ValueError),
+    ],
+    ids=["evoc-fails", "evoc-returns-non-integer-labels"],
+)
+def test_failed_fit_propagates_and_keeps_the_previous_fit(
+    evoc_double, attribute, value, error
+):
+    clusterer = EVoCClusterer().fit(np.ones((6, 2)))
+    before = _fitted_state(clusterer)
+
+    setattr(evoc_double, attribute, value)
+    with pytest.raises(error) as caught:
+        clusterer.fit(np.ones((6, 2)))
+
+    if attribute == "error":
+        assert caught.value is value
+    assert all(old is new for old, new in zip(before, _fitted_state(clusterer)))
+
+
+@pytest.mark.usefixtures("evoc_double")
+def test_rejected_vectors_and_parameters_keep_the_previous_fit():
+    clusterer = EVoCClusterer().fit(np.ones((6, 2)))
+    before = _fitted_state(clusterer)
+
+    with pytest.raises(ValueError):
+        clusterer.fit(np.full((6, 2), np.nan))
+    with pytest.raises(ValueError):
+        clusterer.set_params(max_layers=0).fit(np.ones((6, 2)))
+
+    assert all(old is new for old, new in zip(before, _fitted_state(clusterer)))
+
+
+def test_each_fit_uses_a_new_evoc_and_leaves_the_previous_one_alone(evoc_double):
+    clusterer = EVoCClusterer()
+    first = clusterer.fit(np.ones((6, 2))).evoc_
+    first_layers = clusterer.cluster_layers_
+    second = clusterer.fit(np.ones((6, 2))).evoc_
+
+    assert evoc_double.instances == [first, second]
+    assert len(first.fitted_on) == 1
+    assert clusterer.cluster_layers_ is not first_layers
+
+
+@pytest.mark.usefixtures("evoc_double")
+def test_fit_predict_returns_the_fitted_layers_and_tree():
+    clusterer = EVoCClusterer()
+    layers, tree = clusterer.fit_predict(np.ones((6, 2)))
+    assert layers is clusterer.cluster_layers_
+    assert tree is clusterer.cluster_tree_
+
+
+@pytest.mark.usefixtures("evoc_double")
+def test_unfitted_clusterer_is_not_iterable_and_clones_are_unfitted():
+    clusterer = EVoCClusterer(random_state=3)
+    with pytest.raises(NotFittedError):
+        iter(clusterer)
+    # A clusterer is fitted once it has both its layers and its tree.
+    clusterer.cluster_layers_ = []
+    with pytest.raises(NotFittedError):
+        iter(clusterer)
+
+    clusterer.fit(np.ones((6, 2)))
+    assert [len(layer) for layer in clusterer] == [2, 2]
+
+    cloned = clone(clusterer)
+    assert cloned.get_params() == clusterer.get_params()
+    assert not hasattr(cloned, "cluster_layers_")
+    with pytest.raises(NotFittedError):
+        iter(cloned)

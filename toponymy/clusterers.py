@@ -1,15 +1,15 @@
-"""Cluster types and hierarchy helpers for the annotation architecture.
+"""Clustering primitives and clusterers for the annotation architecture.
 
 This module sits alongside :mod:`toponymy.clustering`, which is unchanged and
-still used by :class:`toponymy.Toponymy`. Two names here also exist there
-(``ClusterLayer`` and ``build_cluster_tree``). They are separate implementations
-with different contracts, so import them from ``toponymy.clusterers``
-explicitly.
+still used by :class:`toponymy.Toponymy`. Several names here also exist there
+(``Clusterer``, ``ClusterLayer``, ``EVoCClusterer``, ``build_cluster_tree``).
+They are separate implementations with different contracts, so import them from
+``toponymy.clusterers`` explicitly.
 
-The types hold clustering structure and nothing else: the partition of the
-observations at each resolution, and how the clusters of different layers nest.
-Names, exemplars and other per-cluster results are annotations and do not belong
-on a cluster or a layer.
+A clusterer produces clustering structure and holds no topic state:
+``cluster_layers_``, the partition of the observations at each resolution, and
+``cluster_tree_``, how the clusters of different layers nest. Names, exemplars
+and other per-cluster results are annotations and do not belong on a clusterer.
 
 Cluster IDs are the labels the clustering algorithm produced. They are never
 renumbered and need not be contiguous. Noise observations are labelled ``-1``.
@@ -17,11 +17,19 @@ renumbered and need not be contiguous. Noise observations are labelled ``-1``.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
+from scipy import sparse
+from sklearn.base import BaseEstimator
+from sklearn.exceptions import NotFittedError
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 ClusterKey = tuple[int, int]
 ClusterTree = dict[ClusterKey, list[ClusterKey]]
@@ -355,3 +363,267 @@ def validate_cluster_tree(
                 raise ValueError(f"parent {parent} does not contain child {child}")
     if children_seen != clusters.keys():
         raise ValueError("every cluster must occur exactly once as a child")
+
+
+def _validate_vectors(vectors: ArrayLike) -> NDArray:
+    """Check the shape and values of dense vectors without copying them."""
+    if sparse.issparse(vectors):
+        raise ValueError("vectors must be a dense array, not a sparse matrix")
+    array = np.asarray(vectors)
+    if array.ndim != 2 or (array.shape[1] == 0 and array.shape[0] != 0):
+        raise ValueError("vectors must have shape (observations, nonzero dimensions)")
+    kind = array.dtype.kind
+    # Integers are always finite; checking them would allocate a data-sized mask.
+    if kind not in "iuf" or (kind == "f" and not np.isfinite(array).all()):
+        raise ValueError("vectors must contain finite real numbers")
+    return array
+
+
+class Clusterer(ABC, BaseEstimator):
+    """Base class for clusterers whose fitted state is cluster layers and a tree.
+
+    Clusterers subclass scikit-learn's ``BaseEstimator``, so ``get_params``,
+    ``set_params`` and ``clone`` work. They do not otherwise follow the
+    scikit-learn clusterer API: ``fit`` takes only the vectors (no ``y``), and
+    ``fit_predict`` returns the layers and the tree, not labels. Iterating over a
+    fitted clusterer yields its layers.
+
+    Subclasses implement ``fit`` and record the result with ``_set_labels``.
+
+    Attributes
+    ----------
+    cluster_layers_ : list of ClusterLayer
+        The partition of the observations at each resolution; layer 0 is the
+        finest.
+    cluster_tree_ : dict
+        Maps each parent ``(layer, cluster ID)`` to a list of child
+        ``(layer, cluster ID)`` pairs, as built by :func:`build_cluster_tree`.
+    """
+
+    @abstractmethod
+    def fit(self, vectors: ArrayLike) -> Self:
+        """Fit the clusterer to ``vectors`` and return it."""
+
+    def fit_predict(self, vectors: ArrayLike) -> tuple[list[ClusterLayer], ClusterTree]:
+        """Fit the clusterer and return its layers and tree.
+
+        Unlike scikit-learn's ``fit_predict``, which returns labels, this
+        returns the fitted ``cluster_layers_`` and ``cluster_tree_``.
+
+        Parameters
+        ----------
+        vectors : array-like of shape (n_observations, n_features)
+            The vectors to cluster, one row per observation.
+
+        Returns
+        -------
+        cluster_layers : list of ClusterLayer
+            The fitted ``cluster_layers_``.
+        cluster_tree : dict
+            The fitted ``cluster_tree_``.
+        """
+        self.fit(vectors)
+        return self.cluster_layers_, self.cluster_tree_
+
+    def __iter__(self) -> Iterator[ClusterLayer]:
+        if not self.__sklearn_is_fitted__():
+            raise NotFittedError("fit the clusterer before iterating its layers")
+        return iter(self.cluster_layers_)
+
+    def __sklearn_is_fitted__(self) -> bool:
+        return hasattr(self, "cluster_layers_") and hasattr(self, "cluster_tree_")
+
+    def _set_labels(self, labels: Sequence[ArrayLike]) -> None:
+        """Set the fitted layers and tree from one label array per layer.
+
+        Both are built before either is assigned, so labels that are rejected
+        leave the result of any earlier fit unchanged.
+        """
+        layers = build_cluster_layers(labels)
+        tree = build_cluster_tree([layer.labels for layer in layers])
+        self.cluster_layers_ = layers
+        self.cluster_tree_ = tree
+
+
+class EVoCClusterer(Clusterer):
+    """Cluster embedding vectors with EVoC.
+
+    EVoC (Embedding Vector Oriented Clustering) clusters high-dimensional
+    embedding vectors, such as sentence-transformer output, by combining a node
+    embedding of a nearest-neighbor graph with density-based clustering. It
+    returns a hierarchy of layers, finest first.
+
+    The parameters are EVoC's own, with EVoC's defaults, and are passed to
+    :class:`evoc.EVoC` unchanged; see its documentation for the details. The
+    layers keep EVoC's labels as cluster IDs. ``cluster_tree_`` is built from
+    them by :func:`build_cluster_tree`, not taken from EVoC.
+
+    Requires the optional ``evoc`` package. Use evoc 0.3.2 or later. Earlier
+    versions define numba types with the same names as fast_hdbscan, which
+    Toponymy depends on, so in a process that uses both, the second one to run
+    fails with a numba ``TypeError``.
+
+    Parameters
+    ----------
+    noise_level : float, default=0.5
+        How much data EVoC discards as noise, from 0.0 (cluster more data) to
+        1.0 (keep only the most reliable clusters).
+    base_min_cluster_size : int, default=5
+        Smallest cluster size in the finest layer. At least 2.
+    base_n_clusters : int or None, default=None
+        If set, approximate number of clusters in the finest layer.
+    approx_n_clusters : int or None, default=None
+        If set, approximate number of clusters wanted; EVoC then returns a
+        single layer.
+    n_neighbors : int, default=15
+        Number of neighbors in the nearest-neighbor graph.
+    min_samples : int, default=5
+        Minimum number of samples used in the density estimate when clustering
+        the node embedding. At least 1.
+    n_epochs : int, default=50
+        Number of training epochs of the node embedding.
+    node_embedding_init : {"label_prop", None}, default="label_prop"
+        How the node embedding is initialized; None does not initialize it.
+    symmetrize_graph : bool, default=True
+        Whether to symmetrize the neighbor graph.
+    node_embedding_dim : int or None, default=None
+        Dimension of the node embedding; EVoC chooses one when None.
+    neighbor_scale : float, default=1.0
+        Scales the effective number of neighbors used to build the graph.
+    random_state : int or None, default=None
+        Seed of EVoC's random number generator. Setting it also makes EVoC use
+        its deterministic algorithms where possible. The result can still differ
+        with the number of numba threads.
+    min_similarity_threshold : float, default=0.2
+        Layers whose clusterings are more similar than this are filtered out.
+    max_layers : int, default=10
+        Maximum number of layers. At least 1.
+    n_label_prop_iter : int, default=20
+        Number of label propagation iterations when ``node_embedding_init`` is
+        "label_prop".
+
+    Attributes
+    ----------
+    cluster_layers_ : list of ClusterLayer
+        The layers EVoC returned, finest first.
+    cluster_tree_ : dict
+        The hierarchy of the clusters, as built by :func:`build_cluster_tree`.
+    evoc_ : evoc.EVoC or None
+        The fitted EVoC estimator, which also holds the membership strengths,
+        persistence scores and nearest neighbors. None if EVoC did not run
+        because there were too few observations.
+
+    Notes
+    -----
+    Fewer than ``max(min_samples, base_min_cluster_size)`` observations are too
+    few to cluster. They form one layer of noise, or no layer at all if there
+    are no observations, and EVoC is not run, so ``evoc`` need not be installed.
+
+    EVoC reads float vectors as using cosine distance, int8 vectors as quantized
+    embeddings and uint8 vectors as binary embeddings; it does not support other
+    integer types. An array is passed to EVoC as given, not copied, and EVoC
+    0.3.2 does not modify it.
+
+    numba falls back to its ``workqueue`` threading layer when neither its OpenMP
+    nor its TBB layer can load. On Linux, OpenMP needs the system library
+    ``libgomp``, which minimal container images often lack. EVoC's nested
+    parallel loops then abort the whole Python process.
+    """
+
+    def __init__(
+        self,
+        noise_level: float = 0.5,
+        base_min_cluster_size: int = 5,
+        base_n_clusters: int | None = None,
+        approx_n_clusters: int | None = None,
+        n_neighbors: int = 15,
+        min_samples: int = 5,
+        n_epochs: int = 50,
+        node_embedding_init: str | None = "label_prop",
+        symmetrize_graph: bool = True,
+        node_embedding_dim: int | None = None,
+        neighbor_scale: float = 1.0,
+        random_state: int | None = None,
+        min_similarity_threshold: float = 0.2,
+        max_layers: int = 10,
+        n_label_prop_iter: int = 20,
+    ):
+        self.noise_level = noise_level
+        self.base_min_cluster_size = base_min_cluster_size
+        self.base_n_clusters = base_n_clusters
+        self.approx_n_clusters = approx_n_clusters
+        self.n_neighbors = n_neighbors
+        self.min_samples = min_samples
+        self.n_epochs = n_epochs
+        self.node_embedding_init = node_embedding_init
+        self.symmetrize_graph = symmetrize_graph
+        self.node_embedding_dim = node_embedding_dim
+        self.neighbor_scale = neighbor_scale
+        self.random_state = random_state
+        self.min_similarity_threshold = min_similarity_threshold
+        self.max_layers = max_layers
+        self.n_label_prop_iter = n_label_prop_iter
+
+    def fit(self, vectors: ArrayLike) -> Self:
+        """Cluster ``vectors`` with EVoC.
+
+        Parameters
+        ----------
+        vectors : array-like of shape (n_observations, n_features)
+            Dense finite vectors, one row per observation.
+
+        Returns
+        -------
+        self
+            The fitted clusterer.
+
+        Raises
+        ------
+        ValueError
+            If ``vectors`` is not a two-dimensional dense array of finite float,
+            int8 or uint8 values, or ``min_samples``, ``base_min_cluster_size``
+            or ``max_layers`` is not an integer of at least its minimum.
+        ImportError
+            If EVoC has to run and ``evoc`` is not installed.
+        """
+        vectors = _validate_vectors(vectors)
+        if vectors.dtype.kind in "iu" and vectors.dtype.itemsize != 1:
+            raise ValueError(
+                f"EVoC supports float, int8 and uint8 vectors, not {vectors.dtype}; "
+                "convert them first, for example with vectors.astype(np.float32)"
+            )
+        self._validate_parameters()
+        n_observations = vectors.shape[0]
+        if n_observations == 0:
+            labels, evoc = [], None
+        elif n_observations < max(self.min_samples, self.base_min_cluster_size):
+            labels, evoc = [np.full(n_observations, -1)], None
+        else:
+            evoc = self._fit_evoc(vectors)
+            labels = evoc.cluster_layers_
+        self._set_labels(labels)
+        self.evoc_ = evoc
+        return self
+
+    def _validate_parameters(self) -> None:
+        # Checked for every input, so that a tiny input does not hide a bad value.
+        for name, minimum in (
+            ("min_samples", 1),
+            ("base_min_cluster_size", 2),
+            ("max_layers", 1),
+        ):
+            if _nonnegative_integer(getattr(self, name), name) < minimum:
+                raise ValueError(f"{name} must be at least {minimum}")
+
+    def _fit_evoc(self, vectors: NDArray):
+        try:
+            from evoc import EVoC
+        except ModuleNotFoundError as error:
+            # A missing dependency of EVoC is a different problem; let it through.
+            if error.name != "evoc":
+                raise
+            raise ImportError(
+                "EVoCClusterer requires the optional 'evoc' package; "
+                'install it with: pip install "evoc>=0.3.2"'
+            ) from error
+        return EVoC(**self.get_params(deep=False)).fit(vectors)
