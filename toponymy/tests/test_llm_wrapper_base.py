@@ -6,23 +6,13 @@ from toponymy.llm_wrappers import (
     InvalidLLMInputError,
     repair_json_string_backslashes,
 )
+from toponymy.tests.helpers.dummy_wrappers import DummySingleWrapper
 from toponymy.tests.helpers.llm_test_config import (
     make_prompt,
     validate_topic_name,
 )
 import pytest
 from unittest.mock import Mock
-
-
-class DummySingleWrapper(LLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    def _call_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
-
-    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
-        return "single-system-ok"
 
 
 class DummyCombinedOnlyWrapper(DummySingleWrapper):
@@ -57,44 +47,6 @@ class DummyFailFastWrapper(LLMWrapper):
 
     def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
         raise DummyFailFastProviderError("bad config")
-
-
-class DummyAsyncSingleWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return "async-single-ok"
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        return "async-system-ok"
-
-
-class DummyAsyncFailureWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-
-class DummyAsyncFailFastProviderError(Exception):
-    pass
-
-
-class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-    FAIL_FAST_EXCEPTIONS = (DummyAsyncFailFastProviderError,)
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise DummyAsyncFailFastProviderError("bad config")
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        raise DummyAsyncFailFastProviderError("bad config")
 
 
 def test_sync_connectivity_status_uses_plain_call():

@@ -7,6 +7,7 @@ from toponymy.llm_wrappers import (
     InvalidLLMInputError,
 )
 
+from toponymy.tests.helpers.dummy_wrappers import DummyAsyncSingleWrapper
 from toponymy.tests.helpers.llm_test_config import (
     make_prompt,
     validate_topic_name,
@@ -40,30 +41,19 @@ class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
         raise DummyAsyncProviderError("bad config")
 
 
-class DummySingleWrapper(AsyncLLMWrapper):
-    _supports_debug_callback = True
-    model = "dummy-model"
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return '{"topic_name": "single-ok", "topic_specificity": 0.9}'
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        return '{"topic_name": "single-system-ok", "topic_specificity": 0.9}'
-
-
 class DummyBatchWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
 
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return ["batch-ok"]
+        return ['{"topic_name": "batch-ok", "topic_specificity": 0.9}']
 
     async def _call_llm_with_system_prompt_batch(
         self, prompts, temperature, max_tokens
     ):
-        return ["batch-system-ok"]
+        return ['{"topic_name": "batch-system-ok", "topic_specificity": 0.9}']
 
 
-class DummyCombinedOnlyWrapper(DummySingleWrapper):
+class DummyCombinedOnlyWrapper(DummyAsyncSingleWrapper):
     """A wrapper whose provider has no system role, so it takes the combined rendering."""
 
     @property
@@ -73,7 +63,11 @@ class DummyCombinedOnlyWrapper(DummySingleWrapper):
 
 class DummyBatchCallResultWrapper(AsyncLLMWrapper):
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return [MockCallResult.success("batch-ok")]
+        return [
+            MockCallResult.success(
+                '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
+            )
+        ]
 
 
 class DummyBatchErrorWrapper(AsyncLLMWrapper):
@@ -83,30 +77,34 @@ class DummyBatchErrorWrapper(AsyncLLMWrapper):
 
 @pytest.mark.asyncio
 async def test_async_connectivity_status_uses_single_call():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
     wrapper.model = "dummy-model"
 
-    result = await wrapper.connectivity_status()
+    result = await wrapper.aconnectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == "single-ok"
-    assert result["wrapper"] == "DummySingleWrapper"
+    assert result["response"] == '{"topic_name": "single-ok", "topic_specificity": 0.9}'
+
+    assert result["wrapper"] == "DummyAsyncSingleWrapper"
     assert result["model"] == "dummy-model"
 
 
 @pytest.mark.asyncio
 async def test_async_connectivity_status_uses_single_call_with_system():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
     wrapper.model = "dummy-model"
 
-    result = await wrapper.connectivity_status(
+    result = await wrapper.aconnectivity_status(
         prompt="user prompt",
         system_prompt="system prompt",
     )
 
     assert result["success"] is True
-    assert result["response"] == "single-system-ok"
-    assert result["wrapper"] == "DummySingleWrapper"
+    assert (
+        result["response"]
+        == '{"topic_name": "single-system-ok", "topic_specificity": 0.9}'
+    )
+    assert result["wrapper"] == "DummyAsyncSingleWrapper"
     assert result["model"] == "dummy-model"
 
 
@@ -115,10 +113,10 @@ async def test_async_connectivity_status_falls_back_to_batch():
     wrapper = DummyBatchWrapper()
     wrapper.model = "dummy-model"
 
-    result = await wrapper.connectivity_status()
+    result = await wrapper.aconnectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == "batch-ok"
+    assert result["response"] == '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
     assert result["wrapper"] == "DummyBatchWrapper"
     assert result["model"] == "dummy-model"
 
@@ -128,13 +126,16 @@ async def test_async_connectivity_status_falls_back_to_system_batch():
     wrapper = DummyBatchWrapper()
     wrapper.model = "dummy-model"
 
-    result = await wrapper.connectivity_status(
+    result = await wrapper.aconnectivity_status(
         prompt="user prompt",
         system_prompt="system prompt",
     )
 
     assert result["success"] is True
-    assert result["response"] == "batch-system-ok"
+    assert (
+        result["response"]
+        == '{"topic_name": "batch-system-ok", "topic_specificity": 0.9}'
+    )
     assert result["wrapper"] == "DummyBatchWrapper"
     assert result["model"] == "dummy-model"
 
@@ -144,10 +145,10 @@ async def test_async_connectivity_status_unwraps_call_result_from_batch():
     wrapper = DummyBatchCallResultWrapper()
     wrapper.model = "dummy-model"
 
-    result = await wrapper.connectivity_status()
+    result = await wrapper.aconnectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == "batch-ok"
+    assert result["response"] == '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
     assert result["wrapper"] == "DummyBatchCallResultWrapper"
     assert result["model"] == "dummy-model"
 
@@ -157,7 +158,7 @@ async def test_async_connectivity_status_batch_call_result_error():
     wrapper = DummyBatchErrorWrapper()
     wrapper.model = "dummy-model"
 
-    result = await wrapper.connectivity_status()
+    result = await wrapper.aconnectivity_status()
 
     assert result["success"] is False
     assert result["response"] is None
@@ -170,7 +171,7 @@ async def test_async_connectivity_status_batch_call_result_error():
 
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_success():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     async def ok_fn():
         return "ok"
@@ -185,7 +186,7 @@ async def test_safe_call_with_retry_result_success():
 
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_exhausted_retries():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     async def failing_fn():
         raise RuntimeError("temporary failure")
@@ -212,7 +213,7 @@ async def test_safe_call_with_retry_result_raises_fail_fast():
 
 @pytest.mark.asyncio
 async def test_safe_call_with_retry_result_raises_invalid_input():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     async def invalid_fn():
         raise InvalidLLMInputError("bad input")
@@ -223,7 +224,7 @@ async def test_safe_call_with_retry_result_raises_invalid_input():
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_names_empty_input_returns_empty_list():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     result = await wrapper.generate_topic_names([])
 
@@ -232,7 +233,7 @@ async def test_async_generate_topic_names_empty_input_returns_empty_list():
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_names_invalid_prompt_type_raises():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     with pytest.raises(InvalidLLMInputError):
         await wrapper.generate_topic_names([123])
@@ -240,7 +241,7 @@ async def test_async_generate_topic_names_invalid_prompt_type_raises():
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_cluster_names_empty_input_returns_empty_list():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     result = await wrapper.generate_topic_cluster_names([], [])
 
@@ -249,7 +250,7 @@ async def test_async_generate_topic_cluster_names_empty_input_returns_empty_list
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_cluster_names_length_mismatch_raises():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
 
     with pytest.raises(ValueError, match="Number of prompts must match"):
         await wrapper.generate_topic_cluster_names(
@@ -276,7 +277,7 @@ async def test_async_generate_topic_names_routes_to_batch_without_system_prompts
 
 @pytest.mark.asyncio
 async def test_async_generate_topic_names_routes_to_system_prompt_batch():
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
     wrapper._call_llm_with_system_prompt_batch = AsyncMock(return_value=[])
 
     prompts = [make_prompt(1)]
@@ -294,7 +295,7 @@ async def test_async_generate_topic_names_routes_to_system_prompt_batch():
 async def test_async_generate_topic_names_partial_success(
     mock_data,
 ):
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
     wrapper._call_llm_with_system_prompt_batch = AsyncMock(
         return_value=[
             MockCallResult.success(mock_data["valid_topic_name"]),
@@ -317,7 +318,7 @@ async def test_async_generate_topic_names_partial_success(
 async def test_async_generate_topic_cluster_names_partial_success(
     mock_data,
 ):
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
     wrapper._call_llm_with_system_prompt_batch = AsyncMock(
         return_value=[
             MockCallResult.success(mock_data["valid_cluster_names"]),
@@ -351,7 +352,7 @@ async def test_async_generate_topic_cluster_names_partial_success(
 async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
     events = []
 
-    wrapper = DummySingleWrapper()
+    wrapper = DummyAsyncSingleWrapper()
     wrapper.callback = lambda payload: events.append(payload)
 
     async def fn(prompt, temperature, max_tokens, **kwargs):
@@ -365,15 +366,17 @@ async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
     )
 
     assert result.ok
-    assert result.value == "single-ok"
+    assert result.value == '{"topic_name": "single-ok", "topic_specificity": 0.9}'
     assert len(events) == 1
 
     event = events[0]
     assert event["event"] == "llm_call_success"
     assert event["prompt"] == "test prompt"
-    assert event["raw_response"] == "single-ok"
+    assert (
+        event["raw_response"] == '{"topic_name": "single-ok", "topic_specificity": 0.9}'
+    )
     assert event["model"] == "dummy-model"
-    assert event["wrapper"] == "DummySingleWrapper"
+    assert event["wrapper"] == "DummyAsyncSingleWrapper"
 
 
 @pytest.mark.asyncio
