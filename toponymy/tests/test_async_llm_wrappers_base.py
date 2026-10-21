@@ -7,12 +7,19 @@ from toponymy.llm_wrappers import (
     InvalidLLMInputError,
 )
 
-from toponymy.tests.helpers.dummy_wrappers import DummyAsyncSingleWrapper
+from toponymy.tests.helpers.dummy_wrappers import (
+    DummyAsyncSingleWrapper,
+    SINGLE_RESPONSE,
+    SYSTEM_RESPONSE,
+)
 from toponymy.tests.helpers.llm_test_config import (
     make_prompt,
     validate_topic_name,
     validate_cluster_names,
 )
+
+BATCH_SINGLE_RESPONSE = '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
+BATCH_SYSTEM_RESPONSE = '{"topic_name": "batch-system-ok", "topic_specificity": 0.9}'
 
 
 class MockCallResult:
@@ -45,12 +52,12 @@ class DummyBatchWrapper(AsyncLLMWrapper):
     _supports_debug_callback = True
 
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return ['{"topic_name": "batch-ok", "topic_specificity": 0.9}']
+        return [BATCH_SINGLE_RESPONSE]
 
     async def _call_llm_with_system_prompt_batch(
         self, prompts, temperature, max_tokens
     ):
-        return ['{"topic_name": "batch-system-ok", "topic_specificity": 0.9}']
+        return [BATCH_SYSTEM_RESPONSE]
 
 
 class DummyCombinedOnlyWrapper(DummyAsyncSingleWrapper):
@@ -63,11 +70,7 @@ class DummyCombinedOnlyWrapper(DummyAsyncSingleWrapper):
 
 class DummyBatchCallResultWrapper(AsyncLLMWrapper):
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
-        return [
-            MockCallResult.success(
-                '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
-            )
-        ]
+        return [MockCallResult.success(BATCH_SINGLE_RESPONSE)]
 
 
 class DummyBatchErrorWrapper(AsyncLLMWrapper):
@@ -83,7 +86,7 @@ async def test_async_connectivity_status_uses_single_call():
     result = await wrapper.aconnectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == '{"topic_name": "single-ok", "topic_specificity": 0.9}'
+    assert result["response"] == SINGLE_RESPONSE
 
     assert result["wrapper"] == "DummyAsyncSingleWrapper"
     assert result["model"] == "dummy-model"
@@ -100,10 +103,7 @@ async def test_async_connectivity_status_uses_single_call_with_system():
     )
 
     assert result["success"] is True
-    assert (
-        result["response"]
-        == '{"topic_name": "single-system-ok", "topic_specificity": 0.9}'
-    )
+    assert result["response"] == SYSTEM_RESPONSE
     assert result["wrapper"] == "DummyAsyncSingleWrapper"
     assert result["model"] == "dummy-model"
 
@@ -116,7 +116,7 @@ async def test_async_connectivity_status_falls_back_to_batch():
     result = await wrapper.aconnectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
+    assert result["response"] == BATCH_SINGLE_RESPONSE
     assert result["wrapper"] == "DummyBatchWrapper"
     assert result["model"] == "dummy-model"
 
@@ -132,10 +132,7 @@ async def test_async_connectivity_status_falls_back_to_system_batch():
     )
 
     assert result["success"] is True
-    assert (
-        result["response"]
-        == '{"topic_name": "batch-system-ok", "topic_specificity": 0.9}'
-    )
+    assert result["response"] == BATCH_SYSTEM_RESPONSE
     assert result["wrapper"] == "DummyBatchWrapper"
     assert result["model"] == "dummy-model"
 
@@ -148,7 +145,7 @@ async def test_async_connectivity_status_unwraps_call_result_from_batch():
     result = await wrapper.aconnectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
+    assert result["response"] == BATCH_SINGLE_RESPONSE
     assert result["wrapper"] == "DummyBatchCallResultWrapper"
     assert result["model"] == "dummy-model"
 
@@ -366,15 +363,13 @@ async def test_safe_call_with_retry_result_emits_debug_callback_on_success():
     )
 
     assert result.ok
-    assert result.value == '{"topic_name": "single-ok", "topic_specificity": 0.9}'
+    assert result.value == SINGLE_RESPONSE
     assert len(events) == 1
 
     event = events[0]
     assert event["event"] == "llm_call_success"
     assert event["prompt"] == "test prompt"
-    assert (
-        event["raw_response"] == '{"topic_name": "single-ok", "topic_specificity": 0.9}'
-    )
+    assert event["raw_response"] == SINGLE_RESPONSE
     assert event["model"] == "dummy-model"
     assert event["wrapper"] == "DummyAsyncSingleWrapper"
 

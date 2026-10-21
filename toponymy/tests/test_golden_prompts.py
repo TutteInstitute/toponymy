@@ -155,6 +155,7 @@ class TestRunPromptExampleAPI:
                 prompt_kind="bad_kind",
             )
 
+    @pytest.mark.filterwarnings("ignore:Connectivity check failed.")
     def test_run_prompt_example_connectivity_failure_returns_error(
         self, dummy_namer, call_style, monkeypatch
     ):
