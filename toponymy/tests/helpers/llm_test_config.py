@@ -188,9 +188,9 @@ EXTERNAL_SUPPORTED_NAMERS = [
     (AnthropicNamer, "ANTHROPIC_API_KEY", {}),
     (OpenAINamer, "OPEN_AI_API_KEY", {}),
     (CohereNamer, "COHERE_API_KEY", {}),
-    (GoogleGeminiNamer, "GEMINI_API_KEY", {}),
+    # (GoogleGeminiNamer, "GEMINI_API_KEY", {}),
     (AsyncAnthropicNamer, "ANTHROPIC_API_KEY", {}),
     (AsyncOpenAINamer, "OPEN_AI_API_KEY", {}),
     (AsyncCohereNamer, "COHERE_API_KEY", {}),
-    (AsyncGoogleGeminiNamer, "GEMINI_API_KEY", {}),
+    # (AsyncGoogleGeminiNamer, "GEMINI_API_KEY", {}),
 ]

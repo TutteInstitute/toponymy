@@ -1,3 +1,7 @@
+import asyncio
+import pytest
+from unittest.mock import Mock
+
 from toponymy.llm_wrappers import (
     AsyncLLMWrapper,
     LLMWrapper,
@@ -11,8 +15,6 @@ from toponymy.tests.helpers.llm_test_config import (
     make_prompt,
     validate_topic_name,
 )
-import pytest
-from unittest.mock import Mock
 
 
 class DummyCombinedOnlyWrapper(DummySingleWrapper):
@@ -341,3 +343,11 @@ def test_repair_json_string_backslashes_empty():
     empty = ""
     result = repair_json_string_backslashes(empty)
     assert result == empty
+
+
+def test_sync_and_async_connectivity_status_return_same_result(dummy_namer):
+    sync_status = dummy_namer.connectivity_status()
+    async_status = asyncio.run(dummy_namer.aconnectivity_status())
+
+    assert sync_status["success"] is True, sync_status
+    assert sync_status == async_status

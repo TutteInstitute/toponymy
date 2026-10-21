@@ -21,6 +21,10 @@ from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 from toponymy.tools.notebook_test_helpers import OLLAMA_CI_MODELS, get_test_ollama_model
 from toponymy.tests.helpers.llm_test_config import make_mock_data
+from toponymy.tests.helpers.dummy_wrappers import (
+    DummySingleWrapper,
+    DummyAsyncSingleWrapper,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +166,13 @@ def ollama_running(_ollama_sufficient_resources) -> bool:
         except subprocess.TimeoutExpired:
             started_process.kill()
             started_process.wait()
+
+
+@pytest.fixture(params=["sync", "async"], ids=["sync_wrapper", "async_wrapper"])
+def dummy_namer(request):
+    if request.param == "sync":
+        return DummySingleWrapper()
+    return DummyAsyncSingleWrapper()
 
 
 @pytest.fixture
