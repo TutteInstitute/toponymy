@@ -1,22 +1,38 @@
+import asyncio
+import os
 import string
 from unittest import result
 from warnings import warn, filterwarnings
+import threading
 import tokenizers
 import transformers
 import weakref
 
+from toponymy.prompt_construction import render_prompt
 from toponymy.templates import (
     GET_TOPIC_CLUSTER_NAMES_REGEX,
     GET_TOPIC_NAME_REGEX,
+    PROMPT_TEMPLATES,
     default_extract_topic_names,
 )
 from toponymy.tools.notebook_test_helpers import (
     notebook_test_replacement,
     get_test_ollama_model,
 )
+from toponymy.tools.load_prompt_examples import example_ids, load_prompt_params
 from toponymy._utils import resolve_api_key
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Dict, Generic, TypeVar, Callable, Any
+from typing import (
+    List,
+    Optional,
+    Union,
+    Dict,
+    Generic,
+    TypeVar,
+    Callable,
+    Any,
+    Coroutine,
+)
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -51,10 +67,28 @@ filterwarnings(
 )
 
 
+DEFAULT_CONNECTIVITY_PROMPT = (
+    "Respond with exactly this JSON and nothing else.\n"
+    "Do not use markdown or code blocks.\n\n"
+    '{"status": "ok"}'
+)
+
+
 @dataclass
 class CallResult(Generic[T]):
     value: Optional[T] = None
     error: Optional[Exception] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+@dataclass
+class TopicParseResult:
+    topic_payload: str | tuple | None
+    raw_response: str | None
+    error: Exception | None = None
 
     @property
     def ok(self) -> bool:
@@ -77,6 +111,66 @@ class FailFastLLMError(RuntimeError):
     def __init__(self, message: str = "", original_exception: Exception | None = None):
         super().__init__(message)
         self.original_exception = original_exception
+
+
+class _SyncBridge:
+    """
+    Runs coroutines to completion from synchronous code.
+
+    Uses one persistent event loop on a daemon thread, so it works whether or not
+    the caller already has a running loop (e.g. Jupyter), and loop-bound resources
+    created through the bridge stay valid across calls.
+    """
+
+    _loop: asyncio.AbstractEventLoop | None = None
+    _thread: threading.Thread | None = None
+    _lock = threading.Lock()
+
+    @classmethod
+    def _ensure_loop(cls) -> asyncio.AbstractEventLoop:
+        with cls._lock:
+            if (
+                cls._loop is None
+                or cls._loop.is_closed()
+                or cls._thread is None
+                or not cls._thread.is_alive()
+            ):
+                loop = asyncio.new_event_loop()
+                thread = threading.Thread(
+                    target=loop.run_forever,
+                    daemon=True,
+                    name="toponymy-sync-bridge",
+                )
+                thread.start()
+                cls._loop, cls._thread = loop, thread
+            return cls._loop
+
+    @classmethod
+    def _reset_after_fork(cls) -> None:
+        # Threads don't survive fork, and the lock may have been held at fork time.
+        cls._loop = None
+        cls._thread = None
+        cls._lock = threading.Lock()
+
+    @classmethod
+    def run(cls, coro: Coroutine[Any, Any, T]) -> T:
+        if threading.current_thread() is cls._thread:
+            coro.close()  # avoid a "coroutine was never awaited" warning
+            raise RuntimeError(
+                "Sync wrapper method called from inside the sync bridge loop. "
+                "Use the a-prefixed async method (e.g. aconnectivity_status) instead."
+            )
+
+        future = asyncio.run_coroutine_threadsafe(coro, cls._ensure_loop())
+        try:
+            return future.result()
+        except KeyboardInterrupt:
+            future.cancel()
+            raise
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_SyncBridge._reset_after_fork)
 
 
 def _should_retry(e: Exception) -> bool:
@@ -488,6 +582,35 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
         return ""
 
+    def _generate_topic_name_with_raw_response(
+        self,
+        prompt: Dict[str, Any],
+        temperature: float = 0.4,
+        topic_extraction_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        max_tokens: int | None = None,
+    ) -> TopicParseResult:
+        if max_tokens is None:
+            max_tokens = getattr(self, "max_tokens_topic_name", 128)
+
+        topic_info_raw = self._call_llm_for_prompt(
+            prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            routine="generate_topic_name",
+        )
+        try:
+            topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
+            result = topic_extraction_function(topic_info)
+            topic_result = result if isinstance(result, tuple) else str(result)
+            return TopicParseResult(
+                topic_payload=topic_result, raw_response=topic_info_raw, error=None
+            )
+        except Exception as e:
+            return TopicParseResult(
+                topic_payload=None, raw_response=topic_info_raw, error=e
+            )
+
     # @abstractmethod
     @retry(
         stop=stop_after_attempt(3),
@@ -503,22 +626,17 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int | None = None,
     ) -> str | tuple:
-        if max_tokens is None:
-            max_tokens = getattr(self, "max_tokens_topic_name", 128)
 
-        topic_name_info_raw = self._call_llm_for_prompt(
+        result = self._generate_topic_name_with_raw_response(
             prompt,
             temperature=temperature,
+            topic_extraction_function=topic_extraction_function,
+            get_topic_name_regex=get_topic_name_regex,
             max_tokens=max_tokens,
-            routine="generate_topic_name",
         )
-
-        topic_name_info = llm_output_to_result(
-            topic_name_info_raw, get_topic_name_regex
-        )
-        result = topic_extraction_function(topic_name_info)
-        topic_name = result if isinstance(result, tuple) else str(result)
-        return topic_name
+        if result.error is not None:
+            raise result.error
+        return result.topic_payload
 
     @staticmethod
     def _topic_cluster_names_error_callback(retry_state):
@@ -634,11 +752,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
     def connectivity_status(
         self,
-        prompt: str = (
-            "Respond with exactly this JSON and nothing else.\n"
-            "Do not use markdown or code blocks.\n\n"
-            '{"status": "ok"}'
-        ),
+        prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
         system_prompt: str | None = None,
     ) -> dict:
         result = {
@@ -669,6 +783,121 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             result["response"] = response
 
         except Exception as e:
+            result["error_type"] = type(e).__name__
+            result["error_message"] = str(e)
+            result["original_exception"] = e
+
+        return result
+
+    async def aconnectivity_status(self, *args, **kwargs) -> dict:
+        """
+        Helper method to keep async and sync interfaces consistent.
+        """
+        return await asyncio.to_thread(self.connectivity_status, *args, **kwargs)
+
+    async def arun_prompt_example(self, *args, **kwargs) -> dict:
+        """
+        Helper method to keep async and sync interfaces consistent.
+        """
+        return await asyncio.to_thread(self.run_prompt_example, *args, **kwargs)
+
+    def run_prompt_example(
+        self,
+        example_id: str | None = "hockey_masks",
+        prompt_kind: str = "topic_name",
+        *,
+        prompt_templates: Dict[str, Any] = None,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        verbose: bool = False,
+    ) -> dict:
+        """
+        Render an example prompt and run it through this namer, returning a fully
+        inspectable result for manual/debugging review (no assertions).
+        """
+        if prompt_templates is None:
+            prompt_templates = PROMPT_TEMPLATES
+        available_example_ids = example_ids()
+        if example_id not in available_example_ids:
+            raise ValueError(
+                f"example_id must be in {available_example_ids}, got {example_id}"
+            )
+        if prompt_kind not in ("topic_name", "topic_cluster_names"):
+            raise ValueError(
+                f"prompt_kind must be 'topic_name' or 'topic_cluster_names', got {prompt_kind}"
+            )
+        if max_tokens is None:
+            if prompt_kind == "topic_name":
+                max_tokens = getattr(self, "max_tokens_topic_name", 128)
+            elif prompt_kind == "topic_cluster_names":
+                max_tokens = getattr(self, "max_tokens_topic_cluster_names", 1024)
+
+        if prompt_kind == "topic_name":
+            template_kind = "layer"
+        elif prompt_kind == "topic_cluster_names":
+            template_kind = "disambiguate_topics"
+
+        prompt_params = load_prompt_params(example_id)
+
+        prompt = render_prompt(prompt_templates[template_kind], prompt_params)
+
+        result = {
+            "success": False,
+            "prompt_kind": prompt_kind,
+            "prompt": None,
+            "response": None,
+            "topic_result": None,
+            "error_type": None,
+            "error_message": None,
+            "original_exception": None,
+        }
+
+        connection_result = self.connectivity_status()
+        if not connection_result["success"]:
+            warn(f"Connectivity check failed.")
+            result["error_message"] = connection_result["error_message"]
+            result["error_type"] = connection_result["error_type"]
+            result["original_exception"] = connection_result["original_exception"]
+            return result
+
+        if verbose:
+            result["prompt"] = prompt
+
+        try:
+            if prompt_kind == "topic_cluster_names":
+                topic_payloads = self.generate_topic_cluster_names(
+                    prompt,
+                    old_names=prompt_params.get("old_names"),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                result["topic_result"] = topic_payloads
+            else:
+                if verbose:
+                    response = self._generate_topic_name_with_raw_response(
+                        prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    result["response"] = response.raw_response
+                    result["topic_result"] = response.topic_payload
+
+                    if response.error is not None:
+                        result["error_type"] = type(response.error).__name__
+                        result["error_message"] = str(response.error)
+                        result["original_exception"] = response.error
+                        return result
+                else:
+                    topic_payloads = self.generate_topic_name(
+                        prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    result["topic_result"] = topic_payloads
+            result["success"] = True
+
+        except Exception as e:
+            result["success"] = False
             result["error_type"] = type(e).__name__
             result["error_message"] = str(e)
             result["original_exception"] = e
@@ -894,7 +1123,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return await self._call_llm_batch(prompts, temperature, max_tokens=max_tokens)
 
-    async def generate_topic_names(
+    async def _generate_topic_names_with_raw_response(
         self,
         prompts: List[Dict[str, Any]],
         temperature: float = 0.4,
@@ -902,11 +1131,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         null_result_value="",
         max_tokens: int | None = None,
-    ) -> List[str]:
-        """
-        Generate topic names for a batch of prompts.
-        Returns a list of topic names matching the input prompts.
-        """
+    ) -> List[TopicParseResult]:
         if max_tokens is None:
             max_tokens = getattr(self, "max_tokens_topic_name", 128)
 
@@ -917,23 +1142,36 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             prompts, temperature, max_tokens=max_tokens
         )
 
-        # Parse responses
-        results = []
+        results: List[TopicParseResult] = []
         for response in responses:
+            response_text: str | None = None
+
             if isinstance(response, CallResult):
                 if not response.ok:
                     warn(
                         f"Failed to generate topic name with "
                         f"{self.__class__.__name__}: {response.error}"
                     )
-                    results.append(null_result_value)
+                    results.append(
+                        TopicParseResult(
+                            topic_payload=null_result_value,
+                            raw_response=None,
+                            error=response.error,
+                        )
+                    )
                     continue
                 response_text = response.value
             else:
                 response_text = response
 
             if not response_text:
-                results.append(null_result_value)
+                results.append(
+                    TopicParseResult(
+                        topic_payload=null_result_value,
+                        raw_response=None,
+                        error=ValueError("Empty response"),
+                    )
+                )
                 continue
 
             # Attempt to parse the response
@@ -941,18 +1179,56 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 topic_name_info = llm_output_to_result(
                     response_text, get_topic_name_regex
                 )
-                result = extract_topic_name_function(topic_name_info)
-                topic_name = result if isinstance(result, tuple) else str(result)
-                results.append(topic_name)
+                extracted_name = extract_topic_name_function(topic_name_info)
+                topic_name = (
+                    extracted_name
+                    if isinstance(extracted_name, tuple)
+                    else str(extracted_name)
+                )
+                results.append(
+                    TopicParseResult(
+                        topic_payload=topic_name,
+                        raw_response=response_text,
+                        error=None,
+                    )
+                )
             except Exception as e:
                 warn(
                     f"Failed to generate topic name with {self.__class__.__name__}: {e}"
                 )
                 results.append(
-                    null_result_value
-                )  # Fallback to null_result_value if parsing fails
+                    TopicParseResult(
+                        topic_payload=null_result_value,
+                        raw_response=response_text,
+                        error=e,
+                    )
+                )
 
         return results
+
+    async def generate_topic_names(
+        self,
+        prompts: List[Dict[str, Any]],
+        temperature: float = 0.4,
+        extract_topic_name_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+        null_result_value="",
+        max_tokens: int | None = None,
+    ) -> List[str | tuple[str, ...]]:
+        """
+        Generate topic names for a batch of prompts.
+        Returns a list of topic names matching the input prompts.
+        """
+        parsed_results = await self._generate_topic_names_with_raw_response(
+            prompts,
+            temperature=temperature,
+            extract_topic_name_function=extract_topic_name_function,
+            get_topic_name_regex=get_topic_name_regex,
+            null_result_value=null_result_value,
+            max_tokens=max_tokens,
+        )
+
+        return [result.topic_payload for result in parsed_results]
 
     async def generate_topic_cluster_names(
         self,
@@ -1082,12 +1358,9 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return "<error>"
 
-    async def connectivity_status(
+    async def aconnectivity_status(
         self,
-        prompt: str = (
-            "Identify yourself and explain that you will be providing "
-            "topic names for clusters in JSON format"
-        ),
+        prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
         *,
         system_prompt: str | None = None,
     ) -> dict:
@@ -1147,6 +1420,171 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             result["original_exception"] = e
 
         return result
+
+    def connectivity_status(
+        self,
+        prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
+        *,
+        system_prompt: str | None = None,
+    ) -> dict:
+        """
+        Synchronous wrapper for connectivity_status.
+
+        This method provides a synchronous interface to the async connectivity_status method,
+        making it easier to use in synchronous code contexts.
+
+        Returns:
+            dict: The same result dictionary as connectivity_status
+        """
+        return _SyncBridge.run(
+            self.aconnectivity_status(prompt, system_prompt=system_prompt)
+        )
+
+    async def arun_prompt_example(
+        self,
+        example_id: str | None = "hockey_masks",
+        prompt_kind: str = "topic_name",
+        *,
+        prompt_templates: Dict[str, Any] = None,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        verbose: bool = False,
+    ) -> dict:
+        """
+        Render an example prompt and run it through this namer, returning a fully
+        inspectable result for manual/debugging review (no assertions).
+        """
+        if prompt_templates is None:
+            prompt_templates = PROMPT_TEMPLATES
+        available_example_ids = example_ids()
+        if example_id not in available_example_ids:
+            raise ValueError(
+                f"example_id must be in {available_example_ids}, got {example_id}"
+            )
+        if prompt_kind not in ("topic_name", "topic_cluster_names"):
+            raise ValueError(
+                f"prompt_kind must be 'topic_name' or 'topic_cluster_names', got {prompt_kind}"
+            )
+        if max_tokens is None:
+            if prompt_kind == "topic_name":
+                max_tokens = getattr(self, "max_tokens_topic_name", 128)
+            elif prompt_kind == "topic_cluster_names":
+                max_tokens = getattr(self, "max_tokens_cluster_names", 1024)
+
+        if prompt_kind == "topic_name":
+            template_kind = "layer"
+        elif prompt_kind == "topic_cluster_names":
+            template_kind = "disambiguate_topics"
+
+        prompt_params = load_prompt_params(example_id)
+
+        prompt = render_prompt(prompt_templates[template_kind], prompt_params)
+
+        result = {
+            "success": False,
+            "prompt_kind": prompt_kind,
+            "prompt": None,
+            "response": None,
+            "topic_result": None,
+            "error_type": None,
+            "error_message": None,
+            "original_exception": None,
+        }
+
+        connection_result = await self.aconnectivity_status()
+        if not connection_result["success"]:
+            warn(f"Connectivity check failed.")
+            result["error_message"] = connection_result["error_message"]
+            result["error_type"] = connection_result["error_type"]
+            result["original_exception"] = connection_result["original_exception"]
+            return result
+
+        if verbose:
+            result["prompt"] = prompt
+
+        try:
+            if prompt_kind == "topic_cluster_names":
+                cluster_results = await self.generate_topic_cluster_names(
+                    [prompt],
+                    old_names_list=[prompt_params.get("old_names")],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                result["topic_result"] = (
+                    cluster_results[0]
+                    if cluster_results
+                    else prompt_params.get("old_names", [])
+                )
+            else:
+                if verbose:
+                    parsed_results = await self._generate_topic_names_with_raw_response(
+                        [prompt],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    parsed = parsed_results[0]
+                    result["response"] = parsed.raw_response
+                    result["topic_result"] = parsed.topic_payload
+
+                    if parsed.error is not None:
+                        result["error_type"] = type(parsed.error).__name__
+                        result["error_message"] = str(parsed.error)
+                        result["original_exception"] = parsed.error
+                        return result
+                else:
+                    topic_results = await self.generate_topic_names(
+                        [prompt],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    result["topic_result"] = topic_results[0]
+            result["success"] = True
+
+        except Exception as e:
+            result["success"] = False
+            result["error_type"] = type(e).__name__
+            result["error_message"] = str(e)
+            result["original_exception"] = e
+
+        return result
+
+    def run_prompt_example(
+        self,
+        example_id: str | None = "hockey_masks",
+        prompt_kind: str = "topic_name",
+        *,
+        prompt_templates: Dict[str, Any] | None = None,
+        temperature: float = 0.4,
+        max_tokens: int | None = None,
+        verbose: bool = False,
+    ) -> dict:
+        """
+        Synchronous wrapper for run_prompt_example.
+
+        This method provides a synchronous interface to the async arun_prompt_example method,
+        making it easier to use in synchronous code contexts.
+
+        Args:
+            example_id: The example ID to use for the prompt
+            prompt_kind: The kind of prompt to generate ('topic_name' or 'topic_cluster_names')
+            prompt_templates: Optional custom prompt templates
+            temperature: Temperature parameter for LLM
+            max_tokens: Maximum tokens for LLM response
+            verbose: Whether to include the full prompt in the result
+
+        Returns:
+            dict: The same result dictionary as run_prompt_example
+        """
+        return _SyncBridge.run(
+            self.arun_prompt_example(
+                example_id,
+                prompt_kind,
+                prompt_templates=prompt_templates,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                verbose=verbose,
+            )
+        )
 
     async def close(self) -> None:
         """
