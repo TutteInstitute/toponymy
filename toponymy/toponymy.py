@@ -1,4 +1,7 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
+from toponymy._annotation_bridge import copy_exemplars_to_layers, has_stock_exemplars
+from toponymy.annotation import AnnotationStore, Executor
+from toponymy.exemplar_texts import exemplar_annotator
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import (
     ClusterLayer,
@@ -83,6 +86,8 @@ class Toponymy:
         A list of ClusterLayer objects that represent the layers of the topic model.
     cluster_tree_: dict
         A dictionary that represents the tree of clusters.
+    store_: AnnotationStore
+        The annotations computed for the nodes of the cluster tree.
     object_x_keyphrase_matrix_: np.array
         A numpy array of shape=(number_of_objects, number_of_keyphrases) that represents the objects and their keyphrases.
     keyphrase_list_: List[str]
@@ -240,6 +245,9 @@ class Toponymy:
 
         self._sync_layer_runtime_config()
 
+        self.store_ = AnnotationStore.from_clusterer(self, objects, embedding_vectors)
+        executor = Executor(self.store_)
+
         # Initialize other data structures
         self.topic_names_: List[List[str]] = [[]] * len(self.cluster_layers_)
         self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
@@ -258,16 +266,41 @@ class Toponymy:
             len(self.cluster_layers_),
         )
 
-        # Get exemplars for layer 0 first and build keyphrase matrix
-        if (
+        non_text_objects = (
             hasattr(self.cluster_layers_[0], "object_to_text_function")
             and self.cluster_layers_[0].object_to_text_function is not None
-        ):
-            # Non-text objects: use exemplars to build keyphrase matrix
-            exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts(
-                objects,
-                embedding_vectors,
+        )
+        # TODO: non-text layer 0 ignores exemplar_method because its exemplars also
+        # define the keyphrase corpus; give the corpus its own annotation.
+        null_topic = np.mean(embedding_vectors, axis=0)
+        for i, layer in enumerate(self.cluster_layers_):
+            method = (
+                "facility_location" if i == 0 and non_text_objects else exemplar_method
             )
+            if not has_stock_exemplars(layer):
+                layer.make_exemplar_texts(objects, embedding_vectors, method=method)
+                continue
+            annotator = exemplar_annotator(
+                method,
+                layer.n_exemplars,
+                layer.object_to_text_function,
+                layer.exemplars_diversify_alpha,
+                null_topic,
+            )
+            failures = executor.run(annotator, nodes=self.store_.tree.layer(i))
+            if failures:
+                node, reason = next(iter(failures.items()))
+                raise RuntimeError(
+                    f"exemplar selection failed for {len(failures)} node(s) in layer "
+                    f"{i}; first, {node}: {reason}"
+                )
+        copy_exemplars_to_layers(self.store_, self.cluster_layers_)
+
+        # Build keyphrase matrix
+        if non_text_objects:
+            # Non-text objects: use exemplars to build keyphrase matrix
+            exemplars = self.cluster_layers_[0].exemplars
+            exemplar_indices = self.cluster_layers_[0].exemplar_indices
 
             # Create aligned text list
             aligned_texts = [""] * len(objects)  # Empty strings for non-exemplars
@@ -290,12 +323,6 @@ class Toponymy:
                 self.keyphrase_list_,
                 self.keyphrase_vectors_,
             ) = self.keyphrase_builder.fit_transform(objects)
-            # Still need to generate exemplars for layer 0
-            self.cluster_layers_[0].make_exemplar_texts(
-                objects,
-                embedding_vectors,
-                method=exemplar_method,
-            )
 
         if self.keyphrase_vectors_ is None:
             # If the keyphrase vectors are None, we need to generate them
@@ -312,13 +339,6 @@ class Toponymy:
             total=len(self.cluster_layers_),
             unit="layer",
         ):
-            if i > 0:  # Skip layer 0 exemplars as we already did them
-                layer.make_exemplar_texts(
-                    objects,
-                    embedding_vectors,
-                    method=exemplar_method,
-                )
-
             layer.make_keyphrases(
                 self.keyphrase_list_,
                 self.object_x_keyphrase_matrix_,

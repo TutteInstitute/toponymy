@@ -1033,3 +1033,32 @@ def diverse_exemplars(
         indices.append(chosen_original_indices)
 
     return results, indices
+
+
+def exemplar_annotator(
+    method: str,
+    n_exemplars: int,
+    object_to_text_function: Callable[[List[Any]], List[str]],
+    diversify_alpha: float,
+    null_topic: np.ndarray,
+):
+    """Returns the exemplar annotator for a ``Toponymy.fit`` exemplar method name."""
+    if method == "central":
+        return DiverseExemplarAnnotator(
+            n_exemplars=n_exemplars,
+            diversify_alpha=diversify_alpha,
+            object_to_text_function=object_to_text_function,
+            null_topic=null_topic,
+        )
+    if method in ("facility_location", "saturated_coverage"):
+        return SubmodularExemplarAnnotator(
+            n_exemplars=n_exemplars,
+            object_to_text_function=object_to_text_function,
+            null_topic=null_topic,
+            submodular_function=method,
+        )
+    if method == "random":
+        return RandomExemplarAnnotator(
+            n_exemplars=n_exemplars, object_to_text_function=object_to_text_function
+        )
+    raise ValueError(f"Unknown exemplar generation method: {method}. Use 'central'.")
