@@ -1,6 +1,7 @@
 import pytest
 
 from toponymy.cluster_layer import ClusterLayerText
+from toponymy.exemplar_texts import DiverseExemplarAnnotator, diverse_exemplars
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.toponymy import Toponymy
 
@@ -15,13 +16,14 @@ def fitted_clusterer(clusterer, clusterable_vectors, object_vectors):
 
 @pytest.fixture
 def make_model(llm, embedder, fitted_clusterer):
-    def make():
+    def make(**kwargs):
         return Toponymy(
             llm,
             embedder,
             fitted_clusterer,
             keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
             verbose=False,
+            **kwargs,
         )
 
     return make
@@ -86,6 +88,74 @@ def test_fit_leaves_custom_layer_classes_alone(
         layer.__class__ = ClusterLayerText
 
     assert layer.custom_method == "random"
+
+
+def test_fit_runs_the_given_annotators(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    annotator = DiverseExemplarAnnotator(n_exemplars=3)
+    model = make_model(annotators=[annotator]).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
+
+    for layer in model.cluster_layers_:
+        expected = diverse_exemplars(
+            layer.cluster_labels,
+            all_sentences,
+            object_vectors,
+            layer.centroid_vectors,
+            n_exemplars=3,
+            object_to_text_function=None,
+        )
+        assert (layer.exemplars, layer.exemplar_indices) == expected
+    assert annotator.null_topic is None
+
+
+def test_fit_non_text_annotators_make_the_layer_0_exemplars(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    annotator = DiverseExemplarAnnotator(
+        n_exemplars=3, object_to_text_function=lambda x: x
+    )
+    model = make_model(annotators=[annotator]).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
+
+    layer = model.cluster_layers_[0]
+    expected = diverse_exemplars(
+        layer.cluster_labels,
+        all_sentences,
+        object_vectors,
+        layer.centroid_vectors,
+        n_exemplars=3,
+    )
+    assert (layer.exemplars, layer.exemplar_indices) == expected
+
+
+def test_fit_rejects_exemplar_method_with_annotators(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    model = make_model(annotators=[DiverseExemplarAnnotator()])
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        model.fit(
+            all_sentences,
+            object_vectors,
+            clusterable_vectors,
+            exemplar_method="random",
+        )
+
+
+def test_fit_requires_an_annotator_that_makes_exemplars(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    class OtherAnnotator:
+        outputs = ("something_else",)
+
+    model = make_model(annotators=[OtherAnnotator()])
+
+    with pytest.raises(ValueError, match="must include one that outputs"):
+        model.fit(all_sentences, object_vectors, clusterable_vectors)
 
 
 def test_fit_non_text_layer_0_exemplars_ignore_exemplar_method(

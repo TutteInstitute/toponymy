@@ -1,6 +1,6 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy._annotation_bridge import copy_exemplars_to_layers, has_stock_exemplars
-from toponymy.annotation import AnnotationStore, Executor
+from toponymy.annotation import Annotator, AnnotationStore, Executor
 from toponymy.exemplar_texts import exemplar_annotator
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.cluster_layer import (
@@ -16,11 +16,28 @@ from toponymy._utils import handle_verbose_params
 
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
+import copy
 import numpy as np
 
 from tqdm.auto import tqdm
 
 from typing import List, Any, Optional, Type, Dict, Tuple
+
+
+def _exemplar_annotator_of(annotators):
+    for annotator in annotators:
+        if {"exemplars", "exemplar_original_indices"} <= set(annotator.outputs):
+            return annotator
+    raise ValueError(
+        "annotators must include one that outputs 'exemplars' and 'exemplar_original_indices'"
+    )
+
+
+def _with_null_topic(annotator, null_topic):
+    if hasattr(annotator, "null_topic") and annotator.null_topic is None:
+        annotator = copy.copy(annotator)
+        annotator.null_topic = null_topic
+    return annotator
 
 
 class Toponymy:
@@ -53,6 +70,11 @@ class Toponymy:
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bars: bool, deprecated
         Deprecated. Use verbose instead.
+    annotators: List[Annotator], optional
+        The annotators to run, in order, over the whole cluster tree. They must include one that outputs
+        ``exemplars`` and ``exemplar_original_indices``. An annotator with an unset ``null_topic`` gets the mean of
+        the embedding vectors. If None, the exemplars are made with the exemplar_method given to fit, using the
+        settings of the cluster layers.
 
     Attributes:
     -----------
@@ -119,6 +141,7 @@ class Toponymy:
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         verbose: Optional[bool] = None,
         show_progress_bars: Optional[bool] = None,
+        annotators: Optional[List[Annotator]] = None,
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
@@ -130,6 +153,7 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
+        self.annotators = annotators
         self.prompt_template = prompt_template
 
         # Handle verbose parameters
@@ -189,12 +213,53 @@ class Toponymy:
 
         return [cluster_size(layer.cluster_labels) for layer in self.cluster_layers_]
 
+    def _object_to_text_function(self):
+        """The function that makes exemplar text from objects; None for text objects."""
+        if self.annotators is None:
+            source = self.cluster_layers_[0]
+        else:
+            source = _exemplar_annotator_of(self.annotators)
+        return getattr(source, "object_to_text_function", None)
+
+    def _exemplar_runs(
+        self, objects, embedding_vectors, exemplar_method, non_text_objects
+    ):
+        """The (annotator, nodes) pairs that make the exemplars, with None for all nodes."""
+        null_topic = np.mean(embedding_vectors, axis=0)
+        if self.annotators is not None:
+            if not all(has_stock_exemplars(layer) for layer in self.cluster_layers_):
+                raise ValueError(
+                    "annotators cannot be used with layer classes that override make_exemplar_texts"
+                )
+            return [(_with_null_topic(a, null_topic), None) for a in self.annotators]
+
+        exemplar_method = exemplar_method or "central"
+        runs = []
+        for i, layer in enumerate(self.cluster_layers_):
+            # TODO: non-text layer 0 ignores exemplar_method because its exemplars also
+            # define the keyphrase corpus; give the corpus its own annotation.
+            method = (
+                "facility_location" if i == 0 and non_text_objects else exemplar_method
+            )
+            if not has_stock_exemplars(layer):
+                layer.make_exemplar_texts(objects, embedding_vectors, method=method)
+                continue
+            annotator = exemplar_annotator(
+                method,
+                layer.n_exemplars,
+                layer.object_to_text_function,
+                layer.exemplars_diversify_alpha,
+                null_topic,
+            )
+            runs.append((annotator, self.store_.tree.layer(i)))
+        return runs
+
     def fit(
         self,
         objects: List[Any],
         embedding_vectors: np.ndarray,
         clusterable_vectors: np.ndarray,
-        exemplar_method: str = "central",
+        exemplar_method: Optional[str] = None,
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "central",
     ):
@@ -211,7 +276,8 @@ class Toponymy:
             A numpy array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
             for density based clustering to be efficient (2-25).
         exemplar_method: str, Optional
-            The method to use for generating exemplars. Default is "central". Other options are "saturated_coverage", "central", and "random".
+            The method to use for generating exemplars. Default is "central". Other options are "facility_location", "saturated_coverage", and "random".
+            Cannot be combined with the annotators given to the constructor.
         keyphrase_method: str, Optional
             The method to use for generating keyphrases. Default is "information_weighted". Other options are "saturated_coverage", "facility_location", "graph_cut", "central" and "bm25".
         subtopic_method: str, Optional
@@ -224,6 +290,9 @@ class Toponymy:
         """
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
+
+        if self.annotators is not None and exemplar_method is not None:
+            raise ValueError("exemplar_method cannot be combined with annotators")
 
         # Build our layers and cluster tree
         if hasattr(self.clusterer, "cluster_layers_") and hasattr(
@@ -266,33 +335,17 @@ class Toponymy:
             len(self.cluster_layers_),
         )
 
-        non_text_objects = (
-            hasattr(self.cluster_layers_[0], "object_to_text_function")
-            and self.cluster_layers_[0].object_to_text_function is not None
+        non_text_objects = self._object_to_text_function() is not None
+        runs = self._exemplar_runs(
+            objects, embedding_vectors, exemplar_method, non_text_objects
         )
-        # TODO: non-text layer 0 ignores exemplar_method because its exemplars also
-        # define the keyphrase corpus; give the corpus its own annotation.
-        null_topic = np.mean(embedding_vectors, axis=0)
-        for i, layer in enumerate(self.cluster_layers_):
-            method = (
-                "facility_location" if i == 0 and non_text_objects else exemplar_method
-            )
-            if not has_stock_exemplars(layer):
-                layer.make_exemplar_texts(objects, embedding_vectors, method=method)
-                continue
-            annotator = exemplar_annotator(
-                method,
-                layer.n_exemplars,
-                layer.object_to_text_function,
-                layer.exemplars_diversify_alpha,
-                null_topic,
-            )
-            failures = executor.run(annotator, nodes=self.store_.tree.layer(i))
+        for annotator, nodes in runs:
+            failures = executor.run(annotator, nodes=nodes)
             if failures:
                 node, reason = next(iter(failures.items()))
                 raise RuntimeError(
-                    f"exemplar selection failed for {len(failures)} node(s) in layer "
-                    f"{i}; first, {node}: {reason}"
+                    f"{type(annotator).__name__} failed for {len(failures)} node(s); "
+                    f"first, {node}: {reason}"
                 )
         copy_exemplars_to_layers(self.store_, self.cluster_layers_)
 
@@ -425,7 +478,7 @@ class Toponymy:
         objects: List[Any],
         object_vectors: np.ndarray,
         clusterable_vectors: np.ndarray,
-        exemplar_method: str = "central",
+        exemplar_method: Optional[str] = None,
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "facility_location",
     ) -> List[np.ndarray]:
