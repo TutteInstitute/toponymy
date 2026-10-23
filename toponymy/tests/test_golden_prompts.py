@@ -11,6 +11,11 @@ from toponymy.llm_wrappers import (
     _SyncBridge,
     AsyncLLMWrapper,
 )
+from toponymy.templates import (
+    PROMPT_TEMPLATES,
+    SUMMARY_PROMPT_TEMPLATES,
+    MULTILINGUAL_EN_FR_PROMPT_TEMPLATES,
+)
 
 from toponymy.tests.helpers.llm_test_config import (
     EXTERNAL_SUPPORTED_NAMERS,
