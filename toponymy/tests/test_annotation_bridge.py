@@ -1,9 +1,10 @@
+import numpy as np
 import pytest
 
 from toponymy.cluster_layer import ClusterLayerText
 from toponymy.exemplar_texts import DiverseExemplarAnnotator, diverse_exemplars
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.toponymy import Toponymy
+from toponymy.toponymy import Toponymy, _with_null_topic
 
 
 @pytest.fixture(scope="module")
@@ -109,6 +110,52 @@ def test_fit_runs_the_given_annotators(
         )
         assert (layer.exemplars, layer.exemplar_indices) == expected
     assert annotator.null_topic is None
+
+
+def test_fit_with_several_annotators_keeps_the_last_exemplars(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    annotators = [
+        DiverseExemplarAnnotator(n_exemplars=2),
+        DiverseExemplarAnnotator(n_exemplars=3),
+    ]
+    model = make_model(annotators=annotators).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
+
+    for layer_id, layer in enumerate(model.cluster_layers_):
+        expected = diverse_exemplars(
+            layer.cluster_labels,
+            all_sentences,
+            object_vectors,
+            layer.centroid_vectors,
+            n_exemplars=3,
+            object_to_text_function=None,
+        )
+        nodes = model.store_.tree.layer(layer_id)
+        in_store = (
+            [model.store_.exemplars[node] for node in nodes],
+            [model.store_.exemplar_original_indices[node] for node in nodes],
+        )
+        assert (layer.exemplars, layer.exemplar_indices) == expected
+        assert in_store == expected
+
+
+def test_with_null_topic_only_fills_in_unset_exemplar_annotators():
+    mean = np.ones(3)
+
+    class Unmarked:
+        null_topic = None
+
+    unmarked = Unmarked()
+    exemplar = DiverseExemplarAnnotator()
+    set_already = DiverseExemplarAnnotator(null_topic=np.zeros(3))
+
+    filled = _with_null_topic(exemplar, mean)
+
+    assert filled.null_topic is mean and exemplar.null_topic is None
+    assert _with_null_topic(unmarked, mean) is unmarked
+    assert _with_null_topic(set_already, mean) is set_already
 
 
 def test_fit_non_text_annotators_make_the_layer_0_exemplars(

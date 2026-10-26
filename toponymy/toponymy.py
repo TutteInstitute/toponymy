@@ -34,7 +34,13 @@ def _exemplar_annotator_of(annotators):
 
 
 def _with_null_topic(annotator, null_topic):
-    if hasattr(annotator, "null_topic") and annotator.null_topic is None:
+    # TODO: drop once the store supports global annotations; the corpus mean is shared state.
+    is_exemplar = getattr(annotator, "kind", None) == "exemplar"
+    if (
+        is_exemplar
+        and hasattr(annotator, "null_topic")
+        and annotator.null_topic is None
+    ):
         annotator = copy.copy(annotator)
         annotator.null_topic = null_topic
     return annotator
@@ -72,8 +78,8 @@ class Toponymy:
         Deprecated. Use verbose instead.
     annotators: List[Annotator], optional
         The annotators to run, in order, over the whole cluster tree. They must include one that outputs
-        ``exemplars`` and ``exemplar_original_indices``. An annotator with an unset ``null_topic`` gets the mean of
-        the embedding vectors. If None, the exemplars are made with the exemplar_method given to fit, using the
+        ``exemplars`` and ``exemplar_original_indices``. An annotator with ``kind = "exemplar"`` and an unset
+        ``null_topic`` gets the mean of the embedding vectors. If None, the exemplars are made with the exemplar_method given to fit, using the
         settings of the cluster layers.
 
     Attributes:
@@ -221,18 +227,20 @@ class Toponymy:
             source = _exemplar_annotator_of(self.annotators)
         return getattr(source, "object_to_text_function", None)
 
+    def _annotator_runs(self, embedding_vectors):
+        """The (annotator, nodes) pairs for the given annotators, with None for all nodes."""
+        if not all(has_stock_exemplars(layer) for layer in self.cluster_layers_):
+            raise ValueError(
+                "annotators cannot be used with layer classes that override make_exemplar_texts"
+            )
+        null_topic = np.mean(embedding_vectors, axis=0)
+        return [(_with_null_topic(a, null_topic), None) for a in self.annotators]
+
     def _exemplar_runs(
         self, objects, embedding_vectors, exemplar_method, non_text_objects
     ):
-        """The (annotator, nodes) pairs that make the exemplars, with None for all nodes."""
+        """The (annotator, nodes) pairs that make each layer's exemplars from the layer settings."""
         null_topic = np.mean(embedding_vectors, axis=0)
-        if self.annotators is not None:
-            if not all(has_stock_exemplars(layer) for layer in self.cluster_layers_):
-                raise ValueError(
-                    "annotators cannot be used with layer classes that override make_exemplar_texts"
-                )
-            return [(_with_null_topic(a, null_topic), None) for a in self.annotators]
-
         exemplar_method = exemplar_method or "central"
         runs = []
         for i, layer in enumerate(self.cluster_layers_):
@@ -336,9 +344,12 @@ class Toponymy:
         )
 
         non_text_objects = self._object_to_text_function() is not None
-        runs = self._exemplar_runs(
-            objects, embedding_vectors, exemplar_method, non_text_objects
-        )
+        if self.annotators is not None:
+            runs = self._annotator_runs(embedding_vectors)
+        else:
+            runs = self._exemplar_runs(
+                objects, embedding_vectors, exemplar_method, non_text_objects
+            )
         for annotator, nodes in runs:
             failures = executor.run(annotator, nodes=nodes)
             if failures:

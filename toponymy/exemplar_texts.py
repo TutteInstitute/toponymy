@@ -365,6 +365,7 @@ class SubmodularExemplarAnnotator:
     inputs = ("cluster_objects", "cluster_object_vectors", "cluster_object_indices")
     outputs = ("exemplars", "exemplar_original_indices")
     algorithm_type = "node-node"
+    kind = "exemplar"
 
     def __init__(
         self,
@@ -578,6 +579,7 @@ class RandomExemplarAnnotator:
     inputs = ("cluster_objects", "cluster_object_indices")
     outputs = ("exemplars", "exemplar_original_indices")
     algorithm_type = "node-node"
+    kind = "exemplar"
 
     def __init__(
         self,
@@ -867,6 +869,7 @@ class DiverseExemplarAnnotator:
     )
     outputs = ("exemplars", "exemplar_original_indices")
     algorithm_type = "node-node"
+    kind = "exemplar"
 
     def __init__(
         self,
