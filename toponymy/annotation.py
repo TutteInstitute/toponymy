@@ -832,6 +832,16 @@ class DescendantsInput(InputSpec):
 
 @dataclass(frozen=True)
 class MultiNodeInput(InputSpec):
+    """Annotate groups of nodes together, with one ``annotate`` call for each group.
+
+    ``groups`` names an annotator method. It is called once per run with a mapping of
+    node to value for the nodes being run, and returns the groups: an iterable of
+    tuples of nodes. Groups must not overlap and must stay within the nodes being run.
+    ``annotate`` receives a group and, for this input, a mapping of node to value for
+    the nodes of the group. With a ``"multinode"`` output, it returns a mapping of node
+    to value for nodes of the group.
+    """
+
     groups: Optional[str] = (
         None  # name of the method to call to create the groups of nodes
     )
@@ -1202,8 +1212,12 @@ class Executor:
         # Finally run .annotate over the units
         failures = {}
         for unit in units:
-            prior_output_state = {
-                store_name: self.store[store_name].states[unit]
+            unit_nodes = (unit,) if isinstance(unit, NodeId) else unit
+            was_computed = {
+                store_name: all(
+                    self.store[store_name].states[node] is AnnotationState.COMPUTED
+                    for node in unit_nodes
+                )
                 for store_name in writes_to.values()
             }
 
@@ -1220,10 +1234,7 @@ class Executor:
                 result = annotator.annotate(unit, **kwargs)
             except Exception as error:
                 for store_name in writes_to.values():
-                    was_computed = (
-                        prior_output_state[store_name] is AnnotationState.COMPUTED
-                    )
-                    keep_old_value = store_name in in_place and was_computed
+                    keep_old_value = store_name in in_place and was_computed[store_name]
                     if not keep_old_value:
                         output.fail(self.store[store_name], unit)
                 failures[unit] = f"{type(error).__name__}: {error}"
