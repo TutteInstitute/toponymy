@@ -717,6 +717,10 @@ class Annotator(Protocol):
     optional_inputs : Sequence[str]
         Input names passed to ``annotate`` only when the annotation exists in the
         store and is computed for the unit.
+    kind : str or None
+        What the annotator is for, ``None`` if omitted. ``"exemplar"`` marks an annotator
+        that selects exemplars; ``Toponymy`` gives one with an unset ``null_topic``
+        the mean embedding vector.
     algorithm_input_type, algorithm_output_type : Mapping, str
         The explicit contract, an alternative to ``algorithm_type`` that must define
         both. ``algorithm_input_type`` maps each name in ``inputs`` and
