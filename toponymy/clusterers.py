@@ -2,9 +2,9 @@
 
 This module sits alongside :mod:`toponymy.clustering`, which is unchanged and
 still used by :class:`toponymy.Toponymy`. Several names here also exist there
-(``Clusterer``, ``ClusterLayer``, ``EVoCClusterer``, ``build_cluster_tree``).
-They are separate implementations with different contracts, so import them from
-``toponymy.clusterers`` explicitly.
+(``Clusterer``, ``ClusterLayer``, ``KMeansClusterer``, ``PLSCANClusterer``,
+``EVoCClusterer``, ``build_cluster_tree``). They are separate implementations
+with different contracts, so import them from ``toponymy.clusterers`` explicitly.
 
 A clusterer produces clustering structure and holds no topic state:
 ``cluster_layers_``, the partition of the observations at each resolution, and
@@ -23,9 +23,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
+from fast_hdbscan import PLSCAN
 from numpy.typing import ArrayLike, NDArray
 from scipy import sparse
 from sklearn.base import BaseEstimator
+from sklearn.cluster import KMeans
 from sklearn.exceptions import NotFittedError
 
 if TYPE_CHECKING:
@@ -464,6 +466,319 @@ class Clusterer(ABC, BaseEstimator):
             }
         self.cluster_layers_ = layers
         self.cluster_tree_ = tree
+
+
+class KMeansClusterer(Clusterer):
+    """Cluster vectors with k-means at several resolutions.
+
+    Each layer is a separate :class:`sklearn.cluster.KMeans` fit. The finest
+    asks for ``base_n_clusters`` clusters, or one per observation if there are
+    fewer observations. Each further layer asks for a quarter as many, rounded
+    down, while that is at least ``min_clusters``: ``base_n_clusters=64`` and
+    ``min_clusters=4`` give layers of 64, 16 and 4 clusters.
+
+    The layers keep the labels KMeans returned as cluster IDs. k-means assigns
+    every observation, so there is no noise. The fits are independent and their
+    clusters need not nest, so ``cluster_tree_`` attaches each cluster to the
+    nearest cluster above that contains all of it, as built by
+    :func:`build_cluster_tree`.
+
+    Parameters
+    ----------
+    min_clusters : int, default=6
+        Fewest clusters a layer asks for. At least 1. Only the finest layer can
+        ask for fewer, when there are fewer observations.
+    base_n_clusters : int, default=1024
+        Number of clusters in the finest layer. At least ``min_clusters``.
+    random_state : int, RandomState instance or None, default=None
+        Passed to every ``KMeans`` fit; an int makes the fits repeatable.
+    verbose : bool, default=False
+        Passed to every ``KMeans`` fit.
+
+    Attributes
+    ----------
+    cluster_layers_ : list of ClusterLayer
+        One layer per resolution, finest first; none if there are no
+        observations.
+    cluster_tree_ : dict
+        The hierarchy of the clusters, as built by :func:`build_cluster_tree`.
+    """
+
+    def __init__(
+        self,
+        min_clusters: int = 6,
+        base_n_clusters: int = 1024,
+        random_state: int | np.random.RandomState | None = None,
+        verbose: bool = False,
+    ):
+        self.min_clusters = min_clusters
+        self.base_n_clusters = base_n_clusters
+        self.random_state = random_state
+        self.verbose = verbose
+
+    def fit(self, vectors: ArrayLike) -> Self:
+        """Cluster ``vectors`` with k-means at each resolution.
+
+        Parameters
+        ----------
+        vectors : array-like of shape (n_observations, n_features)
+            Dense finite vectors, one row per observation.
+
+        Returns
+        -------
+        self
+            The fitted clusterer.
+
+        Raises
+        ------
+        ValueError
+            If ``vectors`` is not a two-dimensional dense array of finite real
+            numbers, ``min_clusters`` or ``base_n_clusters`` is not a positive
+            integer, or ``base_n_clusters`` is less than ``min_clusters``.
+        """
+        vectors = _validate_vectors(vectors)
+        self._validate_parameters()
+        resolutions = []
+        if vectors.shape[0]:
+            resolutions.append(min(self.base_n_clusters, vectors.shape[0]))
+            while resolutions[-1] // 4 >= self.min_clusters:
+                resolutions.append(resolutions[-1] // 4)
+        labels = [
+            KMeans(
+                n_clusters=n_clusters,
+                random_state=self.random_state,
+                verbose=self.verbose,
+            ).fit_predict(vectors)
+            for n_clusters in resolutions
+        ]
+        self._set_labels(labels)
+        return self
+
+    def _validate_parameters(self) -> None:
+        # Checked for every input, so that a tiny input does not hide a bad value.
+        for name in ("min_clusters", "base_n_clusters"):
+            if _nonnegative_integer(getattr(self, name), name) < 1:
+                raise ValueError(f"{name} must be at least 1")
+        if self.base_n_clusters < self.min_clusters:
+            raise ValueError("base_n_clusters must be at least min_clusters")
+
+
+def _validate_distance_graph(graph) -> sparse.sparray | sparse.spmatrix:
+    """Check a sparse distance graph without making it dense, and return it."""
+    if not sparse.issparse(graph):
+        raise ValueError("metric='precomputed' requires a sparse distance graph")
+    if graph.ndim != 2 or graph.shape[0] != graph.shape[1]:
+        raise ValueError("a distance graph must be a square matrix")
+    # The stored values of any sparse format, as PLSCAN itself reads them.
+    values = graph.tocoo().data
+    kind = values.dtype.kind
+    # As for vectors, integers need no finiteness check.
+    if kind not in "iuf" or (kind == "f" and not np.isfinite(values).all()):
+        raise ValueError("a distance graph must contain finite real numbers")
+    if np.any(values < 0):
+        raise ValueError("a distance graph must not contain negative distances")
+    return graph
+
+
+class PLSCANClusterer(Clusterer):
+    """Cluster vectors, or a sparse distance graph, with PLSCAN.
+
+    PLSCAN, from fast_hdbscan, builds an HDBSCAN cluster hierarchy and selects
+    its most persistent resolutions as layers, finest first. The parameters
+    other than ``min_clusters`` are PLSCAN's own, with PLSCAN's defaults, and
+    are passed to :class:`fast_hdbscan.PLSCAN` unchanged; see its documentation
+    for the details. Layers with fewer than ``min_clusters`` clusters are then
+    dropped. The others keep PLSCAN's labels as cluster IDs, and
+    ``cluster_tree_`` is built from them by :func:`build_cluster_tree`, not
+    taken from PLSCAN.
+
+    Parameters
+    ----------
+    min_clusters : int, default=1
+        Fewest clusters a layer must have to be kept. At least 1.
+    min_samples : int, default=5
+        Number of samples in a neighborhood for a point to be a core point;
+        larger values smooth the density estimate more. At least 1.
+    max_layers : int, default=10
+        Maximum number of layers PLSCAN selects, before ``min_clusters`` drops
+        any. At least 1.
+    base_min_cluster_size : int, default=5
+        Smallest cluster size in the finest layer. At least 2.
+    base_n_clusters : int or None, default=None
+        If set, PLSCAN aims for about this many clusters in the finest layer,
+        instead of using ``base_min_cluster_size``.
+    layer_similarity_threshold : float, default=0.2
+        Largest similarity allowed between two selected layers; lower values
+        give more distinct layers.
+    reproducible : bool, default=False
+        Whether PLSCAN uses its slower, deterministic algorithms where it has
+        them; see Notes for the inputs that ignore it.
+    metric : str, default="euclidean"
+        Distance metric. With ``"precomputed"``, ``fit`` takes a sparse
+        distance graph instead of vectors.
+    algorithm : {"boruvka", "kruskal"}, default="boruvka"
+        Spanning tree algorithm; see Notes for the inputs that ignore it.
+    knn_k : int or None, default=None
+        Number of nearest neighbors used to build the spanning tree, or None
+        to let PLSCAN decide.
+    cannot_link : sparse matrix or None, default=None
+        A matrix of shape (n_observations, n_observations) whose nonzero
+        entries mark pairs of observations that must not be in the same
+        cluster. Requires ``algorithm="kruskal"``; see Notes for the inputs
+        that ignore it.
+    validate_cannot_link : bool, default=True
+        Whether PLSCAN checks ``cannot_link`` and makes it symmetric. If False,
+        it must already be a symmetric CSR matrix.
+    metric_kwds : dict or None, default=None
+        Keyword arguments for the metric.
+    verbose : bool, default=False
+        Whether PLSCAN prints its progress.
+
+    Attributes
+    ----------
+    cluster_layers_ : list of ClusterLayer
+        The layers with at least ``min_clusters`` clusters, finest first. If
+        there are none, or PLSCAN did not run, a single layer of noise instead,
+        or none if there are no observations.
+    cluster_tree_ : dict
+        The hierarchy of the clusters, as built by :func:`build_cluster_tree`.
+    cluster_probabilities_ : list of ndarray
+        PLSCAN's membership strengths for each kept layer, in the order of
+        ``cluster_layers_``. Empty if no layer was kept: the layer of noise
+        that replaces them has no PLSCAN metadata.
+    cluster_persistence_scores_ : list of float
+        PLSCAN's persistence score for each kept layer, in the same order;
+        PLSCAN scores its base layer 0. Empty like ``cluster_probabilities_``.
+    plscan_min_cluster_sizes_ : ndarray or None
+        The minimum cluster sizes PLSCAN explored to select its layers, copied
+        from ``plscan_.min_cluster_sizes_``. They describe the whole fit, not
+        a layer. None if PLSCAN did not run.
+    plscan_ : fast_hdbscan.PLSCAN or None
+        The fitted PLSCAN estimator, which also holds the layers that
+        ``min_clusters`` dropped. None if PLSCAN did not run.
+
+    Notes
+    -----
+    Fewer than ``max(min_samples, base_min_cluster_size)`` observations are too
+    few to cluster. They form one layer of noise, or no layer at all if there
+    are no observations, and PLSCAN is not run.
+
+    Vectors that are not C-contiguous are copied before PLSCAN gets them, since
+    fast_hdbscan 0.3.2 fails on Fortran-ordered arrays. A distance graph is
+    checked without being made dense and passed to PLSCAN as given: a missing
+    entry means that there is no edge, and a stored zero is a distance of zero.
+
+    fast_hdbscan 0.3.2 builds the spanning tree from an approximate
+    nearest-neighbor graph, computed with pynndescent, for metrics other than
+    ``"euclidean"`` and ``"precomputed"`` and for euclidean vectors with more
+    than 30 features. For those inputs it ignores ``reproducible``,
+    ``algorithm`` and ``cannot_link`` without a warning, so pairs in
+    ``cannot_link`` can share a cluster and fits of the same data can differ.
+    """
+
+    def __init__(
+        self,
+        min_clusters: int = 1,
+        min_samples: int = 5,
+        max_layers: int = 10,
+        base_min_cluster_size: int = 5,
+        base_n_clusters: int | None = None,
+        layer_similarity_threshold: float = 0.2,
+        reproducible: bool = False,
+        metric: str = "euclidean",
+        algorithm: str = "boruvka",
+        knn_k: int | None = None,
+        cannot_link: sparse.sparray | sparse.spmatrix | None = None,
+        validate_cannot_link: bool = True,
+        metric_kwds: dict | None = None,
+        verbose: bool = False,
+    ):
+        self.min_clusters = min_clusters
+        self.min_samples = min_samples
+        self.max_layers = max_layers
+        self.base_min_cluster_size = base_min_cluster_size
+        self.base_n_clusters = base_n_clusters
+        self.layer_similarity_threshold = layer_similarity_threshold
+        self.reproducible = reproducible
+        self.metric = metric
+        self.algorithm = algorithm
+        self.knn_k = knn_k
+        self.cannot_link = cannot_link
+        self.validate_cannot_link = validate_cannot_link
+        self.metric_kwds = metric_kwds
+        self.verbose = verbose
+
+    def fit(self, vectors: ArrayLike | sparse.sparray | sparse.spmatrix) -> Self:
+        """Cluster ``vectors`` with PLSCAN.
+
+        Parameters
+        ----------
+        vectors : array-like of shape (n_observations, n_features), or sparse matrix
+            Dense finite vectors, one row per observation. With
+            ``metric="precomputed"``, a sparse matrix of shape
+            (n_observations, n_observations) of finite nonnegative distances
+            between the observations instead.
+
+        Returns
+        -------
+        self
+            The fitted clusterer.
+
+        Raises
+        ------
+        ValueError
+            If ``vectors`` is not valid input for ``metric``, if
+            ``min_clusters``, ``min_samples``, ``base_min_cluster_size`` or
+            ``max_layers`` is not an integer of at least its minimum, or if
+            PLSCAN rejects one of its other parameters.
+        """
+        if self.metric == "precomputed":
+            vectors = _validate_distance_graph(vectors)
+        else:
+            vectors = np.ascontiguousarray(_validate_vectors(vectors))
+        self._validate_parameters()
+        options = self.get_params(deep=False)
+        del options["min_clusters"]
+        # Creating PLSCAN checks its own parameters, so that a tiny input does
+        # not hide a bad value for them either.
+        plscan = PLSCAN(**options)
+        n_observations = vectors.shape[0]
+        labels, probabilities, scores, sizes = [], [], [], None
+        if n_observations < max(self.min_samples, self.base_min_cluster_size):
+            plscan = None
+        else:
+            plscan.fit(vectors)
+            sizes = np.array(plscan.min_cluster_sizes_)
+            # Each native layer is kept or dropped together with its metadata.
+            for layer, strengths, score in zip(
+                plscan.cluster_layers_,
+                plscan.membership_strength_layers_,
+                plscan.layer_persistence_scores_,
+                strict=True,
+            ):
+                if np.unique(layer[layer >= 0]).size >= self.min_clusters:
+                    labels.append(layer)
+                    probabilities.append(np.array(strengths))
+                    scores.append(float(score))
+        if n_observations and not labels:
+            labels = [np.full(n_observations, -1)]
+        self._set_labels(labels)
+        self.cluster_probabilities_ = probabilities
+        self.cluster_persistence_scores_ = scores
+        self.plscan_min_cluster_sizes_ = sizes
+        self.plscan_ = plscan
+        return self
+
+    def _validate_parameters(self) -> None:
+        # Checked for every input, so that a tiny input does not hide a bad value.
+        for name, minimum in (
+            ("min_clusters", 1),
+            ("min_samples", 1),
+            ("base_min_cluster_size", 2),
+            ("max_layers", 1),
+        ):
+            if _nonnegative_integer(getattr(self, name), name) < minimum:
+                raise ValueError(f"{name} must be at least {minimum}")
 
 
 class EVoCClusterer(Clusterer):
