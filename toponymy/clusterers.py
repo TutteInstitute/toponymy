@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping, Sequence
+import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -627,3 +628,126 @@ class EVoCClusterer(Clusterer):
                 'install it with: pip install "evoc>=0.3.2"'
             ) from error
         return EVoC(**self.get_params(deep=False)).fit(vectors)
+
+
+class PrecomputedClusterer(Clusterer):
+    """Use cluster labels that were computed elsewhere.
+
+    No clustering is run. The labels become ``cluster_layers_`` unchanged:
+    cluster IDs and the order of the observations are kept, and ``-1`` marks
+    noise. ``cluster_tree_`` is a copy of the given ``cluster_tree``, once
+    :func:`validate_cluster_tree` has checked it against the labels, or else the
+    tree that :func:`build_cluster_tree` builds from them.
+
+    Parameters
+    ----------
+    labels : sequence of array-like of int, optional
+        One label array per layer, finest first, as for
+        :func:`build_cluster_layers`. If None, pass the labels to ``fit``.
+    cluster_tree : mapping, optional
+        Maps each parent ``(layer, cluster ID)`` to a list of child
+        ``(layer, cluster ID)`` pairs, with ``(n_layers, 0)`` as the root, in the
+        form that :func:`build_cluster_tree` returns. A cluster may be the child
+        of any cluster above it that contains it, or of the root. If None, the
+        tree is built from the labels.
+
+    Attributes
+    ----------
+    cluster_layers_ : list of ClusterLayer
+        One layer per label array.
+    cluster_tree_ : dict
+        A copy of the given tree, or the tree built from the labels.
+
+    Notes
+    -----
+    The constructor stores copies of ``labels`` and ``cluster_tree``, so later
+    changes to the caller's objects have no effect. ``fit`` validates them.
+    """
+
+    def __init__(
+        self,
+        labels: Sequence[ArrayLike] | None = None,
+        cluster_tree: Mapping[ClusterKey, Sequence[ClusterKey]] | None = None,
+    ):
+        self.labels = copy.deepcopy(labels)
+        self.cluster_tree = copy.deepcopy(cluster_tree)
+
+    def __sklearn_clone__(self) -> Self:
+        # scikit-learn's default clone requires the constructor to store its
+        # arguments as they are, which this one does not.
+        return type(self)(**self.get_params(deep=False))
+
+    def fit(
+        self,
+        vectors: ArrayLike | None = None,
+        *,
+        labels: Sequence[ArrayLike] | None = None,
+    ) -> Self:
+        """Build the layers and the tree from the precomputed labels.
+
+        Parameters
+        ----------
+        vectors : array-like of shape (n_observations, n_features), optional
+            The vectors the labels belong to. They are not used, only checked:
+            they must be a dense two-dimensional array of finite numbers, with
+            as many rows as each layer has labels.
+        labels : sequence of array-like of int, optional
+            Label layers to use instead of the configured ``labels``. A
+            configured ``cluster_tree`` is checked against them.
+
+        Returns
+        -------
+        self
+            The fitted clusterer.
+
+        Raises
+        ------
+        ValueError
+            If there are no labels, the labels, vectors or tree are not valid,
+            or the vectors and the labels differ in observation count.
+        TypeError
+            If ``cluster_tree`` is not a mapping.
+        """
+        if labels is None:
+            labels = self.labels
+        if labels is None:
+            raise ValueError(
+                "supply precomputed labels to the constructor or as fit(labels=...)"
+            )
+        layers = build_cluster_layers(labels)
+        if vectors is not None:
+            n_observations = _validate_vectors(vectors).shape[0]
+            if layers and n_observations != len(layers[0].labels):
+                raise ValueError(
+                    "vectors and labels must have the same observation count"
+                )
+        if self.cluster_tree is None:
+            tree = build_cluster_tree([layer.labels for layer in layers])
+        else:
+            validate_cluster_tree(self.cluster_tree, layers)
+            # A copy with plain int nodes, as build_cluster_tree makes them.
+            tree = {
+                (int(parent[0]), int(parent[1])): [
+                    (int(child[0]), int(child[1])) for child in children
+                ]
+                for parent, children in self.cluster_tree.items()
+            }
+        # Not through _set_labels, which always builds the tree. Assigned only
+        # now, so that rejected input leaves an earlier fit unchanged.
+        self.cluster_layers_ = layers
+        self.cluster_tree_ = tree
+        return self
+
+    def fit_predict(
+        self,
+        vectors: ArrayLike | None = None,
+        *,
+        labels: Sequence[ArrayLike] | None = None,
+    ) -> tuple[list[ClusterLayer], ClusterTree]:
+        """Fit the clusterer and return its layers and tree.
+
+        Takes the same arguments as :meth:`fit`, and returns the fitted
+        ``cluster_layers_`` and ``cluster_tree_``.
+        """
+        self.fit(vectors, labels=labels)
+        return self.cluster_layers_, self.cluster_tree_
