@@ -6,7 +6,7 @@ SUMMARY_KINDS = [
     "very specific and detailed (6 to 12 word)",
     "specific and detailed (4 to 8 word)",
     "clear and concise (3 to 6 word)",
-    "focussed and brief (2 to 5 word)",
+    "focused and brief (2 to 5 word)",
     "essential and core (1 to 4 word)",
     "simple (1 or 2 word)",
 ]

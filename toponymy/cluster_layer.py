@@ -495,7 +495,7 @@ class ClusterLayerText(ClusterLayer):
                 (
                     llm.generate_topic_name(
                         prompt,
-                        topic_extraction_function=(
+                        extract_topic_name_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
                             else lambda json_response: str(json_response["topic_name"])
@@ -583,7 +583,7 @@ class ClusterLayerText(ClusterLayer):
                     (
                         llm.generate_topic_name(
                             prompt,
-                            topic_extraction_function=(
+                            extract_topic_name_function=(
                                 self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
                                 else lambda json_response: str(
@@ -958,7 +958,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
                     result = llm.generate_topic_name(
                         prompt,
-                        topic_extraction_function=(
+                        extract_topic_name_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
                             else lambda json_response: (
@@ -1071,7 +1071,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                     (
                         llm.generate_topic_name(
                             prompt,
-                            topic_extraction_function=(
+                            extract_topic_name_function=(
                                 self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
                                 else lambda json_response: (

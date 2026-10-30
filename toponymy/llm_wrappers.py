@@ -586,7 +586,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         self,
         prompt: Dict[str, Any],
         temperature: float = 0.4,
-        topic_extraction_function=lambda x: x["topic_name"],
+        extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int | None = None,
     ) -> TopicParseResult:
@@ -601,7 +601,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
         try:
             topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
-            result = topic_extraction_function(topic_info)
+            result = extract_topic_name_function(topic_info)
             topic_result = result if isinstance(result, tuple) else str(result)
             return TopicParseResult(
                 topic_payload=topic_result, raw_response=topic_info_raw, error=None
@@ -622,7 +622,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         self,
         prompt: Dict[str, Any],
         temperature: float = 0.4,
-        topic_extraction_function=lambda x: x["topic_name"],
+        extract_topic_name_function=lambda x: x["topic_name"],
         get_topic_name_regex=GET_TOPIC_NAME_REGEX,
         max_tokens: int | None = None,
     ) -> str | tuple:
@@ -630,7 +630,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         result = self._generate_topic_name_with_raw_response(
             prompt,
             temperature=temperature,
-            topic_extraction_function=topic_extraction_function,
+            extract_topic_name_function=extract_topic_name_function,
             get_topic_name_regex=get_topic_name_regex,
             max_tokens=max_tokens,
         )
@@ -681,7 +681,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
 
         topic_name_info = llm_output_to_result(
-            topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
+            topic_name_info_raw, get_topic_names_regex
         )
 
         return extract_topic_names_function(
@@ -838,8 +838,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             template_kind = "disambiguate_topics"
 
         prompt_params = load_prompt_params(example_id)
-
-        prompt = render_prompt(prompt_templates[template_kind], prompt_params)
+        template = prompt_templates[template_kind]
+        prompt = render_prompt(template, prompt_params)
 
         result = {
             "success": False,
@@ -870,6 +870,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                     old_names=prompt_params.get("old_names"),
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    get_topic_name_regex=template.get("get_topic_name_regex"),
+                    extract_topic_names_function=template.get("extract_topic_name"),
                 )
                 result["topic_result"] = topic_payloads
             else:
@@ -878,6 +880,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         prompt,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        get_topic_name_regex=template.get("get_topic_name_regex"),
+                        extract_topic_name_function=template.get("extract_topic_name"),
                     )
                     result["response"] = response.raw_response
                     result["topic_result"] = response.topic_payload
@@ -892,6 +896,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         prompt,
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        get_topic_name_regex=template.get("get_topic_name_regex"),
+                        extract_topic_name_function=template.get("extract_topic_name"),
                     )
                     result["topic_result"] = topic_payloads
             result["success"] = True
@@ -1477,8 +1483,9 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             template_kind = "disambiguate_topics"
 
         prompt_params = load_prompt_params(example_id)
+        template = prompt_templates[template_kind]
 
-        prompt = render_prompt(prompt_templates[template_kind], prompt_params)
+        prompt = render_prompt(template, prompt_params)
 
         result = {
             "success": False,
@@ -1509,6 +1516,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                     old_names_list=[prompt_params.get("old_names")],
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    get_topic_name_regex=template.get("get_topic_name_regex"),
+                    extract_topic_names_function=template.get("extract_topic_name"),
                 )
                 result["topic_result"] = (
                     cluster_results[0]
@@ -1521,6 +1530,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         [prompt],
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        get_topic_name_regex=template.get("get_topic_name_regex"),
+                        extract_topic_name_function=template.get("extract_topic_name"),
                     )
                     parsed = parsed_results[0]
                     result["response"] = parsed.raw_response
@@ -1536,6 +1547,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                         [prompt],
                         temperature=temperature,
                         max_tokens=max_tokens,
+                        get_topic_name_regex=template.get("get_topic_name_regex"),
+                        extract_topic_name_function=template.get("extract_topic_name"),
                     )
                     result["topic_result"] = topic_results[0]
             result["success"] = True

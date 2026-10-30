@@ -2,6 +2,12 @@ import asyncio
 import os
 import re
 
+from toponymy.tests.helpers.llm_golden_test_config import (
+    summary_kind_word_range,
+    TEMPLATE_CASES,
+    assert_valid_topic_name_result,
+)
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,9 +18,7 @@ from toponymy.llm_wrappers import (
     AsyncLLMWrapper,
 )
 from toponymy.templates import (
-    PROMPT_TEMPLATES,
-    SUMMARY_PROMPT_TEMPLATES,
-    MULTILINGUAL_EN_FR_PROMPT_TEMPLATES,
+    SUMMARY_KINDS,
 )
 
 from toponymy.tests.helpers.llm_test_config import (
@@ -25,30 +29,11 @@ from toponymy.tests.helpers.dummy_wrappers import (
     DummyAsyncSingleWrapper,
 )
 
-ACCEPTED_PATTERNS = {
-    "hockey_masks": [
-        r"\bgoalie\b",
-        r"\bgoaltend",
-        r"\bmask",
-    ]  # Note: do not match on hockey since it's too broad
-}
 
-
-def matches_expected_patterns(result, patterns):
-    """Check if the result matches any of the expected patterns"""
-    text = " ".join(result) if isinstance(result, tuple) else str(result)
-    normalized = re.sub(r"[^a-z0-9\s]", " ", text.lower())
-    return any(re.search(p, normalized) for p in patterns)
-
-
-def assert_valid_topic_name_result(result, example_id):
-    assert result["success"] is True, result
-    assert isinstance(result["topic_result"], str), result
-    assert len(result["topic_result"]) > 0, result
-    assert matches_expected_patterns(
-        result["topic_result"], ACCEPTED_PATTERNS[example_id]
-    ), result
-    assert result["prompt_kind"] == "topic_name", result
+@pytest.mark.parametrize("summary_kind", SUMMARY_KINDS)
+def test_summary_kind_word_range_parses(summary_kind):
+    low, high = summary_kind_word_range(summary_kind)
+    assert 1 <= low <= high
 
 
 class TestGoldenPrompts:
@@ -56,41 +41,54 @@ class TestGoldenPrompts:
     Test against real providers
     """
 
+    @pytest.mark.parametrize("example_id", ["hockey_masks"])
+    @pytest.mark.parametrize("template_id", TEMPLATE_CASES)
     @pytest.mark.parametrize(
         "ollama_namer_class",
         [OllamaNamer, AsyncOllamaNamer],
         ids=lambda cls: cls.__name__,
     )
-    def test_ollama_smoke_test(self, ollama_namer_class, ollama_test_model):
+    def test_ollama_smoke_test(
+        self, ollama_namer_class, ollama_test_model, template_id, example_id
+    ):
         namer = ollama_namer_class(model=ollama_test_model, temperature_override=0.0)
+        case = TEMPLATE_CASES[template_id]
+        prompt_templates = case.templates
         status = namer.connectivity_status()
         assert status["success"] is True, status
 
-        example_id = "hockey_masks"
         result = namer.run_prompt_example(
             example_id=example_id,
             verbose=True,
+            prompt_templates=prompt_templates,
         )
 
-        assert_valid_topic_name_result(result, example_id)
+        assert_valid_topic_name_result(result, example_id, template_id)
 
+    @pytest.mark.parametrize("example_id", ["hockey_masks"])
+    @pytest.mark.parametrize("template_id", TEMPLATE_CASES)
     @pytest.mark.asyncio(loop_scope="session")
-    async def test_ollama_async_namer_mixed_call_styles(self, ollama_test_model):
+    async def test_ollama_async_namer_mixed_call_styles(
+        self, ollama_test_model, template_id, example_id
+    ):
         """
         Test separate clients for bridge loop and user loop
         """
         namer = AsyncOllamaNamer(model=ollama_test_model, temperature_override=0.0)
-        example_id = "hockey_masks"
+        case = TEMPLATE_CASES[template_id]
+        prompt_templates = case.templates
         try:
-            sync_result = namer.run_prompt_example(example_id=example_id, verbose=True)
+            sync_result = namer.run_prompt_example(
+                example_id=example_id, verbose=True, prompt_templates=prompt_templates
+            )
             async_result = await namer.arun_prompt_example(
-                example_id=example_id, verbose=True
+                example_id=example_id, verbose=True, prompt_templates=prompt_templates
             )
         finally:
             await namer.close()
 
-        assert_valid_topic_name_result(sync_result, example_id)
-        assert_valid_topic_name_result(async_result, example_id)
+        assert_valid_topic_name_result(sync_result, example_id, template_id)
+        assert_valid_topic_name_result(async_result, example_id, template_id)
 
     @pytest.mark.external
     @pytest.mark.parametrize(
