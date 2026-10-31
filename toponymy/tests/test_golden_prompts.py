@@ -1,6 +1,5 @@
 import asyncio
 import os
-import re
 
 from toponymy.tests.helpers.llm_golden_test_config import (
     summary_kind_word_range,

@@ -826,6 +826,8 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             raise ValueError(
                 f"prompt_kind must be 'topic_name' or 'topic_cluster_names', got {prompt_kind}"
             )
+        if prompt_kind == "topic_cluster_names":
+            return NotImplemented("Topic cluster names are not implemented yet.")
         if max_tokens is None:
             if prompt_kind == "topic_name":
                 max_tokens = getattr(self, "max_tokens_topic_name", 128)
@@ -1470,6 +1472,10 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         if prompt_kind not in ("topic_name", "topic_cluster_names"):
             raise ValueError(
                 f"prompt_kind must be 'topic_name' or 'topic_cluster_names', got {prompt_kind}"
+            )
+        if prompt_kind == "topic_cluster_names":
+            return NotImplemented(
+                "Topic cluster name examples are not implemented yet."
             )
         if max_tokens is None:
             if prompt_kind == "topic_name":
