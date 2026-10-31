@@ -19,7 +19,7 @@ EXAMPLE_VOCABULARY: dict[str, dict[str, tuple[str, ...]]] = {
     "hockey_masks": {
         # Note: do not match on hockey since it's too broad
         "en": (r"\bgoalie\b", r"\bgoaltend", r"\bmask"),
-        "fr": (r"\bgardien", r"\bmasque", r"\bportier"),
+        "fr": (r"\bgardien", r"\bmasque", r"\bcagette", r"\bportier"),
         "themes": (
             r"\bgoalie|\bgoaltend",
             r"\bmask",
