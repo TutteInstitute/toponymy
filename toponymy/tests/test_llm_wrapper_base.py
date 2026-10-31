@@ -1,3 +1,7 @@
+import asyncio
+import pytest
+from unittest.mock import Mock
+
 from toponymy.llm_wrappers import (
     AsyncLLMWrapper,
     LLMWrapper,
@@ -6,23 +10,15 @@ from toponymy.llm_wrappers import (
     InvalidLLMInputError,
     repair_json_string_backslashes,
 )
+from toponymy.tests.helpers.dummy_wrappers import (
+    DummySingleWrapper,
+    SINGLE_RESPONSE,
+    SYSTEM_RESPONSE,
+)
 from toponymy.tests.helpers.llm_test_config import (
     make_prompt,
     validate_topic_name,
 )
-import pytest
-from unittest.mock import Mock
-
-
-class DummySingleWrapper(LLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    def _call_llm(self, prompt, temperature, max_tokens):
-        return "single-ok"
-
-    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
-        return "single-system-ok"
 
 
 class DummyCombinedOnlyWrapper(DummySingleWrapper):
@@ -59,51 +55,13 @@ class DummyFailFastWrapper(LLMWrapper):
         raise DummyFailFastProviderError("bad config")
 
 
-class DummyAsyncSingleWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        return "async-single-ok"
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        return "async-system-ok"
-
-
-class DummyAsyncFailureWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        raise RuntimeError("error")
-
-
-class DummyAsyncFailFastProviderError(Exception):
-    pass
-
-
-class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-    FAIL_FAST_EXCEPTIONS = (DummyAsyncFailFastProviderError,)
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise DummyAsyncFailFastProviderError("bad config")
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        raise DummyAsyncFailFastProviderError("bad config")
-
-
 def test_sync_connectivity_status_uses_plain_call():
     wrapper = DummySingleWrapper()
 
     result = wrapper.connectivity_status()
 
     assert result["success"] is True
-    assert result["response"] == "single-ok"
+    assert result["response"] == SINGLE_RESPONSE
     assert result["wrapper"] == "DummySingleWrapper"
     assert result["model"] == "dummy-model"
 
@@ -118,7 +76,7 @@ def test_sync_connectivity_status_uses_system_call():
     )
 
     assert result["success"] is True
-    assert result["response"] == "single-system-ok"
+    assert result["response"] == SYSTEM_RESPONSE
     assert result["wrapper"] == "DummySingleWrapper"
     assert result["model"] == "dummy-model"
 
@@ -140,7 +98,7 @@ def test_sync_test_llm_connectivity_success():
 
     result = wrapper.test_llm_connectivity()
 
-    assert result == "single-ok"
+    assert result == SINGLE_RESPONSE
 
 
 def test_sync_test_llm_connectivity_failure():
@@ -272,11 +230,11 @@ def test_safe_call_llm_emits_debug_callback_on_success():
         max_tokens=128,
     )
 
-    assert result == "single-ok"
+    assert result == SINGLE_RESPONSE
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_success"
     assert events[0]["prompt"] == {"combined": "test prompt"}
-    assert events[0]["raw_response"] == "single-ok"
+    assert events[0]["raw_response"] == SINGLE_RESPONSE
     assert events[0]["model"] == "dummy-model"
     assert events[0]["wrapper"] == "DummySingleWrapper"
 
@@ -294,14 +252,14 @@ def test_safe_call_llm_with_system_prompt_emits_debug_callback_on_success():
         max_tokens=128,
     )
 
-    assert result == "single-system-ok"
+    assert result == SYSTEM_RESPONSE
     assert len(events) == 1
     assert events[0]["event"] == "llm_call_success"
     assert events[0]["prompt"] == {
         "system": "system prompt",
         "user": "user prompt",
     }
-    assert events[0]["raw_response"] == "single-system-ok"
+    assert events[0]["raw_response"] == SYSTEM_RESPONSE
 
 
 def test_safe_call_llm_emits_debug_callback_on_error():
@@ -389,3 +347,11 @@ def test_repair_json_string_backslashes_empty():
     empty = ""
     result = repair_json_string_backslashes(empty)
     assert result == empty
+
+
+def test_sync_and_async_connectivity_status_return_same_result(dummy_namer):
+    sync_status = dummy_namer.connectivity_status()
+    async_status = asyncio.run(dummy_namer.aconnectivity_status())
+
+    assert sync_status["success"] is True, sync_status
+    assert sync_status == async_status
