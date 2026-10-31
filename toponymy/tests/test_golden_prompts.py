@@ -91,27 +91,32 @@ class TestGoldenPrompts:
         assert_valid_topic_name_result(async_result, example_id, template_id)
 
     @pytest.mark.external
+    @pytest.mark.parametrize("template_id", TEMPLATE_CASES)
     @pytest.mark.parametrize(
         "namer_class, api_key_name, namer_kwargs",
         EXTERNAL_SUPPORTED_NAMERS,
         ids=lambda p: p.__name__ if isinstance(p, type) else None,
     )
-    def test_supported_models_smoke_test(self, namer_class, api_key_name, namer_kwargs):
+    def test_supported_models_smoke_test(
+        self, namer_class, api_key_name, namer_kwargs, template_id
+    ):
         if os.getenv(api_key_name) is None:
             pytest.skip(f"{api_key_name} is not set in the environment")
 
+        case = TEMPLATE_CASES[template_id]
         namer = namer_class(**namer_kwargs)
         status = namer.connectivity_status()
-        assert status["success"] is True
+        assert status["success"] is True, status
 
         example_id = "hockey_masks"
-
         result = namer.run_prompt_example(
             example_id=example_id,
+            prompt_templates=case.templates,
+            max_tokens=case.max_tokens,
             verbose=True,
         )
 
-        assert_valid_topic_name_result(result, example_id)
+        assert_valid_topic_name_result(result, example_id, template_id)
 
 
 ASYNC_METHOD_NAMES = {
