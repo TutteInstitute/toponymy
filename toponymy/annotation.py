@@ -795,7 +795,7 @@ class InputSpec:
         figuring out what the units need to be, as required for disambiguation."""
         return None
 
-    def units(self, prepared):
+    def units(self, annotator, annotation, nodes, prepared):
         """Return the units, that is, groups of nodes each .annotate() will be called on,
         if this spec defines the units, else None. The executor takes the unit to be a node if None.
         """
@@ -804,6 +804,28 @@ class InputSpec:
     def gather(self, annotation, unit, prepared):
         """Return the kwarg values per unit."""
         raise NotImplementedError
+
+
+@dataclass(frozen=True)
+class GroupedInputSpec(InputSpec):
+    """Base for inputs gathered over a group of nodes.
+
+    ``gather`` returns a mapping of node to value over the group, and raises
+    ``NotAvailable`` if any node of the group is not computed.
+
+    The groups come from whichever input of the run defines units. A subclass
+    defines them by implementing ``units``.
+    """
+
+    source: Optional[str] = None
+    from_output: Optional[str] = None
+
+    def gather(self, annotation, unit, prepared):
+        values = annotation.computed(nodes=unit)
+        if len(values) != len(unit):
+            missing = [node for node in unit if node not in values]
+            raise NotAvailable(f"{annotation.name!r} is not computed for {missing}")
+        return values
 
 
 @dataclass(frozen=True)
@@ -831,7 +853,35 @@ class DescendantsInput(InputSpec):
 
 
 @dataclass(frozen=True)
-class MultiNodeInput(InputSpec):
+class LayerInput(GroupedInputSpec):
+    """Annotate the selected nodes of each layer together, with one annotate call per layer.
+
+    Each unit is the selected nodes of one layer.
+
+    With ``require_complete=True``, every layer with a selected node must be selected
+    in full, otherwise the run raises ValueError. Use it for annotators whose results
+    depend on the other nodes of the layer.
+    """
+
+    require_complete: bool = False
+
+    def units(self, annotator, annotation, nodes, prepared):
+        tree, selected = annotation.tree, set(nodes)
+        groups = []
+        for layer_id in sorted({node.layer for node in selected}):
+            layer = tuple(tree.layer(layer_id))
+            if self.require_complete and not selected.issuperset(layer):
+                raise ValueError(
+                    f"layer {layer_id} is only partly selected, but "
+                    f"{type(annotator).__name__} needs whole layers; "
+                    f"run the whole layer instead"
+                )
+            groups.append(tuple(node for node in layer if node in selected))
+        return groups
+
+
+@dataclass(frozen=True)
+class MultiNodeInput(GroupedInputSpec):
     """Annotate groups of nodes together, with one ``annotate`` call for each group.
 
     ``groups`` names an annotator method. It is called once per run with a mapping of
@@ -842,22 +892,12 @@ class MultiNodeInput(InputSpec):
     to value for nodes of the group.
     """
 
-    groups: Optional[str] = (
-        None  # name of the method to call to create the groups of nodes
-    )
-    source: Optional[str] = None
-    from_output: Optional[str] = None
+    groups: Optional[str] = None
 
-    def prepare(self, annotator, annotation, nodes):
+    def units(self, annotator, annotation, nodes, prepared):
         if self.groups is None:
             return None
         return call_method(annotator, self.groups, annotation.computed(nodes))
-
-    def units(self, prepared):
-        return prepared
-
-    def gather(self, annotation, unit, prepared):
-        return annotation.computed(nodes=unit)
 
 
 @dataclass(frozen=True)
@@ -901,6 +941,7 @@ class MultiNodeOutput:
 INPUT_SPECS = {
     "node": NodeInput,
     "descendants": DescendantsInput,
+    "layer": LayerInput,
     "multinode": MultiNodeInput,
     "prepare_method": PrepareMethodNodeInput,
 }
@@ -1183,7 +1224,15 @@ class Executor:
         unit_sources = [
             groups
             for name, spec in specs.items()
-            if (groups := spec.units(prepared[name])) is not None
+            if (
+                groups := spec.units(
+                    annotator,
+                    self.store[reads_from[name]],
+                    selected_nodes,
+                    prepared[name],
+                )
+            )
+            is not None
         ]
         if len(unit_sources) > 1:
             raise ValueError("only one input may define the units")
@@ -1200,6 +1249,15 @@ class Executor:
                 result.append(group)
             units = sorted(result)
         elif isinstance(output, NodeOutput):
+            grouped = [
+                name
+                for name, spec in specs.items()
+                if isinstance(spec, GroupedInputSpec)
+            ]
+            if grouped:
+                raise ValueError(
+                    f"inputs {grouped} are gathered over groups, but no input defines them"
+                )
             units = selected_nodes
         else:
             raise ValueError("a multinode annotator needs an input that defines groups")

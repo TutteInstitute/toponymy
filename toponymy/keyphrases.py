@@ -5,7 +5,7 @@ from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs
 from functools import reduce
 from collections import Counter, defaultdict
-from toponymy.annotation import MultiNodeInput
+from toponymy.annotation import LayerInput, MultiNodeInput
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from vectorizers.transformers import InformationWeightTransformer
@@ -748,7 +748,7 @@ class InformationWeightedKeyphraseAnnotator:
     inputs = ("cluster_object_indices",)
     outputs = ("keyphrases",)
     algorithm_type = {
-        "cluster_object_indices": (MultiNodeInput(groups="by_layer"), "multinode")
+        "cluster_object_indices": (LayerInput(require_complete=True), "multinode")
     }
 
     def __init__(
@@ -784,13 +784,6 @@ class InformationWeightedKeyphraseAnnotator:
         self.max_alpha = max_alpha
         self.min_alpha = min_alpha
         self.alpha_tolerance = alpha_tolerance
-
-    def by_layer(self, indices_by_node):
-        """Group the nodes by layer; the executor calls this to make the units."""
-        layers = defaultdict(list)
-        for node in indices_by_node:
-            layers[node.layer].append(node)
-        return [tuple(nodes) for nodes in layers.values()]
 
     def annotate(self, layer_nodes, *, cluster_object_indices):
         """Select keyphrases for the nodes of one layer.

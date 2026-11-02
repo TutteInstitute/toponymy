@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+from collections import defaultdict
 import numpy as np
 import pandas as pd
 import pytest
@@ -13,8 +14,10 @@ from toponymy.annotation import (
     DescendantsInput,
     Executor,
     InvalidAnnotationTree,
+    LayerInput,
     MultiNodeInput,
     NodeId,
+    NotAvailable,
     NodeInput,
     NodeOutput,
     _members_by_cluster,
@@ -1173,3 +1176,131 @@ def test_store_from_clusterer_empty_cluster_has_nan_centroid_and_is_skipped(
     assert failures == {}
     assert list(store.exemplars[empty_node]) == []
     assert list(store.exemplar_original_indices[empty_node]) == []
+
+
+def test_layer_input_groups_the_selected_nodes_of_each_layer(annotation):
+    nodes = [NodeId(0, 0), NodeId(1, 0), NodeId(0, 1)]
+
+    groups = LayerInput().units(None, annotation, nodes, None)
+
+    assert groups == [(NodeId(0, 0), NodeId(0, 1)), (NodeId(1, 0),)]
+
+
+def test_layer_input_require_complete_rejects_a_partial_layer(annotation):
+    nodes = [NodeId(0, 0), NodeId(0, 1)]
+
+    with pytest.raises(ValueError, match="layer 0 is only partly selected"):
+        LayerInput(require_complete=True).units(None, annotation, nodes, None)
+
+
+def test_layer_input_require_complete_accepts_whole_layers(annotation):
+    layer = tuple(annotation.tree.layer(0))
+
+    groups = LayerInput(require_complete=True).units(
+        None, annotation, list(layer), None
+    )
+
+    assert groups == [layer]
+
+
+def _fill(annotation, nodes):
+    for node in nodes:
+        annotation[node] = f"{annotation.name}{tuple(node)}"
+    return annotation
+
+
+class _Grouper:
+    """Annotator stand-in whose groups method records what it was given."""
+
+    def __init__(self, groups):
+        self._groups = groups
+        self.received = None
+
+    def pairs(self, values):
+        self.received = values
+        return self._groups
+
+
+def test_multinode_input_units_calls_the_method_with_computed_values(annotation):
+    _fill(annotation, [NodeId(0, 0), NodeId(0, 1)])
+    annotator = _Grouper([(NodeId(0, 0), NodeId(0, 1))])
+    nodes = [NodeId(0, 0), NodeId(0, 1), NodeId(0, 2)]
+
+    groups = MultiNodeInput(groups="pairs").units(annotator, annotation, nodes, None)
+
+    assert groups == [(NodeId(0, 0), NodeId(0, 1))]
+    assert annotator.received == {
+        NodeId(0, 0): "topics(0, 0)",
+        NodeId(0, 1): "topics(0, 1)",
+    }
+
+
+def test_multinode_input_without_groups_defines_no_units(annotation):
+    assert MultiNodeInput().units(None, annotation, [NodeId(0, 0)], None) is None
+
+
+@pytest.mark.parametrize("method", ["missing", "annotate"])
+def test_multinode_input_rejects_unusable_methods(annotation, method):
+    with pytest.raises(AttributeError, match=method):
+        MultiNodeInput(groups=method).units(_Grouper([]), annotation, [], None)
+
+
+def test_multinode_input_gathers_the_values_of_the_group(annotation):
+    _fill(annotation, [NodeId(0, 0), NodeId(0, 1), NodeId(0, 2)])
+
+    values = MultiNodeInput().gather(annotation, (NodeId(0, 0), NodeId(0, 1)), None)
+
+    assert values == {NodeId(0, 0): "topics(0, 0)", NodeId(0, 1): "topics(0, 1)"}
+
+
+def test_multinode_input_gather_needs_every_node_of_the_group(annotation):
+    _fill(annotation, [NodeId(0, 0)])
+
+    with pytest.raises(NotAvailable, match=r"\(0, 1\)"):
+        MultiNodeInput().gather(annotation, (NodeId(0, 0), NodeId(0, 1)), None)
+
+
+class _PairAnnotator:
+    """Groups by layer on input a; b is gathered over the same groups."""
+
+    inputs = ("a", "b")
+    outputs = ("out",)
+    algorithm_type = {
+        "a": (MultiNodeInput(groups="by_layer"), "multinode"),
+        "b": ("multinode", "multinode"),
+    }
+
+    def by_layer(self, values):
+        layers = defaultdict(list)
+        for node in values:
+            layers[node.layer].append(node)
+        return [tuple(nodes) for nodes in layers.values()]
+
+    def annotate(self, unit, *, a, b):
+        return {"out": {node: (a[node], b[node]) for node in unit}}
+
+
+def test_multinode_input_reads_over_another_inputs_groups(annotation):
+    tree = annotation.tree
+    a = _fill(Annotation("a", tree), tree.nodes)
+    b = _fill(Annotation("b", tree), tree.nodes)
+    store = AnnotationStore(tree, [a, b])
+
+    assert Executor(store).run(_PairAnnotator()) == {}
+    assert store["out"][NodeId(1, 2)] == ("a(1, 2)", "b(1, 2)")
+
+
+class _UngroupedAnnotator:
+    inputs = ("topics",)
+    outputs = ("out",)
+    algorithm_type = "multinode-node"
+
+    def annotate(self, unit, *, topics):
+        return {"out": topics}
+
+
+def test_grouped_input_without_groups_is_rejected(annotation):
+    store = AnnotationStore(annotation.tree, [_fill(annotation, annotation.tree.nodes)])
+
+    with pytest.raises(ValueError, match="gathered over groups"):
+        Executor(store).run(_UngroupedAnnotator())
