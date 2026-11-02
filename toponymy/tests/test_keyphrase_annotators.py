@@ -98,15 +98,6 @@ def test_annotator_selects_n_keyphrases_for_each_node(builder, embedder, store):
     assert max(len(keyphrases) for keyphrases in store.keyphrases.values()) == 3
 
 
-def test_by_layer_groups_the_nodes_of_each_layer(builder):
-    annotator = InformationWeightedKeyphraseAnnotator(builder)
-    nodes = [NodeId(0, 0), NodeId(1, 0), NodeId(0, 1)]
-
-    groups = annotator.by_layer(dict.fromkeys(nodes))
-
-    assert groups == [(NodeId(0, 0), NodeId(0, 1)), (NodeId(1, 0),)]
-
-
 def test_annotator_requires_a_fitted_builder():
     with pytest.raises(NotFittedError):
         InformationWeightedKeyphraseAnnotator(KeyphraseBuilder())
@@ -126,3 +117,11 @@ def test_annotator_embeds_the_keyphrases_if_the_builder_has_no_vectors(
 
     n_keyphrases = len(builder_without_vectors.keyphrase_list_)
     assert annotator.keyphrase_vectors.shape[0] == n_keyphrases
+
+
+def test_annotator_rejects_a_partial_layer(builder, store):
+    annotator = InformationWeightedKeyphraseAnnotator(builder)
+    first = next(iter(store.tree.layer(0)))
+
+    with pytest.raises(ValueError, match="only partly selected"):
+        Executor(store).run(annotator, nodes=[first])
