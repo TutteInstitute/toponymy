@@ -1,3 +1,5 @@
+import copy
+
 import numpy as np
 import pytest
 from sklearn.exceptions import NotFittedError
@@ -6,11 +8,23 @@ from toponymy.annotation import AnnotationStore, Executor, NodeId
 from toponymy.keyphrases import (
     InformationWeightedKeyphraseAnnotator,
     KeyphraseBuilder,
+    information_weighted_keyphrases,
+)
+
+# Chosen so that on this data, leaving any one at its default changes the keyphrases
+PARAMS = dict(
+    n_keyphrases=8,
+    prior_strength=0.5,
+    weight_power=1.0,
+    max_alpha=0.8,
+    min_alpha=0.4,
+    alpha_tolerance=0.2,
 )
 
 
 @pytest.fixture(scope="module")
 def fitted_clusterer(clusterer, clusterable_vectors, object_vectors):
+    clusterer = copy.deepcopy(clusterer)
     clusterer.fit(
         clusterable_vectors, object_vectors, show_progress_bar=False, verbose=False
     )
@@ -39,42 +53,37 @@ def builder_without_vectors(all_sentences):
     return KeyphraseBuilder(n_jobs=1).fit(all_sentences)
 
 
-def legacy_keyphrases(layer, builder, vectors, embedder):
-    # The legacy method writes embeddings back into the vectors it is given
-    return layer.make_keyphrases(
-        builder.keyphrase_list_,
-        builder.object_x_keyphrase_matrix_,
-        vectors.copy(),
-        embedder,
-        method="information_weighted",
-    )
-
-
-def test_annotator_matches_legacy_make_keyphrases(
-    builder, embedder, store, fitted_clusterer
-):
-    annotator = InformationWeightedKeyphraseAnnotator(builder, embedder)
-
-    assert Executor(store).run(annotator) == {}
-
-    for layer_id, layer in enumerate(fitted_clusterer.cluster_layers_):
-        expected = legacy_keyphrases(
-            layer, builder, builder.keyphrase_vectors_, embedder
+def legacy_keyphrases(layers, builder, embedder):
+    # Legacy shares one vectors array across layers and embeds into it
+    vectors = builder.keyphrase_vectors_.copy()
+    return [
+        information_weighted_keyphrases(
+            layer.cluster_labels,
+            builder.object_x_keyphrase_matrix_,
+            builder.keyphrase_list_,
+            vectors,
+            embedder,
+            **PARAMS,
         )
-        assert [store.keyphrases[n] for n in store.tree.layer(layer_id)] == expected
+        for layer in layers
+    ]
 
 
-def test_annotator_matches_legacy_make_keyphrases_with_missing_vectors(
-    builder_with_missing_vectors, embedder, store, fitted_clusterer
+@pytest.mark.parametrize("builder_name", ["builder", "builder_with_missing_vectors"])
+def test_annotator_matches_legacy_information_weighted_keyphrases(
+    builder_name, request, embedder, store, fitted_clusterer
 ):
-    builder = builder_with_missing_vectors
-    annotator = InformationWeightedKeyphraseAnnotator(builder, embedder)
+    builder = request.getfixturevalue(builder_name)
+    annotator = InformationWeightedKeyphraseAnnotator(builder, embedder, **PARAMS)
 
     Executor(store).run(annotator)
 
-    layer = fitted_clusterer.cluster_layers_[0]
-    expected = legacy_keyphrases(layer, builder, builder.keyphrase_vectors_, embedder)
-    assert [store.keyphrases[n] for n in store.tree.layer(0)] == expected
+    expected = legacy_keyphrases(fitted_clusterer.cluster_layers_, builder, embedder)
+    actual = [
+        [store.keyphrases[n] for n in store.tree.layer(layer_id)]
+        for layer_id in range(len(expected))
+    ]
+    assert actual == expected
 
 
 def test_annotator_embeds_missing_vectors_into_its_own_copy(
@@ -101,6 +110,23 @@ def test_annotator_selects_n_keyphrases_for_each_node(builder, embedder, store):
 def test_annotator_requires_a_fitted_builder():
     with pytest.raises(NotFittedError):
         InformationWeightedKeyphraseAnnotator(KeyphraseBuilder())
+
+
+def test_annotate_rejects_indices_beyond_the_keyphrase_matrix(builder):
+    annotator = InformationWeightedKeyphraseAnnotator(builder)
+    n_objects = builder.object_x_keyphrase_matrix_.shape[0]
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([n_objects])}
+
+    with pytest.raises(ValueError, match="same corpus"):
+        annotator.annotate(tuple(indices), cluster_object_indices=indices)
+
+
+def test_annotate_needs_two_nodes_with_objects(builder):
+    annotator = InformationWeightedKeyphraseAnnotator(builder)
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([], dtype=int)}
+
+    with pytest.raises(ValueError, match="at least two nodes"):
+        annotator.annotate(tuple(indices), cluster_object_indices=indices)
 
 
 def test_annotator_needs_an_embedding_model_if_the_builder_has_no_vectors(
