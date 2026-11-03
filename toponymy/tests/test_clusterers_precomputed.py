@@ -102,15 +102,29 @@ def test_cluster_ids_and_observation_order_are_kept():
     assert PrecomputedClusterer(labels, given).fit().cluster_tree_ == given
 
 
-def test_the_constructor_copies_the_labels_and_the_tree():
-    labels = [np.array([42, -1, 42])]
-    tree = {(1, 0): [(0, 42)]}
+def test_the_parameters_are_stored_as_given():
+    labels, tree = [np.array([42, -1, 42])], {(1, 0): [(0, 42)]}
     clusterer = PrecomputedClusterer(labels, tree)
-    labels[0][:] = 0
-    tree[(1, 0)].append((0, 0))
+    params = clusterer.get_params()
+    assert params.keys() == {"labels", "cluster_tree"}
+    assert params["labels"] is clusterer.labels is labels
+    assert params["cluster_tree"] is clusterer.cluster_tree is tree
 
-    assert clusterer.fit(np.ones((3, 4))).cluster_tree_ == {(1, 0): [(0, 42)]}
-    assert layer_labels(clusterer) == [[42, -1, 42]]
+    labels, tree = [np.array([3, 3, -1])], {(1, 0): [(0, 3)]}
+    assert clusterer.set_params(labels=labels, cluster_tree=tree) is clusterer
+    assert clusterer.labels is labels
+    assert clusterer.cluster_tree is tree
+
+
+def test_changes_to_the_parameters_before_fit_are_used():
+    labels, tree = [np.array([42, -1, 42])], {(1, 0): [(0, 42)]}
+    clusterer = PrecomputedClusterer(labels, tree)
+    labels[0][:] = [5, 5, -1]
+    tree[(1, 0)][0] = (0, 5)
+
+    clusterer.fit(np.ones((3, 4)))
+    assert layer_labels(clusterer) == [[5, 5, -1]]
+    assert clusterer.cluster_tree_ == {(1, 0): [(0, 5)]}
 
 
 @pytest.mark.parametrize("configured", [True, False], ids=["configured", "given"])
@@ -118,7 +132,6 @@ def test_the_fitted_layers_do_not_share_memory_with_the_labels(configured):
     labels = copy.deepcopy(LABELS)
     if configured:
         clusterer = PrecomputedClusterer(labels).fit(VECTORS)
-        labels = clusterer.labels
     else:
         clusterer = PrecomputedClusterer().fit(VECTORS, labels=labels)
     for array in labels:
@@ -126,6 +139,19 @@ def test_the_fitted_layers_do_not_share_memory_with_the_labels(configured):
 
     assert layer_labels(clusterer) == EXPECTED_LABELS
     assert not any(layer.labels.flags.writeable for layer in clusterer)
+
+
+def test_the_fitted_tree_shares_no_lists_with_the_given_tree():
+    tree = copy.deepcopy(TREE)
+    clusterer = PrecomputedClusterer(LABELS, tree).fit(VECTORS)
+    for children in clusterer.cluster_tree_.values():
+        children.clear()
+    assert tree == TREE
+
+    clusterer.fit(VECTORS)
+    for children in tree.values():
+        children.clear()
+    assert clusterer.cluster_tree_ == TREE
 
 
 def test_a_given_tree_is_kept_as_given():
@@ -145,6 +171,24 @@ def test_a_given_tree_is_kept_as_given():
     assert all(type(children) is list for children in tree.values())
     nodes = [*tree, *(child for children in tree.values() for child in children)]
     assert all(type(value) is int for node in nodes for value in node)
+
+
+def test_parents_without_children_are_left_out_of_a_given_tree():
+    # As in a built tree, so an empty tree is {} whether it was built or given.
+    given = {**copy.deepcopy(TREE), (0, 4): [], (1, 3): ()}
+    assert PrecomputedClusterer(LABELS, given).fit().cluster_tree_ == TREE
+    assert PrecomputedClusterer([[-1, -1]], {(1, 0): []}).fit().cluster_tree_ == {}
+
+
+def test_fit_does_not_change_the_given_tree():
+    given = {
+        (3, 0): ((0, 4), (2, 10), (0, 81)),
+        (2, 10): [(1, 3), (0, 19), (1, 2)],
+        (0, 19): [],
+    }
+    expected = copy.deepcopy(given)
+    PrecomputedClusterer(LABELS, given).fit(VECTORS)
+    assert given == expected
 
 
 @pytest.mark.parametrize(
@@ -235,19 +279,22 @@ def test_invalid_vectors_are_rejected(vectors, message):
 
 
 @pytest.mark.parametrize(
+    "vectors", [None, np.ones((3, 2))], ids=["no-vectors", "vectors"]
+)
+@pytest.mark.parametrize(
     "labels,message",
     [
         ([np.array([0, -2, 0])], "between -1"),
         ([np.array([0.0, 1.0, 1.0])], "integers"),
         ([np.array([True, False, True])], "integers"),
         (np.array([0, 1, 1]), "sequence of one-dimensional"),
-        ([[0, 1, 1], [0, 1]], "same observation count"),
+        ([[0, 1, 1], [0, 1]], "all label layers"),
     ],
 )
-def test_invalid_labels_are_rejected_by_fit(labels, message):
+def test_invalid_labels_are_rejected_by_fit(labels, message, vectors):
     clusterer = PrecomputedClusterer(labels)
     with pytest.raises(ValueError, match=message):
-        clusterer.fit()
+        clusterer.fit(vectors)
 
 
 @pytest.mark.parametrize(
@@ -256,6 +303,7 @@ def test_invalid_labels_are_rejected_by_fit(labels, message):
         lambda clusterer: clusterer.fit(np.ones((5, 2))),
         lambda clusterer: clusterer.fit(np.full((6, 2), np.nan)),
         lambda clusterer: clusterer.fit(VECTORS, labels=[[0.5] * 6]),
+        lambda clusterer: clusterer.fit(labels=[[0.5] * 6]),
         # The tree belongs to the configured labels, not to these.
         lambda clusterer: clusterer.fit(VECTORS, labels=[[0] * 6]),
         lambda clusterer: clusterer.set_params(cluster_tree={}).fit(VECTORS),
@@ -264,6 +312,7 @@ def test_invalid_labels_are_rejected_by_fit(labels, message):
         "observation-count",
         "nonfinite-vectors",
         "invalid-labels",
+        "invalid-labels-no-vectors",
         "tree-of-other-labels",
         "invalid-tree",
     ],
@@ -279,37 +328,36 @@ def test_a_failed_fit_keeps_the_previous_fit(refit):
     assert tree == TREE
 
 
-def test_refitting_builds_a_new_result():
+def test_refitting_with_new_parameters_replaces_the_result():
     clusterer = PrecomputedClusterer(LABELS, TREE).fit(VECTORS)
-    first_layers = clusterer.cluster_layers_
-    # The fitted tree is a copy, so changing it does not change the parameter.
-    clusterer.cluster_tree_.clear()
-    assert clusterer.cluster_tree == TREE
-    assert clusterer.fit(VECTORS).cluster_tree_ == TREE
+    first_layers, first_tree = clusterer.cluster_layers_, clusterer.cluster_tree_
 
     clusterer.set_params(labels=[[3, 3, 3, -1, -1, -1]], cluster_tree=None)
     assert clusterer.fit(VECTORS).cluster_tree_ == {(1, 0): [(0, 3)]}
     assert layer_labels(clusterer) == [[3, 3, 3, -1, -1, -1]]
     assert [layer.labels.tolist() for layer in first_layers] == EXPECTED_LABELS
+    assert first_tree == TREE
 
 
-def test_clone_copies_the_parameters_but_not_the_fit():
+def test_a_clone_has_the_parameters_but_not_the_fit():
     clusterer = PrecomputedClusterer(LABELS, TREE).fit(VECTORS)
     cloned = clone(clusterer)
     assert not hasattr(cloned, "cluster_layers_")
     with pytest.raises(NotFittedError):
         iter(cloned)
 
-    params, cloned_params = clusterer.get_params(), cloned.get_params()
-    assert params.keys() == {"labels", "cluster_tree"}
-    assert cloned_params["cluster_tree"] == params["cluster_tree"] == TREE
-    for original, copied in zip(params["labels"], cloned_params["labels"]):
-        np.testing.assert_array_equal(copied, original)
-        assert not np.shares_memory(copied, original)
+    assert [labels.tolist() for labels in cloned.labels] == EXPECTED_LABELS
+    assert cloned.cluster_tree == TREE
 
-    # Changing the original's parameters does not change the clone.
-    clusterer.labels[0][:] = -1
-    clusterer.cluster_tree[(3, 0)].clear()
+
+def test_a_clone_shares_no_parameters_with_the_original():
+    labels, tree = copy.deepcopy(LABELS), copy.deepcopy(TREE)
+    cloned = clone(PrecomputedClusterer(labels, tree))
+    for array in labels:
+        array[:] = -1
+    for children in tree.values():
+        children.clear()
+
     assert layer_labels(cloned.fit(VECTORS)) == EXPECTED_LABELS
     assert cloned.cluster_tree_ == TREE
 
