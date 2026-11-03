@@ -4,8 +4,8 @@ from typing import List, Tuple, FrozenSet, Dict, Callable, Any, Optional, Protoc
 from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
 from joblib import Parallel, delayed, effective_n_jobs
 from functools import reduce
-from collections import Counter, defaultdict
-from toponymy.annotation import LayerInput, MultiNodeInput
+from collections import Counter
+from toponymy.annotation import LayerInput
 from toponymy.utility_functions import diversify_max_alpha as diversify
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from vectorizers.transformers import InformationWeightTransformer
@@ -738,11 +738,12 @@ class InformationWeightedKeyphraseAnnotator:
     -----
     The matrix, keyphrase list and keyphrase vectors are read from ``builder`` once,
     when the annotator is made, so fitting the builder again does not change it. The
-    vectors are copied because keyphrases without a vector are embedded and stored in
-    them as they are met, and the builder's own vectors are left alone.
+    matrix and keyphrase list are shared with ``builder``, so changing them in place
+    does. The vectors are copied because keyphrases without a vector are embedded and
+    stored in them as they are met, and the builder's own vectors are left alone.
 
-    Run it on whole layers: if some nodes of a layer are left out of a run, the rest are
-    weighted against only the nodes that are given.
+    A run must select whole layers, since each node is weighted against the rest of
+    its layer; selecting part of a layer raises ``ValueError``.
     """
 
     inputs = ("cluster_object_indices",)
@@ -762,9 +763,12 @@ class InformationWeightedKeyphraseAnnotator:
         min_alpha: float = 0.5,
         alpha_tolerance: float = 0.1,
     ):
-        # fit sets keyphrase_vectors_ last, so it is missing if fit did not finish
-        if not hasattr(builder, "keyphrase_vectors_"):
-            raise NotFittedError("the keyphrase builder has not been fitted")
+        fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
+        missing = [name for name in fitted if not hasattr(builder, name)]
+        if missing:
+            raise NotFittedError(
+                f"the keyphrase builder is missing {missing}; fit it first"
+            )
         vectors = builder.keyphrase_vectors_
         if vectors is None:
             if embedding_model is None:
@@ -799,9 +803,32 @@ class InformationWeightedKeyphraseAnnotator:
         -------
         dict
             ``{"keyphrases": {node: list of str}}``.
+
+        Raises
+        ------
+        ValueError
+            If an object position is beyond the rows of the keyphrase matrix, or if
+            fewer than two nodes of the layer have objects.
         """
+        n_objects = self.object_x_keyphrase_matrix.shape[0]
+        top = max(
+            (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
+            default=-1,
+        )
+        if top >= n_objects:
+            raise ValueError(
+                f"object index {top} is beyond the {n_objects} rows of the keyphrase "
+                "matrix; was the builder fitted on the same corpus?"
+            )
+        n_present = sum(1 for ix in cluster_object_indices.values() if len(ix))
+        if n_present < 2:
+            raise ValueError(
+                "information weighting needs at least two nodes with objects in a "
+                f"layer, got {n_present}"
+            )
+
         # Objects in no node of the layer, such as noise, keep label -1
-        labels = np.full(self.object_x_keyphrase_matrix.shape[0], -1, dtype=np.int64)
+        labels = np.full(n_objects, -1, dtype=np.int64)
         for node, indices in cluster_object_indices.items():
             labels[indices] = node.cluster
         keyphrases = information_weighted_keyphrases(

@@ -736,9 +736,11 @@ class Annotator(Protocol):
     - ``"node"``: the annotation's value at the unit.
     - ``"descendants"``: a mapping of the computed values of the unit's descendants,
       run bottom-up when they are outputs of the same run.
-    - ``"multinode"``: a mapping of the computed values for the nodes in a group
-      of nodes. ``MultiNodeInput(groups=name)`` names an annotator method that
-      returns the groups.
+    - ``"multinode"``: a mapping of the values for the nodes in a group of nodes.
+      ``MultiNodeInput(groups=name)`` names an annotator method that returns the
+      groups; without ``groups`` it is gathered over another input's groups.
+    - ``"layer"``: a mapping of the values for the selected nodes of a layer, with
+      one ``annotate`` call per layer. See ``LayerInput``.
 
     An output kind is ``"node"`` (one value per node) or ``"multinode"`` (one mapping
     of node to value for each group).
@@ -769,7 +771,8 @@ class Annotator(Protocol):
         Mapping[str, Any]
             A value for each name in ``outputs`` and no others, otherwise the run
             raises ``ValueError``. For a ``"multinode"`` output, each value is a
-            mapping from node to value over the nodes in ``unit``.
+            mapping from node to value over the nodes in ``unit``; a node left out
+            of it is marked failed.
 
         Notes
         -----
@@ -806,7 +809,7 @@ class InputSpec:
         raise NotImplementedError
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class GroupedInputSpec(InputSpec):
     """Base for inputs gathered over a group of nodes.
 
@@ -885,11 +888,18 @@ class MultiNodeInput(GroupedInputSpec):
     """Annotate groups of nodes together, with one ``annotate`` call for each group.
 
     ``groups`` names an annotator method. It is called once per run with a mapping of
-    node to value for the nodes being run, and returns the groups: an iterable of
-    tuples of nodes. Groups must not overlap and must stay within the nodes being run.
-    ``annotate`` receives a group and, for this input, a mapping of node to value for
-    the nodes of the group. With a ``"multinode"`` output, it returns a mapping of node
-    to value for nodes of the group.
+    node to value for the selected nodes whose value for this input is computed, and
+    returns the groups: an iterable of tuples of nodes. Groups must not overlap and
+    must stay within the selected nodes. A selected node without a computed value is
+    in no group, so it is not run and is not reported as a failure. Without
+    ``groups``, the input is gathered over the groups another input defines.
+
+    The executor sorts the nodes of each group, so ``annotate`` may receive a group in
+    a different order than ``groups`` returned it. For this input, ``annotate`` also
+    receives a mapping of node to value for the nodes of the group; if any of them is
+    not computed, the input is not available. With a ``"multinode"`` output,
+    ``annotate`` returns a mapping of node to value for nodes of the group; a node
+    outside the group raises ``ValueError`` and a node left out is marked failed.
     """
 
     groups: Optional[str] = None
@@ -918,9 +928,6 @@ class NodeOutput:
     def write(self, annotation, unit, value):
         annotation[unit] = value
 
-    def fail(self, annotation, unit):
-        annotation.fail(unit)
-
 
 @dataclass(frozen=True)
 class MultiNodeOutput:
@@ -932,10 +939,6 @@ class MultiNodeOutput:
                 )
         for node, value in values.items():
             annotation[node] = value
-
-    def fail(self, annotation, unit):
-        for node in unit:
-            annotation.fail(node)
 
 
 INPUT_SPECS = {
@@ -1108,12 +1111,14 @@ class Executor:
         nodes: Iterable[NodeId] | None = None,
         input_names: Mapping[str, str] | None = None,
         output_names: Mapping[str, str] | None = None,
-    ) -> dict[NodeId, str]:
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
         """Run an annotator, reading and writing the store names given by
         input_names={kwarg: store_name} and output_names={output: store_name}.
         Unlisted names map to themselves.
 
-        Return ``{unit: reason}`` for nodes whose annotation failed."""
+        Return ``{unit: reason}`` for units whose annotation failed, and
+        ``{node: reason}`` for nodes a multinode annotator left out of its result.
+        A failure keeps the old value of a node in an annotation the run also reads."""
 
         resolved_contract = _validate_annotator_contract(annotator)
 
@@ -1221,6 +1226,7 @@ class Executor:
             for name, spec in specs.items()
         }
         # Determine the units to apply .annotate to
+        selected = set(selected_nodes)
         unit_sources = [
             groups
             for name, spec in specs.items()
@@ -1238,10 +1244,10 @@ class Executor:
             raise ValueError("only one input may define the units")
         if unit_sources:
             unit_groups = unit_sources[0]
-            allowed, seen, result = set(selected_nodes), set(), []
+            seen, result = set(), []
             for group in unit_groups:
                 group = tuple(sorted(self.tree.check(n) for n in group))
-                if not allowed.issuperset(group):
+                if not selected.issuperset(group):
                     raise ValueError(f"group {group} has nodes outside the selection")
                 if seen.intersection(group):
                     raise ValueError(f"group {group} overlaps another group")
@@ -1267,17 +1273,19 @@ class Executor:
         # Replace with more explicit instructions for handling in-place updates later
         in_place = set(writes_to.values()) & {reads_from[n] for n in specs}
 
+        def fail(store_name, node):
+            annotation = self.store[store_name]
+            keep_old_value = (
+                store_name in in_place
+                and annotation.states[node] is AnnotationState.COMPUTED
+            )
+            if not keep_old_value:
+                annotation.fail(node)
+
         # Finally run .annotate over the units
         failures = {}
         for unit in units:
             unit_nodes = (unit,) if isinstance(unit, NodeId) else unit
-            was_computed = {
-                store_name: all(
-                    self.store[store_name].states[node] is AnnotationState.COMPUTED
-                    for node in unit_nodes
-                )
-                for store_name in writes_to.values()
-            }
 
             try:
                 kwargs = {}
@@ -1291,10 +1299,10 @@ class Executor:
                             raise e
                 result = annotator.annotate(unit, **kwargs)
             except Exception as error:
+                # Nothing is written before annotate returns, so these are the prior states
                 for store_name in writes_to.values():
-                    keep_old_value = store_name in in_place and was_computed[store_name]
-                    if not keep_old_value:
-                        output.fail(self.store[store_name], unit)
+                    for node in unit_nodes:
+                        fail(store_name, node)
                 failures[unit] = f"{type(error).__name__}: {error}"
                 continue
 
@@ -1302,6 +1310,11 @@ class Executor:
                 raise ValueError(f"expected outputs {outputs!r}, got {tuple(result)!r}")
             for name, value in result.items():
                 output.write(self.store[writes_to[name]], unit, value)
+                if isinstance(output, MultiNodeOutput):
+                    for node in unit_nodes:
+                        if node not in value:
+                            fail(writes_to[name], node)
+                            failures[node] = f"{name!r}: no value returned"
 
         return failures
 
