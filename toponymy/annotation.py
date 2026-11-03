@@ -926,12 +926,20 @@ class PrepareMethodNodeInput(InputSpec):
 @dataclass(frozen=True)
 class NodeOutput:
     def write(self, annotation, unit, value):
+        """Write the value at the node; return () since no node is left without one."""
         annotation[unit] = value
+        return ()
+
+    def fail(self, annotation, unit, keep_computed=False):
+        """Mark the node failed, unless ``keep_computed`` and it already has a value."""
+        if not (keep_computed and annotation.states[unit] is AnnotationState.COMPUTED):
+            annotation.fail(unit)
 
 
 @dataclass(frozen=True)
 class MultiNodeOutput:
     def write(self, annotation, unit, values):
+        """Write the values for nodes of the group; return the nodes left without one."""
         for node in values:
             if node not in unit:
                 raise ValueError(
@@ -939,6 +947,15 @@ class MultiNodeOutput:
                 )
         for node, value in values.items():
             annotation[node] = value
+        return tuple(node for node in unit if node not in values)
+
+    def fail(self, annotation, unit, keep_computed=False):
+        """Mark each node failed, except, with ``keep_computed``, those with a value."""
+        for node in unit:
+            if not (
+                keep_computed and annotation.states[node] is AnnotationState.COMPUTED
+            ):
+                annotation.fail(node)
 
 
 INPUT_SPECS = {
@@ -1273,20 +1290,9 @@ class Executor:
         # Replace with more explicit instructions for handling in-place updates later
         in_place = set(writes_to.values()) & {reads_from[n] for n in specs}
 
-        def fail(store_name, node):
-            annotation = self.store[store_name]
-            keep_old_value = (
-                store_name in in_place
-                and annotation.states[node] is AnnotationState.COMPUTED
-            )
-            if not keep_old_value:
-                annotation.fail(node)
-
         # Finally run .annotate over the units
         failures = {}
         for unit in units:
-            unit_nodes = (unit,) if isinstance(unit, NodeId) else unit
-
             try:
                 kwargs = {}
                 for name, spec in specs.items():
@@ -1301,20 +1307,27 @@ class Executor:
             except Exception as error:
                 # Nothing is written before annotate returns, so these are the prior states
                 for store_name in writes_to.values():
-                    for node in unit_nodes:
-                        fail(store_name, node)
+                    output.fail(
+                        self.store[store_name],
+                        unit,
+                        keep_computed=store_name in in_place,
+                    )
                 failures[unit] = f"{type(error).__name__}: {error}"
                 continue
 
             if set(result) != set(outputs):
                 raise ValueError(f"expected outputs {outputs!r}, got {tuple(result)!r}")
             for name, value in result.items():
-                output.write(self.store[writes_to[name]], unit, value)
-                if isinstance(output, MultiNodeOutput):
-                    for node in unit_nodes:
-                        if node not in value:
-                            fail(writes_to[name], node)
-                            failures[node] = f"{name!r}: no value returned"
+                store_name = writes_to[name]
+                missing = output.write(self.store[store_name], unit, value)
+                if missing:
+                    output.fail(
+                        self.store[store_name],
+                        missing,
+                        keep_computed=store_name in in_place,
+                    )
+                    for node in missing:
+                        failures[node] = f"{name!r}: no value returned"
 
         return failures
 

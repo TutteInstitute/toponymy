@@ -16,6 +16,7 @@ from toponymy.annotation import (
     InvalidAnnotationTree,
     LayerInput,
     MultiNodeInput,
+    MultiNodeOutput,
     NodeId,
     NotAvailable,
     NodeInput,
@@ -1331,6 +1332,40 @@ def test_multinode_input_without_groups_defines_no_units(annotation):
 
 def test_multinode_input_takes_groups_as_its_first_argument():
     assert MultiNodeInput("by_layer") == MultiNodeInput(groups="by_layer")
+
+
+def test_node_output_fail_can_keep_a_computed_value(annotation):
+    annotation[NodeId(0, 0)] = "kept"
+
+    NodeOutput().fail(annotation, NodeId(0, 0), keep_computed=True)
+
+    assert annotation[NodeId(0, 0)] == "kept"
+
+
+def test_multinode_output_fail_fails_every_node_by_default(annotation):
+    annotation[NodeId(0, 0)] = "old"
+    group = (NodeId(0, 0), NodeId(0, 1))
+
+    MultiNodeOutput().fail(annotation, group)
+
+    assert all(annotation.states[n] is AnnotationState.FAILED for n in group)
+
+
+def test_multinode_output_fail_can_keep_computed_values(annotation):
+    annotation[NodeId(0, 0)] = "kept"
+
+    MultiNodeOutput().fail(annotation, (NodeId(0, 0), NodeId(0, 1)), keep_computed=True)
+
+    assert annotation.states[NodeId(0, 0)] is AnnotationState.COMPUTED
+    assert annotation.states[NodeId(0, 1)] is AnnotationState.FAILED
+
+
+def test_multinode_output_write_returns_the_nodes_without_a_value(annotation):
+    group = (NodeId(0, 0), NodeId(0, 1))
+
+    missing = MultiNodeOutput().write(annotation, group, {NodeId(0, 0): "x"})
+
+    assert missing == (NodeId(0, 1),)
 
 
 @pytest.mark.parametrize("method", ["missing", "annotate"])
