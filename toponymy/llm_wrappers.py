@@ -563,7 +563,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
 
         topic_name_info = llm_output_to_result(
-            topic_name_info_raw, GET_TOPIC_CLUSTER_NAMES_REGEX
+            topic_name_info_raw, get_topic_names_regex
         )
 
         return extract_topic_names_function(
