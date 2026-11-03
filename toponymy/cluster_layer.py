@@ -1008,9 +1008,11 @@ class ClusterLayerSummaryText(ClusterLayerText):
                         )
                     ),
                     get_topic_name_regex=(
-                        self.prompt_template["layer"].get("get_topic_name_regex", None)
+                        self.prompt_template["layer"].get(
+                            "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
+                        )
                         if self.prompt_template
-                        else None
+                        else GET_TOPIC_NAME_AND_SUMMARY_REGEX
                     ),
                     null_result_value=("", "", ""),
                     max_tokens=2048,
