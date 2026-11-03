@@ -35,7 +35,9 @@ class SummaryBatchWrapper(AsyncLLMWrapper):
     async def _call_llm_batch(self, prompts, temperature, max_tokens):
         return [SUMMARY_RESPONSE] * len(prompts)
 
-    async def _call_llm_with_system_prompt_batch(self, prompts, temperature, max_tokens):
+    async def _call_llm_with_system_prompt_batch(
+        self, prompts, temperature, max_tokens
+    ):
         return [SUMMARY_RESPONSE] * len(prompts)
 
 
