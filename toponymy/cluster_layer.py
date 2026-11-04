@@ -1067,65 +1067,58 @@ class ClusterLayerSummaryText(ClusterLayerText):
             )  # pragma: no cover
 
         # Try to fix any failures to generate a name
-        if any([name == "" for name in self.topic_names]):
+        failed_indices = [i for i, name in enumerate(self.topic_names) if name == ""]
+        if failed_indices:
+            extract_topic_name = (
+                self.prompt_template["layer"]["extract_topic_name"]
+                if self.prompt_template
+                else lambda json_response: (
+                    json_response["topic_name"],
+                    json_response["topic_summary"],
+                    json_response["topic_analysis"],
+                )
+            )
+            get_topic_name_regex = (
+                self.prompt_template["layer"].get(
+                    "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
+                )
+                if self.prompt_template
+                else GET_TOPIC_NAME_AND_SUMMARY_REGEX
+            )
+            failed_prompts = [self.prompts[i] for i in failed_indices]
             if isinstance(llm, LLMWrapper):
-                self.topic_names = [
-                    (
-                        llm.generate_topic_name(
-                            prompt,
-                            topic_extraction_function=(
-                                self.prompt_template["layer"]["extract_topic_name"]
-                                if self.prompt_template
-                                else lambda json_response: (
-                                    json_response["topic_name"],
-                                    json_response["topic_summary"],
-                                    json_response["topic_analysis"],
-                                )
-                            ),
-                            get_topic_name_regex=(
-                                self.prompt_template.get(
-                                    "get_topic_name_regex",
-                                    GET_TOPIC_NAME_AND_SUMMARY_REGEX,
-                                )
-                                if self.prompt_template
-                                else GET_TOPIC_NAME_AND_SUMMARY_REGEX
-                            ),
-                        )
-                        if name == ""
-                        else name
+                retry_results = [
+                    llm.generate_topic_name(
+                        prompt,
+                        topic_extraction_function=extract_topic_name,
+                        get_topic_name_regex=get_topic_name_regex,
+                        max_tokens=2048,
                     )
-                    for name, prompt in zip(self.topic_names, self.prompts)
+                    for prompt in failed_prompts
                 ]
             elif isinstance(llm, AsyncLLMWrapper):
-                selected_prompts = [
-                    prompt
-                    for name, prompt in zip(self.topic_names, self.prompts)
-                    if name == ""
-                ]
-                llm_results = run_async(
+                retry_results = run_async(
                     llm.generate_topic_names(
-                        selected_prompts,
-                        extract_topic_name_function=(
-                            self.prompt_template["layer"]["extract_topic_name"]
-                            if self.prompt_template
-                            else lambda json_response: json_response["topic_name"]
-                        ),
-                        get_topic_name_regex=(
-                            self.prompt_template["layer"].get(
-                                "get_topic_name_regex", GET_TOPIC_NAME_AND_SUMMARY_REGEX
-                            )
-                            if self.prompt_template
-                            else GET_TOPIC_NAME_AND_SUMMARY_REGEX
-                        ),
+                        failed_prompts,
+                        extract_topic_name_function=extract_topic_name,
+                        get_topic_name_regex=get_topic_name_regex,
+                        null_result_value=("", "", ""),
+                        max_tokens=2048,
                     )
                 )
-                for i in range(len(self.topic_names)):
-                    if self.topic_names[i] == "":
-                        self.topic_names[i] = llm_results.pop(0)
             else:
                 raise ValueError(
                     "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
                 )
+            for i, result in zip(failed_indices, retry_results):
+                if isinstance(result, tuple) and len(result) >= 3:
+                    (
+                        self.topic_names[i],
+                        self.topic_summaries[i],
+                        self.topic_explanations[i],
+                    ) = result[:3]
+                else:
+                    self.topic_names[i] = str(result)
 
         return self.topic_names, self.topic_summaries, self.topic_explanations
 
