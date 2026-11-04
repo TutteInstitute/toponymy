@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
+from abc import abstractmethod
+from types import MappingProxyType
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -19,7 +21,13 @@ from typing import (
     Tuple,
     TypeVar,
 )
-from collections.abc import Iterator, Mapping, MutableMapping, ValuesView
+from collections.abc import (
+    Iterator,
+    Mapping,
+    MutableMapping,
+    Sequence as SequenceABC,
+)
+
 from collections import defaultdict
 from enum import Enum
 from warnings import warn
@@ -395,7 +403,111 @@ class AnnotationState(Enum):
     FAILED = "failed"
 
 
-class Annotation(MutableMapping[NodeId, T]):
+class BaseAnnotation(Mapping[NodeId, T]):
+    """Common read interface for annotations over one AnnotationTree.
+
+    For every node in the tree:
+
+    - ``states`` has an entry for that node.
+    - ``node in annotation`` is equivalent to its state being COMPUTED.
+    - ``annotation[node]`` succeeds if and only if its state is COMPUTED.
+    - Iteration yields computed nodes in tree order.
+
+    ``computed(nodes)`` returns the computed values for the requested nodes,
+    skipping nodes that are not computed. It raises KeyError if a requested
+    node is not in the tree.
+
+    This is a common read interface, not an immutability guarantee.
+    Implementations may expose mutation APIs, and returned values may be
+    mutable.
+    """
+
+    name: str
+    tree: AnnotationTree
+
+    @property
+    @abstractmethod
+    def states(self) -> Mapping[NodeId, AnnotationState]:
+        """The state of every node in the tree."""
+
+    @abstractmethod
+    def __getitem__(self, node: NodeId) -> T:
+        """Return the value at a computed node; raise KeyError otherwise."""
+
+    def __contains__(self, node: object) -> bool:
+        """Return whether the node is in the tree and computed."""
+        try:
+            node = self.tree.check(node)
+        except (KeyError, TypeError):
+            return False
+        return self.states[node] is AnnotationState.COMPUTED
+
+    def __iter__(self) -> Iterator[NodeId]:
+        """Iterate over computed nodes in tree order."""
+        states = self.states
+        return (
+            node for node in self.tree.nodes if states[node] is AnnotationState.COMPUTED
+        )
+
+    def __len__(self) -> int:
+        """Return the number of computed nodes."""
+        return sum(1 for _ in self)
+
+    def computed(
+        self,
+        nodes: Iterable[NodeId] | None = None,
+    ) -> dict[NodeId, T]:
+        """Return values for computed nodes.
+
+        Parameters
+        ----------
+        nodes : iterable of NodeId, optional
+            Nodes to include. If omitted, consider the whole tree. Nodes
+            that are not computed are skipped.
+
+        Returns
+        -------
+        dict
+            Mapping from computed node IDs to their values.
+
+        Raises
+        ------
+        KeyError
+            If any requested node is not in the tree.
+        """
+        if nodes is None:
+            return {node: self[node] for node in self}
+
+        states = self.states
+        checked = (self.tree.check(node) for node in nodes)
+        return {
+            node: self[node]
+            for node in checked
+            if states[node] is AnnotationState.COMPUTED
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(name={self.name!r}, "
+            f"{len(self)}/{len(self.tree)} computed)"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Annotations compare by identity.
+
+        Mapping's value-based equality can fail when values are NumPy arrays.
+        """
+        return self is other
+
+    __hash__ = object.__hash__
+
+
+class Annotation(BaseAnnotation[T], MutableMapping[NodeId, T]):
+    """A conventional writable annotation.
+
+    Values are stored directly and returned directly.
+    """
+
     def __init__(self, name: str, tree: AnnotationTree):
         self.name = name
         self.tree = tree
@@ -404,6 +516,7 @@ class Annotation(MutableMapping[NodeId, T]):
         self._states: dict[NodeId, AnnotationState] = {
             node: AnnotationState.EMPTY for node in tree.nodes
         }
+        self._states_view = MappingProxyType(self._states)
 
     def __getitem__(self, node: NodeId) -> T:
         node = self.tree.check(node)
@@ -415,76 +528,492 @@ class Annotation(MutableMapping[NodeId, T]):
         self._states[node] = AnnotationState.COMPUTED
 
     def __delitem__(self, node: NodeId) -> None:
+        """Delete a computed value and reset its state to EMPTY.
+
+        Raises
+        ------
+        KeyError
+            If the node is not in the tree or has no computed value.
+        """
         node = self.tree.check(node)
-        self._values.pop(node, None)
+        if node not in self._values:
+            raise KeyError(node)
+
+        del self._values[node]
         self._states[node] = AnnotationState.EMPTY
-
-    def __iter__(self) -> Iterator[NodeId]:
-        return iter(self._values)
-
-    def __len__(self) -> int:
-        return len(self._values)
-
-    def __repr__(self) -> str:
-        return f"Annotation(name={self.name!r}, tree={self.tree!r})"
 
     @property
     def states(self) -> Mapping[NodeId, AnnotationState]:
-        return self._states
+        """A live, read-only view of the state of every node."""
+        return self._states_view
 
     def fail(self, node: NodeId) -> None:
+        """Discard any computed value and mark the node FAILED."""
         node = self.tree.check(node)
         self._values.pop(node, None)
         self._states[node] = AnnotationState.FAILED
 
-    def computed(self, nodes: Iterable[NodeId] | None = None) -> dict[NodeId, T]:
-        """Return {node: value} for computed nodes.
+    def reset(self, node: NodeId) -> None:
+        """Discard any computed value and reset the node to EMPTY."""
+        node = self.tree.check(node)
+        self._values.pop(node, None)
+        self._states[node] = AnnotationState.EMPTY
 
-        With nodes=None, it covers the whole tree. With nodes, it covers only the given nodes
-        skipping any that aren't computed. Raises KeyError for nodes not in the tree.
-        """
+    def computed(
+        self,
+        nodes: Iterable[NodeId] | None = None,
+    ) -> dict[NodeId, T]:
+        """Return computed values, skipping nodes that are not computed."""
         if nodes is None:
-            return dict(self._values)
+            return {node: self._values[node] for node in self}
+
         checked = (self.tree.check(node) for node in nodes)
         return {node: self._values[node] for node in checked if node in self._values}
 
-    # def _check(self, node: Any) -> NodeId:
-    #     if not isinstance(node, NodeId):
-    #         try:
-    #             node = NodeId(*node)
-    #         except (TypeError, ValueError):
-    #             raise KeyError(f"Invalid node ID: {node!r}")
-    #     if node not in self.tree:
-    #         raise KeyError(f"{node} is not a node of the cluster tree")
-    #     return node
-
     @classmethod
     def from_layered_list(
-        cls, name: str, tree: AnnotationTree, layered_list: list[NodeId]
+        cls,
+        name: str,
+        tree: AnnotationTree,
+        layered_list: list[list[T]],
     ) -> Self:
+        """Create an annotation from a layer-indexed list of values."""
         annotation = cls(name, tree)
+
         for node in tree.nodes:
             try:
                 annotation[node] = layered_list[node.layer][node.cluster]
             except IndexError:
                 raise IndexError(
                     f"Layered list does not contain a value for node {node}"
-                )
+                ) from None
+
         return annotation
 
-    def to_layered_list(self) -> list[list[NodeId]]:
-        layered_list: list[list[NodeId]] = []
+    def to_layered_list(self) -> list[list[T]]:
+        """Return values as a list indexed by layer and cluster."""
         if not all(
             state is AnnotationState.COMPUTED for state in self._states.values()
         ):
             raise ValueError("Not all nodes have computed values")
+
+        return [
+            [self._values[node] for node in self.tree.layer(layer_id)]
+            for layer_id in self.tree.layer_ids
+        ]
+
+
+class IndexedAnnotation(BaseAnnotation[SequenceABC[Any] | np.ndarray]):
+    """An annotation whose node values are selections from shared data.
+
+    Each computed node stores indices into one shared backing collection.
+    Reading a node materializes the values at the selected indices.
+
+    The backing collection is shared by default. For NumPy arrays, pass
+    ``copy=True`` to create an independent copy. Lists are shallow-copied
+    when constructing the annotation; tuples are retained. The objects
+    referenced by a sequence or an object-dtype array are not deep-copied.
+
+    Indices preserve their supplied order and duplicates. They are stored
+    as independent, read-only NumPy integer arrays.
+
+    Membership is changed with ``set_indices``. Use
+    ``check_layer_partitions`` to validate that each layer is a partial
+    partition of the backing data.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        indices: (
+            Annotation[Sequence[int] | np.ndarray]
+            | Mapping[NodeId, Sequence[int] | np.ndarray]
+        ),
+        data: SequenceABC[Any] | np.ndarray,
+        *,
+        tree: AnnotationTree | None = None,
+        copy: bool = False,
+        check_partition: bool = False,
+    ):
+        """Build an IndexedAnnotation from per-node indices and shared data.
+
+        Parameters
+        ----------
+        name : str
+            Annotation name.
+        indices : Annotation or mapping
+            Per-node indices. If an Annotation is supplied, its tree is
+            used. A plain mapping requires ``tree``.
+        data : sequence or ndarray
+            Shared backing collection.
+        tree : AnnotationTree, optional
+            Required when ``indices`` is a plain mapping.
+        copy : bool, default=False
+            If True, copy NumPy backing data. Lists are shallow-copied
+            regardless of this setting.
+        check_partition : bool, default=False
+            If True, check that each layer is a partial partition: an index
+            may appear at most once in a layer. Indices may be absent, for
+            example because they are from noise points.
+
+
+        Raises
+        ------
+        TypeError
+            If ``indices`` is not an Annotation or mapping, or if a plain
+            mapping is supplied without ``tree``.
+        ValueError
+            If the tree differs from the Annotation's tree, an index is
+            invalid, or the requested partition check fails.
+
+        Notes
+        -----
+        The partition check runs at the end of construction. Later calls to
+        ``set_indices`` can invalidate the partition; call
+        ``check_layer_partitions`` again when needed.
+        """
+        if isinstance(indices, Annotation):
+            if tree is not None and tree is not indices.tree:
+                raise ValueError("tree differs from the tree of indices")
+            tree = indices.tree
+            source = indices.computed()
+
+        elif isinstance(indices, IndexedAnnotation):
+            raise TypeError("indices cannot be an IndexedAnnotation of indices")
+
+        elif isinstance(indices, Mapping):
+            if tree is None:
+                raise TypeError("tree is required when indices is a plain mapping")
+            source = indices
+
+        else:
+            raise TypeError(
+                "indices must be an Annotation or a mapping of nodes to indices"
+            )
+
+        assert tree is not None
+
+        self.name = name
+        self.tree = tree
+
+        # Prepare the backing data.
+        if isinstance(data, np.ndarray):
+            if data.ndim == 0:
+                raise ValueError("data must have at least one dimension")
+            backing_data = np.array(data, copy=True) if copy else data
+
+        elif isinstance(data, (str, bytes)) or not isinstance(data, SequenceABC):
+            raise TypeError("data must be a Python sequence or a NumPy array")
+
+        elif isinstance(data, list):
+            # shallow-copy lists
+            backing_data = list(data)
+
+        elif isinstance(data, tuple):
+            backing_data = data
+
+        else:
+            backing_data = data
+            if copy:
+                try:
+                    backing_data = type(data)(data)
+                except (TypeError, ValueError):
+                    backing_data = list(data)
+
+        self._data = backing_data
+
+        self._indices: Annotation[np.ndarray] = Annotation(
+            f"{name}.indices",
+            tree,
+        )
+
+        for node, node_indices in source.items():
+            self.set_indices(node, node_indices)
+
+        if check_partition:
+            self.check_layer_partitions()
+
+    @classmethod
+    def from_indices(
+        cls,
+        name: str,
+        indices: (
+            Annotation[Sequence[int] | np.ndarray]
+            | Mapping[NodeId, Sequence[int] | np.ndarray]
+        ),
+        array: SequenceABC[Any] | np.ndarray,
+        *,
+        tree: AnnotationTree | None = None,
+        copy: bool = False,
+        check_partition: bool = False,
+    ) -> Self:
+        """Build an IndexedAnnotation from per-node indices and shared data.
+
+        Parameters
+        ----------
+        name : str
+            Annotation name.
+        indices : Annotation or mapping
+            Per-node indices. If an Annotation is supplied, its tree is
+            used. A plain mapping requires ``tree``.
+        array : sequence or ndarray
+            Shared backing collection.
+        tree : AnnotationTree, optional
+            Required when ``indices`` is a plain mapping.
+        copy : bool, default=False
+            If True, copy NumPy backing data. Lists are shallow-copied
+            regardless of this setting.
+        check_partition : bool, default=False
+            If True, check that each layer is a partial partition: an index
+            may appear at most once in a layer. Indices may be absent, for
+            example because they are from noise points.
+
+
+        Raises
+        ------
+        TypeError
+            If ``indices`` is not an Annotation or mapping, or if a plain
+            mapping is supplied without ``tree``.
+        ValueError
+            If the tree differs from the Annotation's tree, an index is
+            invalid, or the requested partition check fails.
+
+        Notes
+        -----
+        The partition check runs after construction. Later calls to
+        ``set_indices`` can invalidate the partition; call
+        ``check_layer_partitions`` again when needed.
+        """
+        if isinstance(indices, Annotation):
+            if tree is not None and tree is not indices.tree:
+                raise ValueError("tree differs from the tree of indices")
+            tree = indices.tree
+            source = indices.computed()
+        elif isinstance(indices, IndexedAnnotation):
+            raise TypeError("indices cannot be an IndexedAnnotation of indices")
+        elif isinstance(indices, Mapping):
+            if tree is None:
+                raise TypeError("tree is required when indices is a plain mapping")
+            source = indices
+        else:
+            raise TypeError(
+                "indices must be an Annotation or a mapping of nodes to indices"
+            )
+
+        annotation = cls(name, tree, array, copy=copy)
+
+        for node, node_indices in source.items():
+            annotation.set_indices(node, node_indices)
+
+        if check_partition:
+            annotation.check_layer_partitions()
+
+        return annotation
+
+    @property
+    def states(self) -> Mapping[NodeId, AnnotationState]:
+        """The state of every node in the tree."""
+        return self._indices.states
+
+    def __len__(self) -> int:
+        return len(self._indices)
+
+    def __getitem__(
+        self,
+        node: NodeId,
+    ) -> SequenceABC[Any] | np.ndarray:
+        """Return the value selected by the node's indices.
+
+        The selected collection is materialized on each read. For NumPy
+        arrays, this is an advanced-indexing copy. For Python sequences,
+        a new selected sequence is constructed where practical.
+
+        For object-dtype arrays and sequences, the selected elements still
+        refer to the original Python objects.
+
+        Raises
+        ------
+        KeyError
+            If the node is not in the tree or is not computed.
+        """
+        node = self.tree.check(node)
+        node_indices = self._indices[node]
+
+        if isinstance(self._data, np.ndarray):
+            return self._data[node_indices]
+
+        selected = [self._data[int(index)] for index in node_indices]
+
+        if isinstance(self._data, list):
+            return selected
+
+        if isinstance(self._data, tuple):
+            return tuple(selected)
+
+        try:
+            return type(self._data)(selected)
+        except (TypeError, ValueError):
+            return selected
+
+    @property
+    def indexed_data(self) -> SequenceABC[Any] | np.ndarray:
+        """The shared backing collection.
+
+        For NumPy arrays, return a read-only view. This prevents ordinary
+        writes through this view, but does not prevent modification through
+        another reference to the original array.
+
+        For Python sequences, return the underlying collection directly,
+        not a defensive copy. Callers are responsible for treating it as
+        read-only. In particular, do not add, remove, or reorder elements:
+        doing so can invalidate the indices stored by this annotation.
+        Replacing elements changes the values subsequently returned for
+        every node whose indices select those positions.
+        """
+        if isinstance(self._data, np.ndarray):
+            view = self._data.view()
+            view.flags.writeable = False
+            return view
+
+        return self._data
+
+    def indices_of(self, node: NodeId) -> np.ndarray:
+        """Return a read-only view of the indices stored for a node."""
+        node = self.tree.check(node)
+        indices = self._indices[node]
+        view = indices.view()
+        view.flags.writeable = False
+        return view
+
+    def set_indices(
+        self,
+        node: NodeId,
+        indices: Sequence[int] | np.ndarray,
+    ) -> None:
+        """Set a node's indices and mark it COMPUTED.
+
+        Indices are copied, validated, and stored as a read-only integer
+        array. Their order and duplicates are preserved.
+
+        Note: This method does not revalidate layer partitions.
+        """
+        node = self.tree.check(node)
+
+        # Validate and normalize the input indices into a read-only 1D integer array.
+        if isinstance(indices, np.ndarray):
+            arr = np.asarray(indices)
+            if not np.issubdtype(arr.dtype, np.integer):
+                raise ValueError(f"indices must be integers, got dtype {arr.dtype}")
+        else:
+            if isinstance(indices, (str, bytes)) or not isinstance(
+                indices, SequenceABC
+            ):
+                raise TypeError(
+                    "indices must be a sequence of integers or a NumPy array"
+                )
+
+            # Reject bools explicitly, including mixed sequences such as
+            # [True, 2], which NumPy might otherwise coerce to an integer dtype.
+            if any(isinstance(value, (bool, np.bool_)) for value in indices):
+                raise ValueError("indices must be integers, not booleans")
+
+            if len(indices) == 0:
+                arr = np.asarray([], dtype=np.intp)
+            else:
+                arr = np.asarray(indices)
+            if arr.size and not np.issubdtype(arr.dtype, np.integer):
+                raise ValueError(f"indices must be integers, got dtype {arr.dtype}")
+
+        if arr.ndim != 1:
+            raise ValueError(f"indices must be 1-dimensional, got shape {arr.shape}")
+
+        if arr.size:
+            if np.any(arr < 0) or np.any(arr >= len(self._data)):
+                raise ValueError(
+                    f"indices must be in [0, {len(self._data)}), "
+                    f"got range [{arr.min()}, {arr.max()}]"
+                )
+
+        normalized = np.array(arr, dtype=np.intp, copy=True)
+        normalized.flags.writeable = False
+        self._indices[node] = normalized
+
+    def fail(self, node: NodeId) -> None:
+        """Discard a node's indices and mark it FAILED."""
+        self._indices.fail(node)
+
+    def reset(self, node: NodeId) -> None:
+        """Discard a node's indices and reset it to EMPTY."""
+        self._indices.reset(node)
+
+    def __delitem__(self, node: NodeId) -> None:
+        """
+        Discard a node's indices and reset it to EMPTY.
+        Raises
+        ------
+        KeyError
+            If the node is not computed
+        """
+        del self._indices[node]
+
+    def check_layer_partitions(self) -> None:
+        """Check that each layer is a partial partition of the backing data.
+
+        Each index may appear at most once in a layer, including repeated
+        occurrences within the indices of a single node. Indices may be
+        absent, for example because they are noise points.
+
+        Raises
+        ------
+        ValueError
+            If an index appears more than once in a layer.
+        """
+
         for layer_id in self.tree.layer_ids:
-            layer_nodes = [self._values[node] for node in self.tree.layer(layer_id)]
-            layered_list.append(layer_nodes)
-        return layered_list
+            nodes = [
+                node for node in self.tree.layer(layer_id) if node in self._indices
+            ]
+            if not nodes:
+                continue
+
+            counts = np.bincount(
+                np.concatenate([self._indices[node] for node in nodes]),
+                minlength=len(self._data),
+            )
+            repeated = np.flatnonzero(counts > 1)
+
+            if not repeated.size:
+                continue
+
+            shown = repeated[:10]
+            found_in: dict[int, list[NodeId]] = {int(index): [] for index in shown}
+
+            for node in nodes:
+                node_indices = self._indices[node]
+                overlap = np.intersect1d(
+                    shown,
+                    node_indices,
+                    assume_unique=False,
+                )
+                for index in overlap:
+                    found_in[int(index)].append(node)
+
+            details = "; ".join(
+                f"index {index} in {', '.join(str(node) for node in where)}"
+                for index, where in found_in.items()
+            )
+            more = (
+                f" (showing {len(shown)} of {repeated.size})"
+                if repeated.size > len(shown)
+                else ""
+            )
+
+            raise ValueError(
+                f"layer {layer_id}: indices appear more than once" f"{more}: {details}"
+            )
 
 
-class AnnotationStore(Mapping[str, Annotation[Any]]):
+class AnnotationStore(Mapping[str, BaseAnnotation[Any]]):
     """Annotations by name, for one tree.
 
     The public collection interface is read-only. Annotations are added
@@ -494,10 +1023,10 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
     def __init__(
         self,
         tree: AnnotationTree,
-        annotations: Iterable[Annotation[Any]] = (),
+        annotations: Iterable[BaseAnnotation[Any]] = (),
     ):
         self.tree = tree
-        self._annotations: dict[str, Annotation[Any]] = {}
+        self._annotations: dict[str, BaseAnnotation[Any]] = {}
 
         for annotation in annotations:
             self.add(annotation)
@@ -508,6 +1037,7 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
         clusterer: Any,
         objects: Iterable[Any] | None = None,
         object_vectors: np.ndarray | None = None,
+        copy_vectors: bool = False,
     ) -> Self:
         """Build a store from a fitted clusterer.
 
@@ -519,10 +1049,16 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
         - ``cluster_objects``, if ``objects`` is given;
         - ``cluster_object_vectors``, if ``object_vectors`` is given.
 
-        ``cluster_objects`` holds references to your objects, not copies.
-        ``cluster_object_vectors`` holds a copy of each node's vectors, which is
-        costly because every object appears once in every layer. Pass only what you
-        need.
+        ``cluster_objects`` and ``cluster_object_vectors`` are indexed
+        annotations backed by shared collections. Their per-node values are
+        materialized when read, avoiding duplicated storage across layers.
+
+        Object references are preserved; object instances are not copied.
+        NumPy vector data is shared by default. If the original vector array
+        is modified after construction, the indexed vectors reflect those
+        changes, but the already-computed centroids do not. Use
+        ``copy_vectors=True`` when an independent
+        backing array is required.
 
         Parameters
         ----------
@@ -570,32 +1106,45 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
         indices = Annotation("cluster_object_indices", tree)
         for node in tree.nodes:
             indices[node] = members_by_layer[node.layer][node.cluster]
-        annotations = [indices]
+
+        annotations: list[BaseAnnotation[Any]] = [indices]
 
         if objects is not None:
-            cluster_objects = Annotation("cluster_objects", tree)
-            for node in tree.nodes:
-                members = members_by_layer[node.layer][node.cluster]
-                cluster_objects[node] = [objects[i] for i in members]
+            cluster_objects = IndexedAnnotation(
+                "cluster_objects",
+                indices,
+                objects,
+                check_partition=True,
+            )
             annotations.append(cluster_objects)
+
         if object_vectors is not None:
             centroids = Annotation("cluster_centroid", tree)
-            cluster_vectors = Annotation("cluster_object_vectors", tree)
+
+            cluster_vectors = IndexedAnnotation(
+                "cluster_object_vectors",
+                indices,
+                object_vectors,
+                copy=copy_vectors,
+                check_partition=True,
+            )
+
             for node in tree.nodes:
                 members = members_by_layer[node.layer][node.cluster]
                 vectors = object_vectors[members]
+
                 # NaN, not zero, for an empty cluster.
                 centroids[node] = (
                     vectors.mean(axis=0, dtype=np.float64)
                     if len(members)
                     else np.full(vectors.shape[1], np.nan)
                 )
-                cluster_vectors[node] = vectors
+
             annotations.extend([centroids, cluster_vectors])
 
         return cls(tree, annotations)
 
-    def __getitem__(self, name: str) -> Annotation[Any]:
+    def __getitem__(self, name: str) -> BaseAnnotation[Any]:
         return self._annotations[name]
 
     def __iter__(self) -> Iterator[str]:
@@ -604,7 +1153,7 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
     def __len__(self) -> int:
         return len(self._annotations)
 
-    def __getattr__(self, name: str) -> Annotation[Any]:
+    def __getattr__(self, name: str) -> BaseAnnotation[Any]:
         """
         Return the annotation with the given name as an attribute.
 
@@ -620,20 +1169,13 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
                 f"{type(self).__name__} has no annotation " f"or attribute {name!r}"
             ) from None
 
-    def add(
+    def _check_addable(
         self,
-        annotation: Annotation[Any],
+        name: str,
         *,
         replace: bool = False,
     ) -> None:
-        if not isinstance(annotation, Annotation):
-            raise TypeError("annotation must be an Annotation")
-
-        name = annotation.name
-
-        if annotation.tree is not self.tree:
-            raise ValueError(f"annotation {name!r} is bound to a different tree")
-
+        """Validate that an annotation with this name can be added."""
         if name in self._annotations and not replace:
             raise ValueError(
                 f"annotation {name!r} is already in the store; "
@@ -646,6 +1188,21 @@ class AnnotationStore(Mapping[str, Annotation[Any]]):
                 "an AnnotationStore attribute; use store[{name!r}]"
             )
 
+    def add(
+        self,
+        annotation: BaseAnnotation[Any],
+        *,
+        replace: bool = False,
+    ) -> None:
+        if not isinstance(annotation, BaseAnnotation):
+            raise TypeError("annotation must be a BaseAnnotation")
+
+        name = annotation.name
+
+        if annotation.tree is not self.tree:
+            raise ValueError(f"annotation {name!r} is bound to a different tree")
+
+        self._check_addable(name, replace=replace)
         self._annotations[name] = annotation
 
     def node(self, node: NodeId) -> dict[str, Any]:
@@ -1151,9 +1708,21 @@ class Executor:
                 if name not in missing_optional
             }
 
+        new_outputs = []
         for store_name in writes_to.values():
-            if store_name not in self.store:
-                self.store.add(Annotation(store_name, self.tree))
+            if store_name in self.store:
+                annotation = self.store[store_name]
+                if isinstance(annotation, IndexedAnnotation):
+                    raise TypeError(
+                        f"output annotation {store_name!r} must not be an "
+                        f"IndexedAnnotation"
+                    )
+            else:
+                self.store._check_addable(store_name)
+                new_outputs.append(store_name)
+
+        for store_name in new_outputs:
+            self.store.add(Annotation(store_name, self.tree))
 
         selected_nodes = (
             self.store.tree.nodes

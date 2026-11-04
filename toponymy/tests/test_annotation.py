@@ -10,8 +10,10 @@ from toponymy.annotation import (
     AnnotationState,
     AnnotationStore,
     AnnotationTree,
+    BaseAnnotation,
     DescendantsInput,
     Executor,
+    IndexedAnnotation,
     InvalidAnnotationTree,
     NodeId,
     NodeInput,
@@ -58,6 +60,43 @@ def deep_cluster_tree():
 @pytest.fixture
 def annotation(valid_cluster_tree):
     return Annotation(name="topics", tree=AnnotationTree(valid_cluster_tree))
+
+
+@pytest.fixture
+def tree(valid_cluster_tree):
+    """A shared annotation tree for IndexedAnnotation tests."""
+    return AnnotationTree(valid_cluster_tree)
+
+
+@pytest.fixture
+def numpy_data():
+    """Eight rows of backing data."""
+    return np.arange(8)
+
+
+@pytest.fixture
+def indexed_annotation(tree, numpy_data):
+    """An empty IndexedAnnotation backed by eight rows."""
+    return IndexedAnnotation(
+        "selected",
+        indices={},
+        data=numpy_data,
+        tree=tree,
+    )
+
+
+@pytest.fixture
+def populated_indexed_annotation(tree, numpy_data):
+    """An IndexedAnnotation with a few nodes already assigned."""
+    return IndexedAnnotation(
+        "selected",
+        indices={
+            tree.nodes[0]: [0, 1],
+            tree.nodes[1]: [2, 3],
+        },
+        data=numpy_data,
+        tree=tree,
+    )
 
 
 def test_node_id_repr():
@@ -407,14 +446,11 @@ def test_annotation_delete_resets_to_empty(annotation):
         _ = annotation[node]
 
 
-def test_annotation_delete_unset_node_is_noop(annotation):
+def test_annotation_delete_unset_node_raises_keyerror(annotation):
     node = NodeId(0, 3)
 
-    del annotation[node]
-
-    assert annotation.states[node] is AnnotationState.EMPTY
     with pytest.raises(KeyError):
-        _ = annotation[node]
+        del annotation[node]
 
 
 def test_annotation_fail_marks_failed_and_clears_value(annotation):
@@ -1019,6 +1055,38 @@ def test_store_from_clusterer_rejects_non_contiguous_cluster_ids(two_layer_clust
         AnnotationStore.from_clusterer(two_layer_clusterer)
 
 
+def test_store_from_clusterer_shares_vectors_by_default(
+    two_layer_clusterer, object_vectors
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer,
+        object_vectors=object_vectors,
+    )
+
+    assert np.shares_memory(
+        store.cluster_object_vectors.indexed_data,
+        object_vectors,
+    )
+
+
+def test_store_from_clusterer_can_copy_vectors(two_layer_clusterer, object_vectors):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer,
+        object_vectors=object_vectors,
+        copy_vectors=True,
+    )
+
+    assert not np.shares_memory(
+        store.cluster_object_vectors.indexed_data,
+        object_vectors,
+    )
+
+    original_value = object_vectors[0, 0]
+    object_vectors[0, 0] = original_value + 100
+
+    assert store.cluster_object_vectors.indexed_data[0, 0] == original_value
+
+
 @pytest.fixture(
     params=[
         RandomExemplarAnnotator,
@@ -1076,3 +1144,465 @@ def test_store_from_clusterer_empty_cluster_has_nan_centroid_and_is_skipped(
     assert failures == {}
     assert list(store.exemplars[empty_node]) == []
     assert list(store.exemplar_original_indices[empty_node]) == []
+
+
+class TestBaseAnnotation:
+    def test_base_annotation_is_abstract(self, valid_cluster_tree):
+        tree = AnnotationTree(valid_cluster_tree)
+
+        with pytest.raises(TypeError):
+            BaseAnnotation("base", tree)
+
+    def test_annotation_obeys_read_contract(self, valid_cluster_tree):
+        tree = AnnotationTree(valid_cluster_tree)
+        annotation = Annotation("topics", tree)
+        first = tree.nodes[0]
+        second = tree.nodes[-1]
+        annotation[first] = "first"
+        annotation[second] = "last"
+
+        assert first in annotation
+        assert second in annotation
+        assert NodeId(0, 1) not in annotation
+        assert len(annotation) == 2
+        assert list(annotation) == [first, second]
+        assert annotation.computed() == {first: "first", second: "last"}
+        assert annotation.computed([second, NodeId(0, 1)]) == {second: "last"}
+
+    def test_computed_rejects_nodes_outside_tree(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+
+        with pytest.raises(KeyError):
+            annotation.computed([NodeId(99, 99)])
+
+    def test_contains_returns_false_for_invalid_node(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+
+        assert "not-a-node" not in annotation
+        assert (99, 99) not in annotation
+
+    def test_states_are_a_live_read_only_mapping(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+        node = NodeId(0, 0)
+        states = annotation.states
+
+        annotation[node] = "value"
+
+        assert states[node] is AnnotationState.COMPUTED
+        with pytest.raises(TypeError):
+            states[node] = AnnotationState.EMPTY
+
+
+class TestAnnotationStateTransitions:
+    def test_reset_clears_computed_value(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+        node = NodeId(0, 0)
+        annotation[node] = "value"
+
+        annotation.reset(node)
+
+        assert annotation.states[node] is AnnotationState.EMPTY
+        assert node not in annotation
+        with pytest.raises(KeyError):
+            _ = annotation[node]
+
+    def test_reset_clears_failed_state(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+        node = NodeId(0, 0)
+        annotation.fail(node)
+
+        annotation.reset(node)
+
+        assert annotation.states[node] is AnnotationState.EMPTY
+
+    def test_fail_discards_computed_value(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+        node = NodeId(0, 0)
+        annotation[node] = "value"
+
+        annotation.fail(node)
+
+        assert annotation.states[node] is AnnotationState.FAILED
+        assert node not in annotation
+        with pytest.raises(KeyError):
+            _ = annotation[node]
+
+    def test_delete_uncomputed_node_raises_keyerror(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+        node = NodeId(0, 0)
+
+        with pytest.raises(KeyError):
+            del annotation[node]
+
+        assert annotation.states[node] is AnnotationState.EMPTY
+
+    def test_delete_failed_node_raises_keyerror(self, valid_cluster_tree):
+        annotation = Annotation("topics", AnnotationTree(valid_cluster_tree))
+        node = NodeId(0, 0)
+        annotation.fail(node)
+
+        with pytest.raises(KeyError):
+            del annotation[node]
+
+        assert annotation.states[node] is AnnotationState.FAILED
+
+
+class TestIndexedAnnotation:
+    def test_initial_state_is_empty(self, tree, indexed_annotation):
+        assert len(indexed_annotation) == 0
+        assert all(
+            state is AnnotationState.EMPTY
+            for state in indexed_annotation.states.values()
+        )
+        with pytest.raises(KeyError):
+            _ = indexed_annotation[tree.nodes[0]]
+
+    @pytest.mark.parametrize(
+        ("data", "expected_type"),
+        [
+            (["a", "b", "c", "d"], list),
+            (("a", "b", "c", "d"), tuple),
+            (np.arange(12, dtype=np.int16).reshape(4, 3), np.ndarray),
+        ],
+    )
+    def test_selection_preserves_data_container_type(self, tree, data, expected_type):
+        node = tree.nodes[0]
+        indexed = IndexedAnnotation("selected", {}, data, tree=tree)
+        indexed.set_indices(node, [2, 0])
+
+        result = indexed[node]
+
+        assert isinstance(result, expected_type)
+        if isinstance(data, np.ndarray):
+            assert np.array_equal(result, data[[2, 0]])
+            assert result.dtype == data.dtype
+            assert result.shape == (2, 3)
+        else:
+            assert result == type(data)([data[2], data[0]])
+
+    def test_indices_preserve_order_and_duplicates(self, indexed_annotation, tree):
+        node = tree.nodes[0]
+        indexed_annotation.set_indices(node, [5, 1, 5, 2])
+
+        assert np.array_equal(indexed_annotation.indices_of(node), [5, 1, 5, 2])
+        assert np.array_equal(indexed_annotation[node], [5, 1, 5, 2])
+
+    def test_numpy_index_array_is_copied_and_read_only(self, indexed_annotation, tree):
+        node = tree.nodes[0]
+        supplied = np.array([3, 1], dtype=np.int64)
+
+        indexed_annotation.set_indices(node, supplied)
+        supplied[0] = 7
+
+        stored = indexed_annotation.indices_of(node)
+        assert np.array_equal(stored, [3, 1])
+        assert not stored.flags.writeable
+        with pytest.raises(ValueError):
+            stored[0] = 0
+
+    @pytest.mark.parametrize(
+        "bad_indices",
+        [
+            [True, 1],
+            [np.bool_(False)],
+            [1.0, 2.0],
+            ["1", "2"],
+            np.array([True, False]),
+            np.array([1.0, 2.0]),
+            np.array([[0, 1]]),
+            [-1],
+            [8],
+        ],
+    )
+    def test_rejects_invalid_indices(self, indexed_annotation, tree, bad_indices):
+        with pytest.raises((TypeError, ValueError)):
+            indexed_annotation.set_indices(tree.nodes[0], bad_indices)
+
+    def test_accepts_empty_python_sequence(self, indexed_annotation, tree):
+        node = tree.nodes[0]
+        indexed_annotation.set_indices(node, [])
+
+        assert node in indexed_annotation
+        assert indexed_annotation.indices_of(node).dtype == np.dtype(np.intp)
+        assert indexed_annotation.indices_of(node).size == 0
+        assert indexed_annotation[node].size == 0
+
+    def test_rejects_empty_non_integer_numpy_array(self, indexed_annotation, tree):
+        with pytest.raises(ValueError, match="integer"):
+            indexed_annotation.set_indices(tree.nodes[0], np.array([], dtype=float))
+
+    def test_set_indices_replaces_membership(self, populated_indexed_annotation, tree):
+        node = tree.nodes[0]
+        populated_indexed_annotation.set_indices(node, [4, 2])
+
+        assert np.array_equal(populated_indexed_annotation.indices_of(node), [4, 2])
+        assert np.array_equal(populated_indexed_annotation[node], [4, 2])
+
+    def test_delete_and_reset_clear_membership(self, indexed_annotation, tree):
+        node = tree.nodes[0]
+        indexed_annotation.set_indices(node, [0, 1])
+
+        del indexed_annotation[node]
+
+        assert indexed_annotation.states[node] is AnnotationState.EMPTY
+        with pytest.raises(KeyError):
+            _ = indexed_annotation[node]
+
+        indexed_annotation.set_indices(node, [2])
+        indexed_annotation.reset(node)
+        assert indexed_annotation.states[node] is AnnotationState.EMPTY
+        with pytest.raises(KeyError):
+            _ = indexed_annotation[node]
+
+    def test_fail_clears_membership(self, indexed_annotation, tree):
+        node = tree.nodes[0]
+        indexed_annotation.set_indices(node, [0, 1])
+
+        indexed_annotation.fail(node)
+
+        assert indexed_annotation.states[node] is AnnotationState.FAILED
+        assert node not in indexed_annotation
+        with pytest.raises(KeyError):
+            _ = indexed_annotation[node]
+
+    def test_indexed_data_is_read_only_view_for_numpy(
+        self, indexed_annotation, numpy_data
+    ):
+        source = numpy_data
+        view = indexed_annotation.indexed_data
+
+        assert np.shares_memory(view, source)
+        assert not view.flags.writeable
+        with pytest.raises(ValueError):
+            view[0] = 100
+
+        # The original owner can still mutate the shared backing array.
+        source[0] = 100
+        assert indexed_annotation.indexed_data[0] == 100
+
+    def test_copy_true_copies_numpy_backing_data(self, numpy_data, tree):
+        source = numpy_data
+        indexed_annotation = IndexedAnnotation(
+            "selected", indices={}, data=numpy_data, tree=tree, copy=True
+        )
+        source[0] = 100
+
+        assert indexed_annotation.indexed_data[0] == 0
+        assert not np.shares_memory(indexed_annotation.indexed_data, source)
+
+    def test_list_backing_is_shallow_copied(self, tree):
+        item = object()
+        source = [item, object()]
+        indexed = IndexedAnnotation("selected", {}, source, tree=tree)
+        source.append(object())
+        node = tree.nodes[0]
+        indexed.set_indices(node, [0])
+
+        assert len(indexed.indexed_data) == 2
+        assert indexed[node][0] is item
+
+    def test_indexed_data_exposes_list_backing_collection(self, tree):
+        source = ["a", "b"]
+        indexed = IndexedAnnotation("selected", {}, source, tree=tree)
+
+        assert indexed.indexed_data is indexed._data
+        indexed.indexed_data[0] = "changed"
+        node = tree.nodes[0]
+        indexed.set_indices(node, [0])
+        assert indexed[node] == ["changed"]
+
+    def test_constructor_accepts_annotation_as_index_source(self, tree):
+        indices = Annotation("indices", tree)
+        for node in tree.nodes:
+            indices[node] = [node.cluster % 4]
+
+        indexed = IndexedAnnotation("selected", indices, list("abcd"))
+
+        for node in tree.nodes:
+            assert indexed[node] == [list("abcd")[node.cluster % 4]]
+
+    def test_constructor_accepts_plain_mapping_with_tree(self, tree, numpy_data):
+        mapping = {tree.nodes[0]: [3, 1]}
+        indexed = IndexedAnnotation("selected", mapping, numpy_data, tree=tree)
+
+        assert np.array_equal(indexed[tree.nodes[0]], [3, 1])
+
+    def test_constructor_requires_tree_for_plain_mapping(self, numpy_data):
+        with pytest.raises(TypeError, match="tree is required"):
+            IndexedAnnotation("selected", {}, numpy_data)
+
+    def test_constructor_rejects_indexed_annotation_as_index_source(
+        self, tree, indexed_annotation, numpy_data
+    ):
+        indexed_annotation.set_indices(tree.nodes[0], [0, 1])
+
+        with pytest.raises(TypeError):
+            IndexedAnnotation("derived", indexed_annotation, numpy_data)
+
+    def test_constructor_rejects_different_tree(self, tree, numpy_data):
+        other_tree = AnnotationTree(
+            {
+                (1, 0): [(0, 0)],
+                (2, 0): [(1, 0)],
+            }
+        )
+        indices = Annotation("indices", tree)
+
+        with pytest.raises(ValueError, match="tree"):
+            IndexedAnnotation("selected", indices, numpy_data, tree=other_tree)
+
+    def test_partition_check_allows_missing_rows(self, tree, numpy_data):
+        indices = {
+            tree.layer(0)[0]: [0, 1],
+            tree.layer(0)[1]: [2],
+        }
+
+        indexed = IndexedAnnotation(
+            "selected",
+            indices,
+            numpy_data,
+            tree=tree,
+            check_partition=True,
+        )
+
+        assert len(indexed) == 2
+
+    def test_partition_check_rejects_overlap_between_nodes(self, tree, numpy_data):
+        indices = {
+            tree.layer(0)[0]: [0, 1],
+            tree.layer(0)[1]: [1, 2],
+        }
+
+        with pytest.raises(ValueError):
+            IndexedAnnotation(
+                "selected",
+                indices,
+                numpy_data,
+                tree=tree,
+                check_partition=True,
+            )
+
+    def test_partition_check_rejects_duplicate_within_node(self, tree, numpy_data):
+        indices = {tree.layer(0)[0]: [0, 0]}
+
+        with pytest.raises(ValueError):
+            IndexedAnnotation(
+                "selected",
+                indices,
+                numpy_data,
+                tree=tree,
+                check_partition=True,
+            )
+
+    def test_set_indices_can_invalidate_partition(self, tree, numpy_data):
+        first, second = tree.layer(0)[:2]
+        indexed = IndexedAnnotation(
+            "selected",
+            {first: [0], second: [1]},
+            numpy_data,
+            tree=tree,
+            check_partition=True,
+        )
+
+        indexed.set_indices(second, [0])
+
+        with pytest.raises(ValueError):
+            indexed.check_layer_partitions()
+
+
+class TestAnnotationStoreWithIndexedAnnotation:
+    def test_store_accepts_indexed_annotation(self, tree):
+        indexed = IndexedAnnotation("objects", {}, list("abcdefgh"), tree=tree)
+        indexed.set_indices(tree.nodes[0], [0, 1])
+
+        store = AnnotationStore(tree, [indexed])
+
+        assert store["objects"] is indexed
+        assert store.objects is indexed
+
+    def test_store_rejects_annotation_from_different_tree(self, tree):
+        other_tree = AnnotationTree(
+            {
+                (1, 0): [(0, 0)],
+                (2, 0): [(1, 0)],
+            }
+        )
+        indexed = IndexedAnnotation("objects", {}, [1, 2], tree=other_tree)
+
+        with pytest.raises(ValueError):
+            AnnotationStore(tree, [indexed])
+
+    def test_store_replacement_accepts_indexed_annotation(
+        self, indexed_annotation, tree
+    ):
+        first = Annotation("selected", tree)
+        second = indexed_annotation
+        store = AnnotationStore(tree, [first])
+
+        store.add(second, replace=True)
+
+        assert store["selected"] is second
+
+    def test_store_rejects_non_annotation(self, tree):
+
+        with pytest.raises(TypeError):
+            AnnotationStore(tree, [object()])
+
+
+class TestExecutorWithIndexedAnnotation:
+    def test_indexed_annotation_can_be_an_executor_input(self, tree):
+        indexed = IndexedAnnotation("members", {}, list("abcdefgh"), tree=tree)
+        for node in tree.nodes:
+            indexed.set_indices(node, [node.cluster])
+
+        store = AnnotationStore(tree, [indexed])
+
+        class CountMembers:
+            inputs = ("members",)
+            outputs = ("member_count",)
+            algorithm_type = "node-node"
+
+            def annotate(self, unit, members):
+                return {"member_count": len(members)}
+
+        failures = Executor(store).run(CountMembers())
+
+        assert failures == {}
+        assert isinstance(store["member_count"], Annotation)
+        for node in tree.nodes:
+            assert store["member_count"][node] == 1
+
+    def test_indexed_annotation_cannot_be_executor_output(
+        self, indexed_annotation, tree
+    ):
+        store = AnnotationStore(tree, [indexed_annotation])
+
+        class WriteIndexedOutput:
+            inputs = ()
+            outputs = ("selected",)
+            algorithm_type = "node-node"
+
+            def annotate(self, unit, **kwargs):
+                return {"selected": "value"}
+
+        with pytest.raises(TypeError, match="must not be an IndexedAnnotation"):
+            Executor(store).run(WriteIndexedOutput())
+
+    def test_invalid_later_output_name_does_not_partially_modify_store(self, tree):
+        store = AnnotationStore(tree, [])
+
+        class TwoOutputs:
+            inputs = ()
+            outputs = ("created_first", "tree")
+            algorithm_type = "node-node"
+
+            def annotate(self, unit, **kwargs):
+                return {
+                    "created_first": "first",
+                    "tree": "invalid",
+                }
+
+        with pytest.raises((TypeError, ValueError, KeyError)):
+            Executor(store).run(TwoOutputs())
+
+        assert "created_first" not in store
