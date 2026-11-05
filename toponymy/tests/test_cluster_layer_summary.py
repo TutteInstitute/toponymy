@@ -492,11 +492,11 @@ def test_summary_retry_unpacks_name_summary_and_explanation(monkeypatch):
             raise AssertionError("not used")
 
         def generate_topic_name(
-            self, prompt, topic_extraction_function=None, max_tokens=None, **kwargs
+            self, prompt, extract_topic_name_function=None, max_tokens=None, **kwargs
         ):
             self.max_tokens_per_call.append(max_tokens)
             response = next(self.responses)
-            return "" if response is None else topic_extraction_function(response)
+            return "" if response is None else extract_topic_name_function(response)
 
     llm = FirstNameFailsLLM()
     names, summaries, explanations = _name_two_topics(llm, monkeypatch)

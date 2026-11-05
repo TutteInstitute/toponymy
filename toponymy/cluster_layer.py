@@ -1098,7 +1098,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 retry_results = [
                     llm.generate_topic_name(
                         prompt,
-                        topic_extraction_function=extract_topic_name,
+                        extract_topic_name_function=extract_topic_name,
                         get_topic_name_regex=get_topic_name_regex,
                         max_tokens=2048,
                     )
