@@ -109,6 +109,24 @@ def test_sync_test_llm_connectivity_failure():
     assert result == "<error>"
 
 
+@pytest.mark.asyncio
+async def test_sync_wrapper_atest_llm_connectivity_success():
+    wrapper = DummySingleWrapper()
+
+    result = await wrapper.atest_llm_connectivity()
+
+    assert result == SINGLE_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_sync_wrapper_atest_llm_connectivity_failure():
+    wrapper = DummyFailureWrapper()
+
+    result = await wrapper.atest_llm_connectivity()
+
+    assert result == "<error>"
+
+
 # Test the retry-policy
 def test_should_retry_invalid_input_returns_false():
     assert _should_retry(InvalidLLMInputError("bad input")) is False

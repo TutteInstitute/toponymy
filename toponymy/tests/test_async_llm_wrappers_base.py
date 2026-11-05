@@ -1,3 +1,5 @@
+import warnings
+
 import pytest
 from unittest.mock import AsyncMock
 from toponymy.llm_wrappers import (
@@ -37,6 +39,7 @@ class DummyAsyncProviderError(Exception):
 
 
 class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
+    model = "dummy-model"
     _supports_debug_callback = True
 
     FAIL_FAST_EXCEPTIONS = (DummyAsyncProviderError,)
@@ -393,3 +396,71 @@ async def test_safe_call_with_retry_result_fail_fast_raises_and_no_callback():
         )
 
     assert len(events) == 0
+
+
+def test_async_wrapper_test_llm_connectivity_success():
+    wrapper = DummyAsyncSingleWrapper()
+
+    result = wrapper.test_llm_connectivity()
+
+    assert result == SINGLE_RESPONSE
+
+
+def test_async_wrapper_test_llm_connectivity_failure():
+    wrapper = DummyAsyncFailFastWrapper()
+
+    result = wrapper.test_llm_connectivity()
+
+    assert result == "<error>"
+
+
+def test_async_wrapper_test_llm_connectivity_sync_does_not_warn():
+    wrapper = DummyAsyncSingleWrapper()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = wrapper.test_llm_connectivity()
+
+    assert result == SINGLE_RESPONSE
+
+
+@pytest.mark.asyncio
+async def test_awaiting_test_llm_connectivity_warns_and_still_works():
+    wrapper = DummyAsyncSingleWrapper()
+
+    with pytest.warns(DeprecationWarning, match="atest_llm_connectivity") as record:
+        result = await wrapper.test_llm_connectivity()
+
+    assert result == SINGLE_RESPONSE
+    assert len(record) == 1
+
+
+@pytest.mark.asyncio
+async def test_awaiting_test_llm_connectivity_failure_warns_and_returns_error():
+    wrapper = DummyAsyncFailFastWrapper()
+
+    with pytest.warns(DeprecationWarning, match="atest_llm_connectivity"):
+        result = await wrapper.test_llm_connectivity()
+
+    assert result == "<error>"
+
+
+@pytest.mark.asyncio
+async def test_awaiting_test_llm_connectivity_warning_points_at_caller():
+    wrapper = DummyAsyncSingleWrapper()
+
+    with pytest.warns(DeprecationWarning) as record:
+        await wrapper.test_llm_connectivity()
+
+    assert record[0].filename == __file__
+
+
+@pytest.mark.asyncio
+async def test_async_atest_llm_connectivity_does_not_warn():
+    wrapper = DummyAsyncSingleWrapper()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        result = await wrapper.atest_llm_connectivity()
+
+    assert result == SINGLE_RESPONSE

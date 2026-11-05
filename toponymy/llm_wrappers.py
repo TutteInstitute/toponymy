@@ -750,6 +750,12 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
         return "<error>"
 
+    async def atest_llm_connectivity(self) -> str:
+        """
+        Helper method to keep async and sync interfaces consistent.
+        """
+        return await asyncio.to_thread(self.test_llm_connectivity)
+
     def connectivity_status(
         self,
         prompt: str = DEFAULT_CONNECTIVITY_PROMPT,
@@ -827,7 +833,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 f"prompt_kind must be 'topic_name' or 'topic_cluster_names', got {prompt_kind}"
             )
         if prompt_kind == "topic_cluster_names":
-            return NotImplemented("Topic cluster names are not implemented yet.")
+            raise NotImplementedError("Topic cluster names are not implemented yet.")
         if max_tokens is None:
             if prompt_kind == "topic_name":
                 max_tokens = getattr(self, "max_tokens_topic_name", 128)
@@ -1342,8 +1348,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         """
         return True
 
-    async def test_llm_connectivity(self) -> str:
-        result = await self.connectivity_status()
+    async def atest_llm_connectivity(self) -> str:
+        result = await self.aconnectivity_status()
 
         if result["success"]:
             logger.info(
@@ -1365,6 +1371,29 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
 
         return "<error>"
+
+    def test_llm_connectivity(self) -> str:
+        """
+        Synchronous wrapper for atest_llm_connectivity.
+
+        If called from inside a running event loop (e.g. someone wrote
+        `await obj.test_llm_connectivity()`), emits a DeprecationWarning and
+        returns the coroutine so the `await` still works.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop: normal synchronous usage
+            return _SyncBridge.run(self.atest_llm_connectivity())
+
+        warn(
+            "test_llm_connectivity() is now synchronous. In async code use "
+            "`await atest_llm_connectivity()` instead; in sync code, call "
+            "test_llm_connectivity() without `await`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.atest_llm_connectivity()
 
     async def aconnectivity_status(
         self,
@@ -1439,11 +1468,24 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         Synchronous wrapper for connectivity_status.
 
         This method provides a synchronous interface to the async connectivity_status method,
-        making it easier to use in synchronous code contexts.
+        making it easier to use in synchronous code contexts. Will issue a deprecation warning
+        if called with `await`.
 
         Returns:
             dict: The same result dictionary as connectivity_status
         """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            warn(
+                "connectivity_status() is synchronous on async namers. "
+                "Use `await aconnectivity_status()` in async code or call "
+                "connectivity_status() without `await` in sync code.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         return _SyncBridge.run(
             self.aconnectivity_status(prompt, system_prompt=system_prompt)
         )

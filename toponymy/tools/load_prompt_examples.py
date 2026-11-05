@@ -28,12 +28,7 @@ def prompt_example_params_path(example_id: str) -> Path:
     Path
         A Path object pointing to the JSON file with prompt parameters.
     """
-    file_path = (
-        Path(__file__).parent.parent.parent
-        / "examples"
-        / "prompt_example_params"
-        / f"{example_id}.json"
-    )
+    file_path = Path(__file__).parent.parent / "prompt_examples" / f"{example_id}.json"
     if not file_path.exists():
         raise FileNotFoundError(f"Prompt parameters file not found: {file_path}")
     return file_path
