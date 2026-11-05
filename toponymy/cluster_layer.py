@@ -221,9 +221,15 @@ class ClusterLayer(ABC):
             )
         )
 
-        self.dismbiguation_topic_indices = [
-            np.where(topic_name_cluster_labels == cluster_num)[0]
+        has_topic_name = np.array(self.topic_names) != ""
+        named_topic_groups = [
+            np.where((topic_name_cluster_labels == cluster_num) & has_topic_name)[0]
             for cluster_num in clusters_for_renaming
+        ]
+        self.dismbiguation_topic_indices = [
+            topic_indices
+            for topic_indices in named_topic_groups
+            if len(topic_indices) >= 2
         ]
 
         # Break up over-large clusters into manageable chunks
@@ -565,7 +571,8 @@ class ClusterLayerText(ClusterLayer):
             embedding_model=embedding_model,
         )
         # Run an extra disambiguation pass if we still have significant duplication
-        if pd.Series(self.topic_names).value_counts().iloc[0] > 2:
+        named_topics = [name for name in self.topic_names if name != ""]
+        if named_topics and pd.Series(named_topics).value_counts().iloc[0] > 2:
             self.disambiguate_topics(
                 llm=llm,
                 detail_level=detail_level,
@@ -1055,7 +1062,8 @@ class ClusterLayerSummaryText(ClusterLayerText):
             embedding_model=embedding_model,
         )
         # Run an extra disambiguation pass if we still have significant duplication
-        if pd.Series(self.topic_names).value_counts().iloc[0] > 2:
+        named_topics = [name for name in self.topic_names if name != ""]
+        if named_topics and pd.Series(named_topics).value_counts().iloc[0] > 2:
             self.disambiguate_topics(
                 llm=llm,
                 detail_level=detail_level,

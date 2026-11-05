@@ -1,4 +1,5 @@
 from toponymy.cluster_layer import ClusterLayerText, ClusterLayer
+from toponymy.llm_wrappers import LLMWrapper
 from toponymy.keyphrases import KeyphraseBuilder
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 
@@ -270,3 +271,57 @@ def test_make_prompts_produces_every_rendering(
     assert prompts
     for prompt in prompts:
         assert set(prompt) == {"system", "user", "combined"}
+
+
+def test_disambiguation_skips_empty_topic_names(monkeypatch):
+    cluster_layer = ClusterLayerText(np.arange(7), np.eye(7), 0)
+    cluster_layer.topic_names = ["", "", "", "", "Cats", "Cats", "Dogs"]
+    cluster_layer.topic_name_embeddings = np.array(
+        [[1.0, 0.0, 0.0]] * 3
+        + [[0.0, 0.0, 1.0]]
+        + [[0.0, 1.0, 0.0]] * 2
+        + [[0.0, 0.0, 1.0]]
+    )
+    monkeypatch.setattr(
+        "toponymy.cluster_layer.distinguish_topic_names_prompt",
+        lambda topic_indices, *args, **kwargs: list(topic_indices),
+    )
+
+    cluster_layer._make_disambiguation_prompts(
+        1.0, [cluster_layer.topic_names], "sentences", "about cats"
+    )
+
+    assert [list(indices) for indices in cluster_layer.dismbiguation_topic_indices] == [
+        [4, 5]
+    ]
+    assert cluster_layer.disambiguation_prompts == [[4, 5]]
+
+
+def test_failed_names_do_not_trigger_extra_disambiguation(monkeypatch):
+    class FirstPassFailsLLM(LLMWrapper):
+        def __init__(self):
+            self.names = iter(["", "", "", "Cats", "Dogs", "Fish", "Birds"])
+
+        def _call_llm(self, prompt, temperature, max_tokens):
+            raise AssertionError("not used")
+
+        def _call_llm_with_system_prompt(
+            self, system_prompt, user_prompt, temperature, max_tokens
+        ):
+            raise AssertionError("not used")
+
+        def generate_topic_name(self, prompt, *args, **kwargs):
+            return next(self.names)
+
+    cluster_layer = ClusterLayerText(np.arange(4), np.eye(4), 0)
+    cluster_layer.prompts = ["prompt 0", "prompt 1", "prompt 2", "prompt 3"]
+    disambiguation_passes = []
+    monkeypatch.setattr(
+        cluster_layer,
+        "disambiguate_topics",
+        lambda **kwargs: disambiguation_passes.append(list(cluster_layer.topic_names)),
+    )
+
+    cluster_layer.name_topics(FirstPassFailsLLM(), 1.0, [[]], "sentences", "about cats")
+
+    assert disambiguation_passes == [["", "", "", "Cats"]]
