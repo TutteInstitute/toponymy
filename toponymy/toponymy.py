@@ -238,6 +238,9 @@ class Toponymy:
                 )
             self.cluster_layers_ = self.clusterer.cluster_layers_
             self.cluster_tree_ = self.clusterer.cluster_tree_
+            if self.prompt_template not in (PROMPT_TEMPLATES, SUMMARY_PROMPT_TEMPLATES):
+                for layer in self.cluster_layers_:
+                    layer.prompt_template = self.prompt_template
         else:
             clusterer_kwd_args = {
                 "verbose": self.verbose,
