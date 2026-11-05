@@ -226,8 +226,21 @@ class Toponymy:
             self.clusterer, "cluster_tree_"
         ):
             # If the clusterer has already been fit, we can skip this step
+            prefit_layer = self.clusterer.cluster_layers_[0]
+            requested_class = getattr(self.layer_class, "func", self.layer_class)
+            if isinstance(requested_class, type) and not isinstance(
+                prefit_layer, requested_class
+            ):
+                raise ValueError(
+                    f"Prefit {type(prefit_layer).__name__} layers are incompatible with "
+                    f"layer_class={requested_class.__name__}. Pass a matching "
+                    "layer_class or a clusterer that has not been fit."
+                )
             self.cluster_layers_ = self.clusterer.cluster_layers_
             self.cluster_tree_ = self.clusterer.cluster_tree_
+            if self.prompt_template not in (PROMPT_TEMPLATES, SUMMARY_PROMPT_TEMPLATES):
+                for layer in self.cluster_layers_:
+                    layer.prompt_template = self.prompt_template
         else:
             clusterer_kwd_args = {
                 "verbose": self.verbose,

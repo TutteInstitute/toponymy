@@ -578,3 +578,75 @@ def test_toponymy_accepts_non_class_layer_factory():
     )
 
     assert model.prompt_template == PROMPT_TEMPLATES
+
+
+def test_toponymy_rejects_layer_class_that_prefit_clusterer_did_not_build():
+    clusterer = MagicMock()
+    clusterer.cluster_layers_ = [MagicMock(spec=ClusterLayerText)]
+    clusterer.cluster_tree_ = {}
+    model = Toponymy(
+        MagicMock(),
+        MagicMock(),
+        clusterer,
+        layer_class=ClusterLayerSummaryText,
+    )
+
+    with pytest.raises(
+        ValueError, match="incompatible with layer_class=ClusterLayerSummaryText"
+    ):
+        model.fit(["a"], np.zeros((1, 2)), np.zeros((1, 2)))
+
+
+class _StopAfterLayerSetup(Exception):
+    pass
+
+
+def _fit_until_layer_setup(model, monkeypatch):
+    real_sync = Toponymy._sync_layer_runtime_config
+
+    def stop(self):
+        real_sync(self)
+        raise _StopAfterLayerSetup
+
+    monkeypatch.setattr(Toponymy, "_sync_layer_runtime_config", stop)
+    with pytest.raises(_StopAfterLayerSetup):
+        model.fit(["a"], np.zeros((1, 2)), np.zeros((1, 2)))
+    return model.cluster_layers_[0].prompt_template
+
+
+def _prefit_clusterer(layer):
+    clusterer = MagicMock()
+    clusterer.cluster_layers_ = [layer]
+    clusterer.cluster_tree_ = {}
+    return clusterer
+
+
+def test_toponymy_applies_custom_prompt_template_to_prefit_layers(monkeypatch):
+    custom_template = {"layer": {}, "disambiguate_topics": {}}
+    layer = ClusterLayerText(np.zeros(1, dtype=int), np.zeros((1, 2)), layer_id=0)
+    model = Toponymy(
+        MagicMock(),
+        MagicMock(),
+        _prefit_clusterer(layer),
+        prompt_template=custom_template,
+    )
+
+    assert _fit_until_layer_setup(model, monkeypatch) is custom_template
+
+
+@pytest.mark.parametrize("layer_class", [ClusterLayerText, ClusterLayerSummaryText])
+def test_toponymy_default_template_keeps_prefit_layer_template(
+    layer_class, monkeypatch
+):
+    layer_template = {"layer": {}, "disambiguate_topics": {}}
+    layer = ClusterLayerSummaryText(
+        np.zeros(1, dtype=int),
+        np.zeros((1, 2)),
+        layer_id=0,
+        prompt_template=layer_template,
+    )
+    model = Toponymy(
+        MagicMock(), MagicMock(), _prefit_clusterer(layer), layer_class=layer_class
+    )
+
+    assert _fit_until_layer_setup(model, monkeypatch) is layer_template

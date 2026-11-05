@@ -1351,7 +1351,7 @@ wheels = [
 
 [[package]]
 name = "evoc"
-version = "0.3.1"
+version = "0.3.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numba" },
@@ -1361,9 +1361,9 @@ dependencies = [
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "tqdm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6e/16/f5309a9137e7669489cb9b53a1e52f9ee0f38ae794c2f1a7174fa547d189/evoc-0.3.1.tar.gz", hash = "sha256:e4986174419885479929595eea471593e06afee8a3abd8d6934e1ca7530ec449", size = 55853, upload-time = "2026-03-27T19:12:49.315Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cc/f7/8602181502858f31e1de33dc635a8f7d4a0dc3b1f33e66c6feeaa9b9593a/evoc-0.3.2.tar.gz", hash = "sha256:6269aa1100ac7ce0b5e984e0d73adcec257ab60b890617bb229bd94f639e7cd9", size = 56767, upload-time = "2026-10-19T21:41:07.918Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/81/51/9fae6b38d7cd38b8b030d612943941b4018ddca83c9d6a11731c0dae71cc/evoc-0.3.1-py3-none-any.whl", hash = "sha256:28e4d73d3e991821a722ba8fb0913dd38e1bb52a26a923caf5fc1c218115161e", size = 60684, upload-time = "2026-03-27T19:12:48.05Z" },
+    { url = "https://files.pythonhosted.org/packages/94/52/2977dc3cfaa7428e73732fd19b6ffd2f02ec2541f61ac591d46aefe10fcb/evoc-0.3.2-py3-none-any.whl", hash = "sha256:e2ced4624264a1dfd7a23349054cdd27db1e1fd0d535b1e172e085f0f995dce7", size = 61125, upload-time = "2026-10-19T21:41:06.596Z" },
 ]
 
 [[package]]
@@ -6086,7 +6086,7 @@ requires-dist = [
     { name = "cohere", marker = "extra == 'dev'" },
     { name = "datamapplot", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "datasets" },
-    { name = "evoc", marker = "extra == 'dev'" },
+    { name = "evoc", marker = "extra == 'dev'", specifier = ">=0.3.2" },
     { name = "fast-hdbscan", specifier = ">=0.3.2" },
     { name = "httpx" },
     { name = "huggingface-hub", marker = "extra == 'dev'", specifier = "<1.0" },
