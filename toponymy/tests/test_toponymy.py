@@ -578,3 +578,20 @@ def test_toponymy_accepts_non_class_layer_factory():
     )
 
     assert model.prompt_template == PROMPT_TEMPLATES
+
+
+def test_toponymy_rejects_layer_class_that_prefit_clusterer_did_not_build():
+    clusterer = MagicMock()
+    clusterer.cluster_layers_ = [MagicMock(spec=ClusterLayerText)]
+    clusterer.cluster_tree_ = {}
+    model = Toponymy(
+        MagicMock(),
+        MagicMock(),
+        clusterer,
+        layer_class=ClusterLayerSummaryText,
+    )
+
+    with pytest.raises(
+        ValueError, match="incompatible with layer_class=ClusterLayerSummaryText"
+    ):
+        model.fit(["a"], np.zeros((1, 2)), np.zeros((1, 2)))
