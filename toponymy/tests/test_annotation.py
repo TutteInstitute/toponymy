@@ -1,0 +1,1435 @@
+from types import SimpleNamespace
+
+from collections import defaultdict
+import numpy as np
+import pandas as pd
+import pytest
+from sklearn.exceptions import NotFittedError
+
+from toponymy.annotation import (
+    Annotation,
+    AnnotationState,
+    AnnotationStore,
+    AnnotationTree,
+    DescendantsInput,
+    Executor,
+    InvalidAnnotationTree,
+    LayerInput,
+    MultiNodeInput,
+    MultiNodeOutput,
+    NodeId,
+    NotAvailable,
+    NodeInput,
+    NodeOutput,
+    _members_by_cluster,
+    parse_algorithm_type,
+)
+from toponymy.exemplar_texts import (
+    DiverseExemplarAnnotator,
+    RandomExemplarAnnotator,
+    SubmodularExemplarAnnotator,
+)
+
+
+@pytest.fixture
+def valid_cluster_tree():
+    # Root is (2, 0)
+    return {
+        (1, 0): [(0, 0)],
+        (1, 1): [(0, 1)],
+        (1, 2): [(0, 7), (0, 6), (0, 5)],
+        (1, 3): [(0, 4)],
+        (2, 0): [(1, 0), (1, 1), (1, 2), (1, 3), (0, 2), (0, 3)],
+    }
+
+
+@pytest.fixture
+def deep_cluster_tree():
+    # Root is (4, 0)
+    return {
+        (4, 0): [(3, 0), (3, 1)],
+        (3, 0): [(2, 0), (2, 1)],
+        (3, 1): [(2, 2)],
+        (2, 0): [(1, 0), (1, 1)],
+        (2, 1): [(1, 2)],
+        (2, 2): [(1, 3), (1, 4)],
+        (1, 0): [(0, 0), (0, 1)],
+        (1, 1): [(0, 2)],
+        (1, 3): [(0, 3), (0, 4)],
+        (1, 4): [(0, 5)],
+    }
+
+
+@pytest.fixture
+def annotation(valid_cluster_tree):
+    return Annotation(name="topics", tree=AnnotationTree(valid_cluster_tree))
+
+
+def test_node_id_repr():
+    node = NodeId(1, 7)
+    assert repr(node) == "NodeId(1, 7)"
+
+
+def test_tree_len(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    assert len(tree) == 12
+
+
+def test_tree_n_layers(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    assert tree.n_layers == 2
+
+
+def test_tree_nodes_is_tuple(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    assert isinstance(tree.nodes, tuple)
+
+
+def test_tree_nodes(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    assert tree.nodes == tuple(
+        sorted(
+            [
+                NodeId(0, 0),
+                NodeId(0, 1),
+                NodeId(0, 2),
+                NodeId(1, 0),
+                NodeId(1, 1),
+                NodeId(1, 2),
+                NodeId(1, 3),
+                NodeId(0, 3),
+                NodeId(0, 4),
+                NodeId(0, 5),
+                NodeId(0, 6),
+                NodeId(0, 7),
+            ]
+        )
+    )
+    assert len(tree.nodes) == 12
+
+
+def test_tree_layer_has_no_root_layer(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    assert tree.layer(0) == (
+        NodeId(0, 0),
+        NodeId(0, 1),
+        NodeId(0, 2),
+        NodeId(0, 3),
+        NodeId(0, 4),
+        NodeId(0, 5),
+        NodeId(0, 6),
+        NodeId(0, 7),
+    )
+    assert tree.layer(1) == (
+        NodeId(1, 0),
+        NodeId(1, 1),
+        NodeId(1, 2),
+        NodeId(1, 3),
+    )
+    with pytest.raises(KeyError):
+        tree.layer(2)
+
+
+def test_tree_children(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    for parent, children in valid_cluster_tree.items():
+        if parent != tree._root:
+            assert tree.children(parent) == sorted(children)
+
+    for node in tree.layer(0):
+        assert tree.children(node) is None
+
+    assert tree.children(tree._root) is None
+
+
+def test_tree_parent(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    for parent, children in valid_cluster_tree.items():
+        for child in children:
+            if child not in tree._root_children:
+                assert tree.parent(child) == parent
+
+    assert tree.parent(tree._root) is None
+
+    for child in tree._root_children:
+        assert tree.parent(child) is None
+
+
+def test_tree_contains(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    assert NodeId(1, 0) in tree
+    assert NodeId(0, 2) in tree
+
+    # Root is intentionally excluded from the tree
+    assert NodeId(2, 0) not in tree
+
+    # Non-hashable or wrong type should safely return False.
+    assert ["not", "a", "node"] not in tree
+
+
+def test_tree_rejects_multiple_parents():
+    invalid_cluster_tree = {
+        (1, 0): [(0, 0)],
+        (1, 1): [(0, 0)],
+        (2, 0): [(1, 0), (1, 1)],
+    }
+
+    with pytest.raises(InvalidAnnotationTree, match="multiple parents"):
+        AnnotationTree(invalid_cluster_tree)
+
+
+def test_tree_rejects_multiple_roots():
+    invalid_cluster_tree = {
+        (1, 0): [(0, 0)],
+        (1, 1): [(0, 1)],
+    }
+
+    with pytest.raises(InvalidAnnotationTree, match="multiple roots"):
+        AnnotationTree(invalid_cluster_tree)
+
+
+def test_tree_rejects_no_root():
+    invalid_cluster_tree = {
+        (1, 0): [(1, 1)],
+        (1, 1): [(1, 0)],
+    }
+
+    with pytest.raises(
+        InvalidAnnotationTree, match="must be in a lower layer than its parent"
+    ):
+        AnnotationTree(invalid_cluster_tree)
+
+
+def test_tree_empty_raises_invalid_tre():
+    with pytest.raises(InvalidAnnotationTree, match="Empty cluster tree"):
+        AnnotationTree({})
+
+
+def test_tree_rejects_non_contiguous_cluster_ids_within_layer():
+    invalid_cluster_tree = {
+        (1, 0): [(0, 0), (0, 2)],  # gap: missing (0, 1)
+        (2, 0): [(1, 0)],
+    }
+
+    with pytest.raises(
+        InvalidAnnotationTree, match="Cluster ids in layer 0 must be contiguous"
+    ):
+        AnnotationTree(invalid_cluster_tree)
+
+
+def test_layer_ids_are_zero_indexed_and_contiguous(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layer_ids = tree.layer_ids
+
+    assert layer_ids[0] == 0
+    assert layer_ids == tuple(range(max(layer_ids) + 1))
+    assert len(layer_ids) == max(layer_ids) + 1
+
+
+def test_tree_rejects_non_contiguous_layer_ids():
+    invalid_cluster_tree = {
+        (3, 0): [(2, 0)],
+        (2, 0): [(0, 0)],
+    }
+
+    with pytest.raises(InvalidAnnotationTree, match="Layer ids must be contiguous"):
+        AnnotationTree(invalid_cluster_tree)
+
+
+def test_tree_layer_missing_raises_key_error(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    with pytest.raises(KeyError):
+        tree.layer(99)
+
+
+def test_tree_from_clusterer(valid_cluster_tree):
+    class DummyClusterer:
+        @property
+        def cluster_tree_(self):
+            return valid_cluster_tree
+
+    tree = AnnotationTree.from_clusterer(DummyClusterer())
+
+    assert len(tree) == 12
+    assert tree.parent(NodeId(0, 0)) == NodeId(1, 0)
+
+
+def test_tree_descendants_root_children(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    descendants = []
+    for node in tree._root_children:
+        descendants.extend(tree.descendants(node))
+    assert set(descendants) == set(tree.nodes) - set(tree._root_children)
+
+
+def test_tree_descendants_depth_limited_deep_tree(deep_cluster_tree):
+    tree = AnnotationTree(deep_cluster_tree)
+
+    assert tree.descendants(tree._root) == []
+
+    start = NodeId(3, 0)
+
+    depth_1 = tree.descendants(start, depth=1)
+    assert set(depth_1) == {NodeId(2, 0), NodeId(2, 1)}
+
+    depth_2 = tree.descendants(start, depth=2)
+    assert set(depth_2) == {
+        NodeId(2, 0),
+        NodeId(2, 1),
+        NodeId(1, 0),
+        NodeId(1, 1),
+        NodeId(1, 2),
+    }
+
+    depth_3 = tree.descendants(start, depth=3)
+    assert set(depth_3) == {
+        NodeId(2, 0),
+        NodeId(2, 1),
+        NodeId(1, 0),
+        NodeId(1, 1),
+        NodeId(1, 2),
+        NodeId(0, 0),
+        NodeId(0, 1),
+        NodeId(0, 2),
+    }
+
+    assert set(tree.descendants(start)) == set(depth_3)
+
+
+def test_tree_descendants_leaf_and_zero_depth(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    assert tree.descendants(NodeId(0, 0)) == []
+    assert tree.descendants(NodeId(1, 2), depth=0) == []
+
+
+def test_tree_descendants_negative_depth_raises(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    with pytest.raises(ValueError, match="depth must be >= 0 or None"):
+        tree.descendants(NodeId(1, 2), depth=-1)
+
+
+def test_tree_omits_root_links(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    root_children = tree._root_children
+    assert root_children is not None
+    assert len(root_children) > 0
+
+    for child in root_children:
+        assert tree.parent(child) is None
+
+
+def test_annotation_tree_equality_same_structure_different_input_order():
+    t1 = {
+        (1, 0): [(0, 0)],
+        (1, 1): [(0, 1)],
+        (2, 0): [(1, 0), (1, 1)],
+    }
+    t2 = {
+        (2, 0): [(1, 1), (1, 0)],
+        (1, 1): [(0, 1)],
+        (1, 0): [(0, 0)],
+    }
+
+    assert AnnotationTree(t1) == AnnotationTree(t2)
+
+
+def test_annotation_tree_inequality_different_structure():
+    t1 = {
+        (1, 0): [(0, 0)],
+        (1, 1): [(0, 1)],
+        (2, 0): [(1, 0), (1, 1)],
+    }
+    t2 = {
+        (1, 0): [(0, 0), (0, 1)],
+        (2, 0): [(1, 0)],
+    }
+
+    assert AnnotationTree(t1) != AnnotationTree(t2)
+
+
+def test_annotation_tree_equality_non_tree_type():
+    tree = AnnotationTree(
+        {
+            (1, 0): [(0, 0)],
+            (2, 0): [(1, 0)],
+        }
+    )
+    assert (tree == "not-a-tree") is False
+
+
+def test_annotation_initial_state(annotation, valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    assert annotation.name == "topics"
+    assert annotation.tree == tree
+    assert len(annotation) == 0
+    assert set(annotation.states.keys()) == set(tree.nodes)
+    assert all(state is AnnotationState.EMPTY for state in annotation.states.values())
+
+
+def test_annotation_set_and_get_with_nodeid(annotation):
+    node = NodeId(1, 0)
+    annotation[node] = "Physics"
+
+    assert annotation[node] == "Physics"
+    assert annotation.states[node] is AnnotationState.COMPUTED
+    assert len(annotation) == 1
+
+
+def test_annotation_set_and_get_with_tuple_coercion(annotation):
+    annotation[(1, 1)] = "Mathematics"
+
+    assert annotation[NodeId(1, 1)] == "Mathematics"
+    assert annotation[(1, 1)] == "Mathematics"
+    assert annotation.states[NodeId(1, 1)] is AnnotationState.COMPUTED
+
+
+def test_annotation_getitem_unset_node_raises_keyerror(annotation):
+    with pytest.raises(KeyError):
+        _ = annotation[NodeId(0, 0)]
+
+
+def test_annotation_get_default_for_unset_node(annotation):
+    assert annotation.get(NodeId(0, 0), "missing") == "missing"
+
+
+def test_annotation_delete_resets_to_empty(annotation):
+    node = NodeId(0, 2)
+    annotation[node] = "Compilers"
+    assert annotation.states[node] is AnnotationState.COMPUTED
+
+    del annotation[node]
+
+    assert annotation.states[node] is AnnotationState.EMPTY
+    with pytest.raises(KeyError):
+        _ = annotation[node]
+
+
+def test_annotation_delete_unset_node_is_noop(annotation):
+    node = NodeId(0, 3)
+
+    del annotation[node]
+
+    assert annotation.states[node] is AnnotationState.EMPTY
+    with pytest.raises(KeyError):
+        _ = annotation[node]
+
+
+def test_annotation_fail_marks_failed_and_clears_value(annotation):
+    node = NodeId(1, 2)
+    annotation[node] = "Databases"
+    assert annotation.states[node] is AnnotationState.COMPUTED
+
+    annotation.fail(node)
+
+    assert annotation.states[node] is AnnotationState.FAILED
+    with pytest.raises(KeyError):
+        _ = annotation[node]
+
+
+def test_annotation_set_after_fail_overwrites_and_marks_computed(annotation):
+    node = NodeId(1, 3)
+    annotation.fail(node)
+    assert annotation.states[node] is AnnotationState.FAILED
+
+    annotation[node] = "Security"
+
+    assert annotation[node] == "Security"
+    assert annotation.states[node] is AnnotationState.COMPUTED
+
+
+def test_annotation_invalid_node_format_raises_keyerror(annotation):
+    with pytest.raises(KeyError, match="Invalid node ID"):
+        annotation["not-a-node"] = "x"
+
+    with pytest.raises(KeyError, match="Invalid node ID"):
+        _ = annotation[(1,)]
+
+
+def test_annotation_root_node_rejected(annotation):
+    with pytest.raises(KeyError, match="is not in the annotation tree"):
+        annotation[(2, 0)] = "RootLabel"
+
+
+def test_annotation_iteration_and_items_only_include_computed(annotation):
+    annotation[(1, 0)] = "A"
+    annotation[(0, 0)] = "B"
+
+    keys = list(annotation.keys())
+    values = list(annotation.values())
+    items = list(annotation.items())
+
+    assert set(keys) == {NodeId(1, 0), NodeId(0, 0)}
+    assert set(values) == {"A", "B"}
+    assert set(items) == {(NodeId(1, 0), "A"), (NodeId(0, 0), "B")}
+
+
+def test_annotation_update_uses_mapping_protocol(annotation):
+    annotation.update({(1, 0): "Topic-1", (0, 1): "Topic-2"})
+
+    assert annotation[NodeId(1, 0)] == "Topic-1"
+    assert annotation[NodeId(0, 1)] == "Topic-2"
+    assert annotation.states[NodeId(1, 0)] is AnnotationState.COMPUTED
+    assert annotation.states[NodeId(0, 1)] is AnnotationState.COMPUTED
+
+
+def test_annotation_from_layered_list_populates_values_and_states(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layered_values = [
+        [f"L0-{i}" for i in range(8)],
+        [f"L1-{i}" for i in range(4)],
+    ]
+
+    annotation = Annotation.from_layered_list("topics", tree, layered_values)
+
+    assert len(annotation) == len(tree)
+    for node in tree.nodes:
+        assert annotation[node] == f"L{node.layer}-{node.cluster}"
+
+    assert all(
+        state is AnnotationState.COMPUTED for state in annotation.states.values()
+    )
+
+
+def test_annotation_to_layered_list_round_trip(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layered_values = [
+        [f"L0-{i}" for i in range(8)],
+        [f"L1-{i}" for i in range(4)],
+    ]
+
+    annotation = Annotation.from_layered_list("topics", tree, layered_values)
+
+    assert annotation.to_layered_list() == layered_values
+
+
+def test_annotation_to_layered_list_raises_when_not_fully_computed(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    annotation = Annotation("topics", tree)
+    annotation[NodeId(0, 0)] = "only-one"
+
+    with pytest.raises(ValueError, match="Not all nodes have computed values"):
+        annotation.to_layered_list()
+
+
+def test_annotation_to_layered_list_raises_when_any_failed(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    layered_values = [
+        [f"L0-{i}" for i in range(8)],
+        [f"L1-{i}" for i in range(4)],
+    ]
+    annotation = Annotation.from_layered_list("topics", tree, layered_values)
+    annotation.fail(NodeId(0, 0))
+
+    with pytest.raises(ValueError, match="Not all nodes have computed values"):
+        annotation.to_layered_list()
+
+
+def test_annotation_from_layered_list_raises_on_incomplete_input(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    incomplete_layered_values = [
+        ["L0-0"],
+        ["L1-0"],
+    ]
+
+    with pytest.raises(IndexError):
+        Annotation.from_layered_list("topics", tree, incomplete_layered_values)
+
+
+def test_executor_node_node_string_algorithm_type_contract(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class EchoAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    failures = executor.run(EchoAnnotator())
+
+    assert failures == {}
+    assert "named_topic" in store
+    assert len(store["named_topic"]) == len(tree)
+    assert store["named_topic"][NodeId(0, 0)] == "name:T0-0"
+    assert store["named_topic"][NodeId(1, 2)] == "name:T1-2"
+
+
+def test_executor_explicit_node_and_descendants_input_contract(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class NodeAndDescendantsAnnotator:
+        inputs = ("topic", "desc_topics")
+        outputs = ("summary",)
+        algorithm_type = {
+            "topic": (NodeInput(), NodeOutput()),
+            "desc_topics": (DescendantsInput(source="topic", depth=1), NodeOutput()),
+        }
+
+        def annotate(self, unit, topic, desc_topics):
+            return {"summary": {"topic": topic, "desc": tuple(desc_topics.values())}}
+
+    failures = executor.run(NodeAndDescendantsAnnotator())
+
+    assert failures == {}
+
+    summary = store["summary"]
+
+    # Leaf nodes have no descendants at depth=1
+    assert summary[NodeId(0, 0)] == {"topic": "T0-0", "desc": ()}
+
+    # Layer-1 node (1,2) has children (0,5), (0,6), (0,7)
+    assert summary[NodeId(1, 2)]["topic"] == "T1-2"
+    assert set(summary[NodeId(1, 2)]["desc"]) == {"T0-5", "T0-6", "T0-7"}
+
+
+def test_executor_in_place_failure_preserves_only_existing_values(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+
+    precomputed_node = NodeId(0, 0)
+    empty_node = NodeId(0, 1)
+    original_value = "original-topic"
+
+    topic = Annotation("topic", tree)
+    topic[precomputed_node] = original_value
+    # empty_node is intentionally left EMPTY
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class AlwaysFailInPlaceAnnotator:
+        # No required inputs, so annotate is called even when optional input is missing.
+        inputs = ()
+        optional_inputs = ("topic",)
+        outputs = ("topic",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, **kwargs):
+            raise RuntimeError("boom")
+
+    failures = executor.run(
+        AlwaysFailInPlaceAnnotator(),
+        nodes=(precomputed_node, empty_node),
+    )
+
+    assert set(failures) == {precomputed_node, empty_node}
+    assert all("RuntimeError: boom" in message for message in failures.values())
+
+    # Precomputed value is preserved for in-place failure.
+    assert store["topic"].states[precomputed_node] is AnnotationState.COMPUTED
+    assert store["topic"][precomputed_node] == original_value
+
+    # Empty in-place value is marked failed on failure.
+    assert store["topic"].states[empty_node] is AnnotationState.FAILED
+
+
+class LayerSizeAnnotator:
+    """Annotates a whole layer at a time with the number of nodes in it."""
+
+    inputs = ("topic",)
+    outputs = ("layer_size",)
+    algorithm_type = {"topic": (MultiNodeInput(groups="by_layer"), "multinode")}
+
+    def __init__(self, failing_layer=None):
+        self.failing_layer = failing_layer
+        self.units = []
+
+    def by_layer(self, topics):
+        layers = {}
+        for node in topics:
+            layers.setdefault(node.layer, []).append(node)
+        return [tuple(nodes) for nodes in layers.values()]
+
+    def annotate(self, unit, topic):
+        self.units.append(unit)
+        if unit[0].layer == self.failing_layer:
+            raise RuntimeError("boom")
+        return {"layer_size": {node: len(topic) for node in unit}}
+
+
+@pytest.fixture
+def topic_store(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+    return AnnotationStore(tree, [topic])
+
+
+def test_executor_multinode_annotator_runs_once_per_group(topic_store):
+    annotator = LayerSizeAnnotator()
+
+    failures = Executor(topic_store).run(annotator)
+
+    tree = topic_store.tree
+    assert failures == {}
+    assert annotator.units == [tuple(tree.layer(0)), tuple(tree.layer(1))]
+    assert topic_store["layer_size"][NodeId(0, 0)] == 8
+    assert topic_store["layer_size"][NodeId(1, 0)] == 4
+
+
+def test_executor_multinode_failure_fails_every_node_of_the_group(topic_store):
+    failures = Executor(topic_store).run(LayerSizeAnnotator(failing_layer=1))
+
+    tree = topic_store.tree
+    states = topic_store["layer_size"].states
+    assert list(failures) == [tuple(tree.layer(1))]
+    assert all(states[node] is AnnotationState.FAILED for node in tree.layer(1))
+    assert all(states[node] is AnnotationState.COMPUTED for node in tree.layer(0))
+
+
+def test_executor_multinode_in_place_failure_keeps_computed_values(topic_store):
+    class RewritesTopic(LayerSizeAnnotator):
+        outputs = ("topic",)
+
+        def annotate(self, unit, topic):
+            raise RuntimeError("boom")
+
+    Executor(topic_store).run(RewritesTopic())
+
+    assert topic_store["topic"][NodeId(1, 2)] == "T1-2"
+
+
+def test_executor_multinode_groups_only_the_selected_nodes(topic_store):
+    annotator = LayerSizeAnnotator()
+    selected = (NodeId(0, 0), NodeId(0, 1), NodeId(1, 0))
+
+    Executor(topic_store).run(annotator, nodes=selected)
+
+    assert annotator.units == [(NodeId(0, 0), NodeId(0, 1)), (NodeId(1, 0),)]
+    assert topic_store["layer_size"][NodeId(0, 0)] == 2
+
+
+def test_executor_multinode_rejects_overlapping_groups(topic_store):
+    class OverlappingGroups(LayerSizeAnnotator):
+        def by_layer(self, topics):
+            return [(NodeId(0, 0), NodeId(0, 1)), (NodeId(0, 1), NodeId(0, 2))]
+
+    with pytest.raises(ValueError, match="overlaps"):
+        Executor(topic_store).run(OverlappingGroups())
+
+
+def test_executor_multinode_rejects_values_outside_the_group(topic_store):
+    class WritesOutsideItsGroup(LayerSizeAnnotator):
+        def annotate(self, unit, topic):
+            return {"layer_size": {NodeId(1, 0): 0}}
+
+    with pytest.raises(ValueError, match="outside"):
+        Executor(topic_store).run(WritesOutsideItsGroup())
+
+
+def test_executor_multinode_needs_an_input_that_defines_the_groups(topic_store):
+    class NoGroups:
+        inputs = ("topic",)
+        outputs = ("layer_size",)
+        algorithm_type = {"topic": (MultiNodeInput(), "multinode")}
+
+        def annotate(self, unit, topic):
+            return {"layer_size": {}}
+
+    with pytest.raises(ValueError, match="defines groups"):
+        Executor(topic_store).run(NoGroups())
+
+
+class LayerInputSizeAnnotator:
+    """Annotates each node with the number of nodes in its unit, via LayerInput."""
+
+    inputs = ("topic",)
+    outputs = ("layer_size",)
+    algorithm_type = {"topic": (LayerInput(), "multinode")}
+
+    def __init__(self):
+        self.units = []
+
+    def annotate(self, unit, topic):
+        self.units.append(unit)
+        return {"layer_size": {node: len(topic) for node in unit}}
+
+
+def test_executor_layer_input_runs_once_per_layer(topic_store):
+    annotator = LayerInputSizeAnnotator()
+
+    Executor(topic_store).run(annotator)
+
+    tree = topic_store.tree
+    assert annotator.units == [tuple(tree.layer(0)), tuple(tree.layer(1))]
+
+
+def test_executor_layer_input_fails_a_layer_with_a_missing_input(topic_store):
+    del topic_store["topic"][NodeId(0, 3)]
+
+    failures = Executor(topic_store).run(LayerInputSizeAnnotator())
+
+    layer = tuple(topic_store.tree.layer(0))
+    assert list(failures) == [layer]
+    assert "not computed" in failures[layer]
+
+
+def test_executor_layer_in_place_failure_fails_only_nodes_without_a_value(
+    topic_store,
+):
+    class RewritesTopic(LayerInputSizeAnnotator):
+        outputs = ("topic",)
+
+    del topic_store["topic"][NodeId(0, 3)]
+
+    Executor(topic_store).run(RewritesTopic(), nodes=topic_store.tree.layer(0))
+
+    states = topic_store["topic"].states
+    assert states[NodeId(0, 0)] is AnnotationState.COMPUTED
+    assert states[NodeId(0, 3)] is AnnotationState.FAILED
+
+
+def test_executor_multinode_fails_a_node_left_out_of_the_result(topic_store):
+    class LeavesOutOneNode(LayerInputSizeAnnotator):
+        def annotate(self, unit, topic):
+            return {
+                "layer_size": {
+                    node: len(topic) for node in unit if node != NodeId(0, 3)
+                }
+            }
+
+    failures = Executor(topic_store).run(LeavesOutOneNode())
+
+    assert topic_store["layer_size"].states[NodeId(0, 3)] is AnnotationState.FAILED
+    assert failures == {NodeId(0, 3): "'layer_size': no value returned"}
+
+
+def test_executor_multinode_in_place_keeps_the_value_of_a_node_left_out(
+    topic_store,
+):
+    class RewritesTopicExceptOneNode(LayerInputSizeAnnotator):
+        outputs = ("topic",)
+
+        def annotate(self, unit, topic):
+            return {"topic": {node: "new" for node in unit if node != NodeId(0, 3)}}
+
+    Executor(topic_store).run(RewritesTopicExceptOneNode())
+
+    assert topic_store["topic"][NodeId(0, 3)] == "T0-3"
+
+
+def test_parse_algorithm_type_shorthand_returns_output_instance():
+    class EmptyInputsAnnotator:
+        inputs = ()
+        outputs = ("topic",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, **kwargs):
+            return {"topic": "x"}
+
+    specs, output = parse_algorithm_type(EmptyInputsAnnotator())
+    assert specs == {}
+    assert isinstance(output, NodeOutput)
+
+
+def test_executor_explicit_contract_with_node_output_type(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class ExplicitAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+        algorithm_output_type = "node"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    failures = executor.run(ExplicitAnnotator())
+
+    assert failures == {}
+    assert "named_topic" in store
+    assert store["named_topic"][NodeId(0, 0)] == "name:T0-0"
+
+
+def test_executor_explicit_contract_with_node_output_dict(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class ExplicitAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+        algorithm_output_type = {"named_topic": "node"}
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    failures = executor.run(ExplicitAnnotator())
+
+    assert failures == {}
+    assert store["named_topic"][NodeId(1, 2)] == "name:T1-2"
+
+
+def test_executor_explicit_contract_requires_output_types(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    store = AnnotationStore(tree, [])
+    executor = Executor(store)
+
+    class MissingOutputTypeAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+
+        def annotate(self, unit, **kwargs):
+            return {"topic": "x"}
+
+    with pytest.raises(
+        TypeError,
+        match="explicit algorithm contract requires both algorithm_input_type and algorithm_output_type",
+    ):
+        executor.run(MissingOutputTypeAnnotator())
+
+
+def test_executor_explicit_contract_rejects_unknown_output_spec(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class BadOutputSpecAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_input_type = {"topic": "node"}
+        algorithm_output_type = "unknown_output_spec"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    with pytest.raises(ValueError, match="unknown output spec"):
+        executor.run(BadOutputSpecAnnotator())
+
+
+def test_parse_algorithm_type_prefers_algorithm_type_when_both_present(
+    valid_cluster_tree,
+):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+
+    store = AnnotationStore(tree, [topic])
+    executor = Executor(store)
+
+    class BothContractsAnnotator:
+        inputs = ("topic",)
+        outputs = ("named_topic",)
+        algorithm_type = "node-node"
+        algorithm_input_type = {"wrong_name": "node"}
+        algorithm_output_type = "node"
+
+        def annotate(self, unit, topic):
+            return {"named_topic": f"name:{topic}"}
+
+    specs, output = parse_algorithm_type(BothContractsAnnotator())
+    assert set(specs) == {"topic"}
+    assert isinstance(output, NodeOutput)
+    with pytest.warns(
+        UserWarning,
+        match="defines both algorithm_type and \\(algorithm_input_type, algorithm_output_type\\)",
+    ) as w:
+        failures = executor.run(BothContractsAnnotator())
+    assert failures == {}
+    assert len(w) == 1
+
+
+@pytest.fixture
+def two_layer_clusterer(subtopic_label_vector, cluster_label_vector):
+    # 5 topics of 5 subtopics each, nested the way the conftest label vectors are.
+    tree = {(1, i): [(0, 5 * i + j) for j in range(5)] for i in range(5)}
+    # The root above the top layer is dropped by AnnotationTree.
+    tree[(2, 0)] = [(1, i) for i in range(5)]
+    return SimpleNamespace(
+        cluster_tree_=tree,
+        cluster_layers_=[
+            SimpleNamespace(cluster_labels=subtopic_label_vector),
+            SimpleNamespace(cluster_labels=cluster_label_vector),
+        ],
+    )
+
+
+def test_members_by_cluster_handles_gaps_noise_and_empty_clusters():
+    labels = np.array([7, -1, 3, 7, 3, 9])
+
+    members = _members_by_cluster(labels, [3, 5, 7])
+
+    assert {k: v.tolist() for k, v in members.items()} == {
+        3: [2, 4],
+        5: [],
+        7: [0, 3],
+    }
+
+
+def test_members_by_cluster_matches_a_scan_for_each_id():
+    labels = np.random.default_rng(0).choice([-1, 0, 2, 5, 11], size=200)
+    cluster_ids = [0, 2, 5, 11]
+
+    members = _members_by_cluster(labels, cluster_ids)
+
+    for cluster in cluster_ids:
+        assert np.array_equal(members[cluster], np.flatnonzero(labels == cluster))
+
+
+def test_store_from_clusterer_defaults_to_indices_only(
+    two_layer_clusterer, subtopic_label_vector, cluster_label_vector
+):
+    store = AnnotationStore.from_clusterer(two_layer_clusterer)
+
+    assert set(store) == {"cluster_object_indices"}
+    assert store.tree == AnnotationTree.from_clusterer(two_layer_clusterer)
+    for annotation in store.values():
+        assert all(s is AnnotationState.COMPUTED for s in annotation.states.values())
+    labels = [subtopic_label_vector, cluster_label_vector]
+    for node in store.tree.nodes:
+        expected = np.where(labels[node.layer] == node.cluster)[0]
+        assert np.array_equal(store.cluster_object_indices[node], expected)
+
+
+def test_store_from_clusterer_computes_centroids_from_vectors(
+    two_layer_clusterer,
+    object_vectors,
+    subtopic_centroid_vectors,
+    cluster_centroid_vectors,
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, object_vectors=object_vectors
+    )
+
+    expected = [subtopic_centroid_vectors, cluster_centroid_vectors]
+    for node in store.tree.nodes:
+        assert np.allclose(
+            store.cluster_centroid[node], expected[node.layer][node.cluster]
+        )
+
+
+def test_store_from_clusterer_adds_objects_and_vectors_when_given(
+    two_layer_clusterer, all_sentences, object_vectors
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, all_sentences, object_vectors
+    )
+
+    assert set(store) == {
+        "cluster_centroid",
+        "cluster_object_indices",
+        "cluster_objects",
+        "cluster_object_vectors",
+    }
+    for node in store.tree.nodes:
+        indices = store.cluster_object_indices[node]
+        assert store.cluster_objects[node] == [all_sentences[i] for i in indices]
+        assert np.array_equal(
+            store.cluster_object_vectors[node], object_vectors[indices]
+        )
+
+
+def test_store_from_clusterer_accepts_any_iterable_of_objects(
+    two_layer_clusterer, all_sentences
+):
+    shuffled_index = pd.Series(
+        all_sentences, index=range(1000, 1000 + len(all_sentences))
+    )
+    for objects in (tuple(all_sentences), iter(all_sentences), shuffled_index):
+        store = AnnotationStore.from_clusterer(two_layer_clusterer, objects)
+        for node in store.tree.nodes:
+            indices = store.cluster_object_indices[node]
+            assert store.cluster_objects[node] == [all_sentences[i] for i in indices]
+
+
+def test_store_from_clusterer_holds_objects_by_reference(
+    two_layer_clusterer, all_sentences
+):
+    images = [np.zeros((8, 8)) for _ in all_sentences]
+
+    store = AnnotationStore.from_clusterer(two_layer_clusterer, images)
+
+    for node in store.tree.nodes:
+        indices = store.cluster_object_indices[node]
+        assert all(o is images[i] for o, i in zip(store.cluster_objects[node], indices))
+
+
+def test_store_from_clusterer_accepts_vectors_as_lists(
+    two_layer_clusterer, object_vectors
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, object_vectors=object_vectors.tolist()
+    )
+
+    node = NodeId(1, 2)
+    indices = store.cluster_object_indices[node]
+    assert np.allclose(store.cluster_object_vectors[node], object_vectors[indices])
+
+
+def test_store_from_clusterer_omits_noise_points(
+    two_layer_clusterer, subtopic_label_vector
+):
+    noisy = subtopic_label_vector.copy()
+    noisy[[0, 7, 100]] = -1
+    two_layer_clusterer.cluster_layers_[0].cluster_labels = noisy
+
+    store = AnnotationStore.from_clusterer(two_layer_clusterer)
+
+    in_a_node = np.concatenate(
+        [store.cluster_object_indices[n] for n in store.tree.layer(0)]
+    )
+    assert set(range(len(noisy))) - set(in_a_node) == {0, 7, 100}
+    assert len(in_a_node) == len(noisy) - 3
+
+
+def test_store_from_clusterer_runs_under_executor(two_layer_clusterer):
+    store = AnnotationStore.from_clusterer(two_layer_clusterer)
+
+    class CountAnnotator:
+        inputs = ("cluster_object_indices",)
+        outputs = ("n_objects",)
+        algorithm_type = "node-node"
+
+        def annotate(self, unit, cluster_object_indices):
+            return {"n_objects": len(cluster_object_indices)}
+
+    assert Executor(store).run(CountAnnotator()) == {}
+    assert {store.n_objects[n] for n in store.tree.layer(0)} == {5}
+    assert {store.n_objects[n] for n in store.tree.layer(1)} == {25}
+
+
+def test_store_from_clusterer_with_real_clusterer(
+    clusterer, clusterable_vectors, object_vectors, all_sentences
+):
+    clusterer.fit(
+        clusterable_vectors, object_vectors, show_progress_bar=False, verbose=False
+    )
+
+    store = AnnotationStore.from_clusterer(clusterer, all_sentences, object_vectors)
+
+    assert store.tree.n_layers == len(clusterer.cluster_layers_)
+    for node in store.tree.nodes:
+        labels = clusterer.cluster_layers_[node.layer].cluster_labels
+        expected = np.where(labels == node.cluster)[0]
+        assert np.array_equal(store.cluster_object_indices[node], expected)
+
+
+def test_store_from_clusterer_rejects_unfitted_clusterer(two_layer_clusterer):
+    del two_layer_clusterer.cluster_layers_
+
+    with pytest.raises(NotFittedError, match="cluster_layers_"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_one_dimensional_vectors(
+    two_layer_clusterer, all_sentences
+):
+    with pytest.raises(ValueError, match="2-dimensional"):
+        AnnotationStore.from_clusterer(
+            two_layer_clusterer, object_vectors=np.zeros(len(all_sentences))
+        )
+
+
+def test_store_from_clusterer_rejects_wrong_object_count(
+    two_layer_clusterer, all_sentences
+):
+    with pytest.raises(ValueError, match="objects for"):
+        AnnotationStore.from_clusterer(two_layer_clusterer, all_sentences[:-1])
+
+
+def test_store_from_clusterer_rejects_wrong_vector_count(
+    two_layer_clusterer, object_vectors
+):
+    with pytest.raises(ValueError, match="object vectors in a 2-dimensional"):
+        AnnotationStore.from_clusterer(
+            two_layer_clusterer, object_vectors=object_vectors[:-1]
+        )
+
+
+def test_store_from_clusterer_rejects_label_beyond_the_tree(
+    two_layer_clusterer, cluster_label_vector
+):
+    bad = cluster_label_vector.copy()
+    bad[0] = 9
+    two_layer_clusterer.cluster_layers_[1].cluster_labels = bad
+
+    with pytest.raises(ValueError, match=r"labels not in the tree: \[9\]"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_layer_length_mismatch(
+    two_layer_clusterer, cluster_label_vector
+):
+    two_layer_clusterer.cluster_layers_[1].cluster_labels = cluster_label_vector[:-1]
+
+    with pytest.raises(ValueError, match="layer 1 has .* labels but layer 0 has"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_layer_count_mismatch(two_layer_clusterer):
+    two_layer_clusterer.cluster_layers_ = two_layer_clusterer.cluster_layers_[:1]
+
+    with pytest.raises(ValueError, match="1 cluster layers but its tree has 2"):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+def test_store_from_clusterer_rejects_non_contiguous_cluster_ids(two_layer_clusterer):
+    two_layer_clusterer.cluster_tree_[(1, 1)].remove((0, 7))
+
+    with pytest.raises(InvalidAnnotationTree):
+        AnnotationStore.from_clusterer(two_layer_clusterer)
+
+
+@pytest.fixture(
+    params=[
+        RandomExemplarAnnotator,
+        DiverseExemplarAnnotator,
+        SubmodularExemplarAnnotator,
+    ],
+    ids=lambda cls: cls.__name__,
+)
+def exemplar_annotator(request, object_vectors):
+    kwargs = {}
+    if request.param is not RandomExemplarAnnotator:
+        kwargs["null_topic"] = object_vectors.mean(axis=0)
+    return request.param(n_exemplars=3, **kwargs)
+
+
+def test_store_from_clusterer_feeds_the_exemplar_annotators(
+    two_layer_clusterer, all_sentences, object_vectors, exemplar_annotator
+):
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, all_sentences, object_vectors
+    )
+
+    failures = Executor(store).run(exemplar_annotator)
+
+    assert failures == {}
+    for node in store.tree.nodes:
+        members = set(store.cluster_object_indices[node])
+        indices = list(store.exemplar_original_indices[node])
+        assert 0 < len(indices) <= 3
+        assert len(set(indices)) == len(indices)
+        assert set(indices) <= members
+        assert list(store.exemplars[node]) == [all_sentences[i] for i in indices]
+
+
+def test_store_from_clusterer_empty_cluster_has_nan_centroid_and_is_skipped(
+    two_layer_clusterer,
+    subtopic_label_vector,
+    all_sentences,
+    object_vectors,
+    exemplar_annotator,
+):
+    emptied = subtopic_label_vector.copy()
+    emptied[emptied == 0] = -1
+    two_layer_clusterer.cluster_layers_[0].cluster_labels = emptied
+    store = AnnotationStore.from_clusterer(
+        two_layer_clusterer, all_sentences, object_vectors
+    )
+
+    empty_node = NodeId(0, 0)
+    assert len(store.cluster_object_indices[empty_node]) == 0
+    assert np.isnan(store.cluster_centroid[empty_node]).all()
+
+    failures = Executor(store).run(exemplar_annotator)
+
+    assert failures == {}
+    assert list(store.exemplars[empty_node]) == []
+    assert list(store.exemplar_original_indices[empty_node]) == []
+
+
+def test_layer_input_groups_the_selected_nodes_of_each_layer(annotation):
+    nodes = [NodeId(0, 0), NodeId(1, 0), NodeId(0, 1)]
+
+    groups = LayerInput().units(None, annotation, nodes, None)
+
+    assert groups == [(NodeId(0, 0), NodeId(0, 1)), (NodeId(1, 0),)]
+
+
+def test_layer_input_require_complete_rejects_a_partial_layer(annotation):
+    nodes = [NodeId(0, 0), NodeId(0, 1)]
+
+    with pytest.raises(ValueError, match="layer 0 is only partly selected"):
+        LayerInput(require_complete=True).units(None, annotation, nodes, None)
+
+
+def test_layer_input_require_complete_accepts_whole_layers(annotation):
+    layer = tuple(annotation.tree.layer(0))
+
+    groups = LayerInput(require_complete=True).units(
+        None, annotation, list(layer), None
+    )
+
+    assert groups == [layer]
+
+
+def _fill(annotation, nodes):
+    for node in nodes:
+        annotation[node] = f"{annotation.name}{tuple(node)}"
+    return annotation
+
+
+class _Grouper:
+    """Annotator stand-in whose groups method records what it was given."""
+
+    def __init__(self, groups):
+        self._groups = groups
+        self.received = None
+
+    def pairs(self, values):
+        self.received = values
+        return self._groups
+
+
+def test_multinode_input_units_calls_the_method_with_computed_values(annotation):
+    _fill(annotation, [NodeId(0, 0), NodeId(0, 1)])
+    annotator = _Grouper([(NodeId(0, 0), NodeId(0, 1))])
+    nodes = [NodeId(0, 0), NodeId(0, 1), NodeId(0, 2)]
+
+    groups = MultiNodeInput(groups="pairs").units(annotator, annotation, nodes, None)
+
+    assert groups == [(NodeId(0, 0), NodeId(0, 1))]
+    assert annotator.received == {
+        NodeId(0, 0): "topics(0, 0)",
+        NodeId(0, 1): "topics(0, 1)",
+    }
+
+
+def test_multinode_input_without_groups_defines_no_units(annotation):
+    assert MultiNodeInput().units(None, annotation, [NodeId(0, 0)], None) is None
+
+
+def test_multinode_input_takes_groups_as_its_first_argument():
+    assert MultiNodeInput("by_layer") == MultiNodeInput(groups="by_layer")
+
+
+def test_node_output_fail_can_keep_a_computed_value(annotation):
+    annotation[NodeId(0, 0)] = "kept"
+
+    NodeOutput().fail(annotation, NodeId(0, 0), keep_computed=True)
+
+    assert annotation[NodeId(0, 0)] == "kept"
+
+
+def test_multinode_output_fail_fails_every_node_by_default(annotation):
+    annotation[NodeId(0, 0)] = "old"
+    group = (NodeId(0, 0), NodeId(0, 1))
+
+    MultiNodeOutput().fail(annotation, group)
+
+    assert all(annotation.states[n] is AnnotationState.FAILED for n in group)
+
+
+def test_multinode_output_fail_can_keep_computed_values(annotation):
+    annotation[NodeId(0, 0)] = "kept"
+
+    MultiNodeOutput().fail(annotation, (NodeId(0, 0), NodeId(0, 1)), keep_computed=True)
+
+    assert annotation.states[NodeId(0, 0)] is AnnotationState.COMPUTED
+    assert annotation.states[NodeId(0, 1)] is AnnotationState.FAILED
+
+
+def test_multinode_output_write_returns_the_nodes_without_a_value(annotation):
+    group = (NodeId(0, 0), NodeId(0, 1))
+
+    missing = MultiNodeOutput().write(annotation, group, {NodeId(0, 0): "x"})
+
+    assert missing == (NodeId(0, 1),)
+
+
+@pytest.mark.parametrize("method", ["missing", "annotate"])
+def test_multinode_input_rejects_unusable_methods(annotation, method):
+    with pytest.raises(AttributeError, match=method):
+        MultiNodeInput(groups=method).units(_Grouper([]), annotation, [], None)
+
+
+def test_multinode_input_gathers_the_values_of_the_group(annotation):
+    _fill(annotation, [NodeId(0, 0), NodeId(0, 1), NodeId(0, 2)])
+
+    values = MultiNodeInput().gather(annotation, (NodeId(0, 0), NodeId(0, 1)), None)
+
+    assert values == {NodeId(0, 0): "topics(0, 0)", NodeId(0, 1): "topics(0, 1)"}
+
+
+def test_multinode_input_gather_needs_every_node_of_the_group(annotation):
+    _fill(annotation, [NodeId(0, 0)])
+
+    with pytest.raises(NotAvailable, match=r"\(0, 1\)"):
+        MultiNodeInput().gather(annotation, (NodeId(0, 0), NodeId(0, 1)), None)
+
+
+class _PairAnnotator:
+    """Groups by layer on input a; b is gathered over the same groups."""
+
+    inputs = ("a", "b")
+    outputs = ("out",)
+    algorithm_type = {
+        "a": (MultiNodeInput(groups="by_layer"), "multinode"),
+        "b": ("multinode", "multinode"),
+    }
+
+    def by_layer(self, values):
+        layers = defaultdict(list)
+        for node in values:
+            layers[node.layer].append(node)
+        return [tuple(nodes) for nodes in layers.values()]
+
+    def annotate(self, unit, *, a, b):
+        return {"out": {node: (a[node], b[node]) for node in unit}}
+
+
+def test_multinode_input_reads_over_another_inputs_groups(annotation):
+    tree = annotation.tree
+    a = _fill(Annotation("a", tree), tree.nodes)
+    b = _fill(Annotation("b", tree), tree.nodes)
+    store = AnnotationStore(tree, [a, b])
+
+    assert Executor(store).run(_PairAnnotator()) == {}
+    assert store["out"][NodeId(1, 2)] == ("a(1, 2)", "b(1, 2)")
+
+
+class _UngroupedAnnotator:
+    inputs = ("topics",)
+    outputs = ("out",)
+    algorithm_type = "multinode-node"
+
+    def annotate(self, unit, *, topics):
+        return {"out": topics}
+
+
+def test_grouped_input_without_groups_is_rejected(annotation):
+    store = AnnotationStore(annotation.tree, [_fill(annotation, annotation.tree.nodes)])
+
+    with pytest.raises(ValueError, match="gathered over groups"):
+        Executor(store).run(_UngroupedAnnotator())

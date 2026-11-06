@@ -1,5 +1,13 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
-from toponymy.keyphrases import KeyphraseBuilder
+from toponymy._annotation_bridge import (
+    copy_exemplars_to_layers,
+    copy_keyphrases_to_layers,
+    has_stock_exemplars,
+    has_stock_keyphrases,
+)
+from toponymy.annotation import Annotator, AnnotationStore, Executor
+from toponymy.exemplar_texts import exemplar_annotator
+from toponymy.keyphrases import InformationWeightedKeyphraseAnnotator, KeyphraseBuilder
 from toponymy.cluster_layer import (
     ClusterLayer,
     ClusterLayerSummaryText,
@@ -13,11 +21,47 @@ from toponymy._utils import handle_verbose_params
 
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
+import copy
+from types import SimpleNamespace
 import numpy as np
 
 from tqdm.auto import tqdm
 
 from typing import List, Any, Optional, Type, Dict, Tuple
+
+
+def _exemplar_annotator_of(annotators):
+    for annotator in annotators:
+        if {"exemplars", "exemplar_original_indices"} <= set(annotator.outputs):
+            return annotator
+    raise ValueError(
+        "annotators must include one that outputs 'exemplars' and 'exemplar_original_indices'"
+    )
+
+
+def _with_null_topic(annotator, null_topic):
+    # TODO: drop once the store supports global annotations; the corpus mean is shared state.
+    is_exemplar = getattr(annotator, "kind", None) == "exemplar"
+    if (
+        is_exemplar
+        and hasattr(annotator, "null_topic")
+        and annotator.null_topic is None
+    ):
+        annotator = copy.copy(annotator)
+        annotator.null_topic = null_topic
+    return annotator
+
+
+def _run_annotators(executor, runs):
+    """Runs each (annotator, nodes) pair, raising on the first that has failed nodes."""
+    for annotator, nodes in runs:
+        failures = executor.run(annotator, nodes=nodes)
+        if failures:
+            node, reason = next(iter(failures.items()))
+            raise RuntimeError(
+                f"{type(annotator).__name__} failed for {len(failures)} node(s); "
+                f"first, {node}: {reason}"
+            )
 
 
 class Toponymy:
@@ -50,6 +94,11 @@ class Toponymy:
         Whether to show progress bars and verbose output. If True, shows all output. If False, suppresses all output.
     show_progress_bars: bool, deprecated
         Deprecated. Use verbose instead.
+    annotators: List[Annotator], optional
+        The annotators to run, in order, over the whole cluster tree. They must include one that outputs
+        ``exemplars`` and ``exemplar_original_indices``. An annotator with ``kind = "exemplar"`` and an unset
+        ``null_topic`` gets the mean of the embedding vectors. If None, the exemplars are made with the exemplar_method given to fit, using the
+        settings of the cluster layers.
 
     Attributes:
     -----------
@@ -83,6 +132,8 @@ class Toponymy:
         A list of ClusterLayer objects that represent the layers of the topic model.
     cluster_tree_: dict
         A dictionary that represents the tree of clusters.
+    store_: AnnotationStore
+        The annotations computed for the nodes of the cluster tree.
     object_x_keyphrase_matrix_: np.array
         A numpy array of shape=(number_of_objects, number_of_keyphrases) that represents the objects and their keyphrases.
     keyphrase_list_: List[str]
@@ -114,6 +165,7 @@ class Toponymy:
         exemplar_delimiters: List[str] = ['    * "', '"\n'],
         verbose: Optional[bool] = None,
         show_progress_bars: Optional[bool] = None,
+        annotators: Optional[List[Annotator]] = None,
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
@@ -125,6 +177,7 @@ class Toponymy:
         self.lowest_detail_level = lowest_detail_level
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
+        self.annotators = annotators
         self.prompt_template = prompt_template
 
         # Handle verbose parameters
@@ -184,12 +237,79 @@ class Toponymy:
 
         return [cluster_size(layer.cluster_labels) for layer in self.cluster_layers_]
 
+    def _object_to_text_function(self):
+        """The function that makes exemplar text from objects; None for text objects."""
+        if self.annotators is None:
+            source = self.cluster_layers_[0]
+        else:
+            source = _exemplar_annotator_of(self.annotators)
+        return getattr(source, "object_to_text_function", None)
+
+    def _annotator_runs(self, embedding_vectors):
+        """The (annotator, nodes) pairs for the given annotators, with None for all nodes."""
+        if not all(has_stock_exemplars(layer) for layer in self.cluster_layers_):
+            raise ValueError(
+                "annotators cannot be used with layer classes that override make_exemplar_texts"
+            )
+        null_topic = np.mean(embedding_vectors, axis=0)
+        return [(_with_null_topic(a, null_topic), None) for a in self.annotators]
+
+    def _exemplar_runs(
+        self, objects, embedding_vectors, exemplar_method, non_text_objects
+    ):
+        """The (annotator, nodes) pairs that make each layer's exemplars from the layer settings."""
+        null_topic = np.mean(embedding_vectors, axis=0)
+        exemplar_method = exemplar_method or "central"
+        runs = []
+        for i, layer in enumerate(self.cluster_layers_):
+            # TODO: non-text layer 0 ignores exemplar_method because its exemplars also
+            # define the keyphrase corpus; give the corpus its own annotation.
+            method = (
+                "facility_location" if i == 0 and non_text_objects else exemplar_method
+            )
+            if not has_stock_exemplars(layer):
+                layer.make_exemplar_texts(objects, embedding_vectors, method=method)
+                continue
+            annotator = exemplar_annotator(
+                method,
+                layer.n_exemplars,
+                layer.object_to_text_function,
+                layer.exemplars_diversify_alpha,
+                null_topic,
+            )
+            runs.append((annotator, self.store_.tree.layer(i)))
+        return runs
+
+    def _keyphrase_runs(self, keyphrase_method):
+        """The (annotator, nodes) pairs that make each layer's information weighted keyphrases."""
+        if keyphrase_method != "information_weighted":
+            return []
+        # The vectors fit embedded itself, so the annotator does not embed them again
+        fitted_keyphrases = SimpleNamespace(
+            object_x_keyphrase_matrix_=self.object_x_keyphrase_matrix_,
+            keyphrase_list_=self.keyphrase_list_,
+            keyphrase_vectors_=self.keyphrase_vectors_,
+        )
+        base = InformationWeightedKeyphraseAnnotator(
+            fitted_keyphrases, self.embedding_model
+        )
+        runs = []
+        for i, layer in enumerate(self.cluster_layers_):
+            if not has_stock_keyphrases(layer):
+                continue
+            # Copies share the keyphrase vectors across layers, as the legacy layers do
+            annotator = copy.copy(base)
+            annotator.n_keyphrases = layer.n_keyphrases
+            annotator.max_alpha = layer.keyphrase_diversify_alpha
+            runs.append((annotator, self.store_.tree.layer(i)))
+        return runs
+
     def fit(
         self,
         objects: List[Any],
         embedding_vectors: np.ndarray,
         clusterable_vectors: np.ndarray,
-        exemplar_method: str = "central",
+        exemplar_method: Optional[str] = None,
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "central",
         **clusterer_kwd_args,
@@ -207,7 +327,8 @@ class Toponymy:
             A numpy array of shape=(number_of_objects, clustering_dimension).  It is recommended that the clustering_dimension should be low enough
             for density based clustering to be efficient (2-25).
         exemplar_method: str, Optional
-            The method to use for generating exemplars. Default is "central". Other options are "saturated_coverage", "central", and "random".
+            The method to use for generating exemplars. Default is "central". Other options are "facility_location", "saturated_coverage", and "random".
+            Cannot be combined with the annotators given to the constructor.
         keyphrase_method: str, Optional
             The method to use for generating keyphrases. Default is "information_weighted". Other options are "saturated_coverage", "facility_location", "graph_cut", "central" and "bm25".
         subtopic_method: str, Optional
@@ -220,6 +341,9 @@ class Toponymy:
         """
         self.clusterable_vectors_ = clusterable_vectors
         self.embedding_vectors_ = embedding_vectors
+
+        if self.annotators is not None and exemplar_method is not None:
+            raise ValueError("exemplar_method cannot be combined with annotators")
 
         # Build our layers and cluster tree
         if hasattr(self.clusterer, "cluster_layers_") and hasattr(
@@ -258,6 +382,9 @@ class Toponymy:
 
         self._sync_layer_runtime_config()
 
+        self.store_ = AnnotationStore.from_clusterer(self, objects, embedding_vectors)
+        executor = Executor(self.store_)
+
         # Initialize other data structures
         self.topic_names_: List[List[str]] = [[]] * len(self.cluster_layers_)
         self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
@@ -276,16 +403,21 @@ class Toponymy:
             len(self.cluster_layers_),
         )
 
-        # Get exemplars for layer 0 first and build keyphrase matrix
-        if (
-            hasattr(self.cluster_layers_[0], "object_to_text_function")
-            and self.cluster_layers_[0].object_to_text_function is not None
-        ):
-            # Non-text objects: use exemplars to build keyphrase matrix
-            exemplars, exemplar_indices = self.cluster_layers_[0].make_exemplar_texts(
-                objects,
-                embedding_vectors,
+        non_text_objects = self._object_to_text_function() is not None
+        if self.annotators is not None:
+            runs = self._annotator_runs(embedding_vectors)
+        else:
+            runs = self._exemplar_runs(
+                objects, embedding_vectors, exemplar_method, non_text_objects
             )
+        _run_annotators(executor, runs)
+        copy_exemplars_to_layers(self.store_, self.cluster_layers_)
+
+        # Build keyphrase matrix
+        if non_text_objects:
+            # Non-text objects: use exemplars to build keyphrase matrix
+            exemplars = self.cluster_layers_[0].exemplars
+            exemplar_indices = self.cluster_layers_[0].exemplar_indices
 
             # Create aligned text list
             aligned_texts = [""] * len(objects)  # Empty strings for non-exemplars
@@ -308,12 +440,6 @@ class Toponymy:
                 self.keyphrase_list_,
                 self.keyphrase_vectors_,
             ) = self.keyphrase_builder.fit_transform(objects)
-            # Still need to generate exemplars for layer 0
-            self.cluster_layers_[0].make_exemplar_texts(
-                objects,
-                embedding_vectors,
-                method=exemplar_method,
-            )
 
         if self.keyphrase_vectors_ is None:
             # If the keyphrase vectors are None, we need to generate them
@@ -321,6 +447,11 @@ class Toponymy:
                 self.keyphrase_list_,
                 show_progress_bar=self.show_progress_bars,
             )
+
+        keyphrase_runs = self._keyphrase_runs(keyphrase_method)
+        _run_annotators(executor, keyphrase_runs)
+        if keyphrase_runs:
+            copy_keyphrases_to_layers(self.store_, self.cluster_layers_)
 
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
@@ -330,20 +461,14 @@ class Toponymy:
             total=len(self.cluster_layers_),
             unit="layer",
         ):
-            if i > 0:  # Skip layer 0 exemplars as we already did them
-                layer.make_exemplar_texts(
-                    objects,
-                    embedding_vectors,
-                    method=exemplar_method,
+            if not keyphrase_runs or not has_stock_keyphrases(layer):
+                layer.make_keyphrases(
+                    self.keyphrase_list_,
+                    self.object_x_keyphrase_matrix_,
+                    self.keyphrase_vectors_,
+                    self.embedding_model,
+                    method=keyphrase_method,
                 )
-
-            layer.make_keyphrases(
-                self.keyphrase_list_,
-                self.object_x_keyphrase_matrix_,
-                self.keyphrase_vectors_,
-                self.embedding_model,
-                method=keyphrase_method,
-            )
 
             if i > 0:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
@@ -423,7 +548,7 @@ class Toponymy:
         objects: List[Any],
         object_vectors: np.ndarray,
         clusterable_vectors: np.ndarray,
-        exemplar_method: str = "central",
+        exemplar_method: Optional[str] = None,
         keyphrase_method: str = "information_weighted",
         subtopic_method: str = "facility_location",
     ) -> List[np.ndarray]:
