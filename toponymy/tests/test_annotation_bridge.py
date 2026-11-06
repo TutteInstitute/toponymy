@@ -91,6 +91,61 @@ def test_fit_leaves_custom_layer_classes_alone(
     assert layer.custom_method == "random"
 
 
+def test_fit_keyphrases_match_the_layer_method(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    model = make_model().fit(all_sentences, object_vectors, clusterable_vectors)
+
+    for layer in model.cluster_layers_:
+        fitted = layer.keyphrases
+        expected = ClusterLayerText.make_keyphrases(
+            layer,
+            model.keyphrase_list_,
+            model.object_x_keyphrase_matrix_,
+            model.keyphrase_vectors_.copy(),
+            model.embedding_model,
+        )
+        assert fitted == expected
+
+
+def test_fit_annotates_information_weighted_keyphrases(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    model = make_model().fit(all_sentences, object_vectors, clusterable_vectors)
+
+    for layer_id, layer in enumerate(model.cluster_layers_):
+        nodes = model.store_.tree.layer(layer_id)
+        assert [model.store_.keyphrases[node] for node in nodes] == layer.keyphrases
+
+
+def test_fit_other_keyphrase_methods_are_not_annotated(
+    make_model, all_sentences, object_vectors, clusterable_vectors
+):
+    model = make_model().fit(
+        all_sentences, object_vectors, clusterable_vectors, keyphrase_method="central"
+    )
+
+    assert "keyphrases" not in model.store_
+
+
+def test_fit_leaves_custom_keyphrase_layers_alone(
+    make_model, fitted_clusterer, all_sentences, object_vectors, clusterable_vectors
+):
+    class CustomLayer(ClusterLayerText):
+        def make_keyphrases(self, *args, **kwargs):
+            self.custom_keyphrases = True
+            return super().make_keyphrases(*args, **kwargs)
+
+    layer = fitted_clusterer.cluster_layers_[-1]
+    layer.__class__ = CustomLayer
+    try:
+        make_model().fit(all_sentences, object_vectors, clusterable_vectors)
+    finally:
+        layer.__class__ = ClusterLayerText
+
+    assert layer.custom_keyphrases
+
+
 def test_fit_runs_the_given_annotators(
     make_model, all_sentences, object_vectors, clusterable_vectors
 ):
