@@ -65,6 +65,7 @@ include-package-data = true
 toponymy = [
     "widgets/*/dist/*.js",
     "widgets/*/dist/*.css",
+    "prompt_examples/*.json",
 ]
 
 [project.optional-dependencies]
@@ -88,7 +89,7 @@ dev = [
     "psutil",
     "pylint",
     "pytest",
-    "pytest-asyncio",
+    "pytest-asyncio>=0.24",
     "pytest-azurepipelines",
     "pytest-cov",
     "requests",

@@ -107,7 +107,7 @@ def test_async_no_warning_when_no_callback(namer_cls, kwargs):
 async def test_anthropic_connectivity_async_system_canary():
     namer = AsyncAnthropicNamer()
 
-    result = await namer.connectivity_status(
+    result = await namer.aconnectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
     )
@@ -215,7 +215,7 @@ async def test_openai_connectivity_async_system_canary():
     """
     namer = AsyncOpenAINamer()
 
-    result = await namer.connectivity_status(
+    result = await namer.aconnectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
     )
@@ -267,7 +267,7 @@ async def test_cohere_connectivity_async_system_canary():
     """
     namer = AsyncCohereNamer()
 
-    result = await namer.connectivity_status(
+    result = await namer.aconnectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
     )
@@ -342,7 +342,7 @@ async def test_azureai_connectivity_async_plain_canary():
     """
     namer = AsyncAzureAINamer(model="gpt-4o")
 
-    result = await namer.connectivity_status()
+    result = await namer.aconnectivity_status()
 
     assert result["success"], (
         f"Async plain canary failed for Azure AI:\n"
@@ -395,7 +395,7 @@ async def test_ollama_connectivity_async_plain_canary(ollama_running):
         pytest.skip(f"{model} not available in local Ollama")
     namer = AsyncOllamaNamer(model=model)
 
-    result = await namer.connectivity_status()
+    result = await namer.aconnectivity_status()
 
     assert result["success"], (
         f"Async plain canary failed for Ollama:\n"
@@ -432,7 +432,7 @@ def test_async_ollama_namer_host_maps_to_api_base():
 async def test_gemini_connectivity_async_system_canary():
     namer = AsyncGoogleGeminiNamer()
 
-    result = await namer.connectivity_status(
+    result = await namer.aconnectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
     )
@@ -485,7 +485,7 @@ def test_async_gemini_name_old_env_var_maps_to_api_key(monkeypatch):
 async def test_together_connectivity_async_plain_canary():
     namer = AsyncTogether()
 
-    result = await namer.connectivity_status()
+    result = await namer.aconnectivity_status()
 
     assert result["success"], (
         f"Async plain canary failed for Together:\n"
@@ -541,7 +541,7 @@ async def test_litellm_connectivity_canary_async_plain(provider_cfg):
         model=provider_cfg["model"],
     )
 
-    result = await namer.connectivity_status()
+    result = await namer.aconnectivity_status()
 
     assert result["success"], (
         f"Async plain canary failed for LiteLLM ({provider_cfg['provider_name']}):\n"
@@ -563,7 +563,7 @@ async def test_litellm_connectivity_canary_async_system(provider_cfg):
         model=provider_cfg["model"],
     )
 
-    result = await namer.connectivity_status(
+    result = await namer.aconnectivity_status(
         prompt="Return a short JSON object describing your role.",
         system_prompt="You are a topic naming assistant.",
     )
