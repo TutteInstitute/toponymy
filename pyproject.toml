@@ -65,6 +65,7 @@ include-package-data = true
 toponymy = [
     "widgets/*/dist/*.js",
     "widgets/*/dist/*.css",
+    "prompt_examples/*.json",
 ]
 
 [project.optional-dependencies]

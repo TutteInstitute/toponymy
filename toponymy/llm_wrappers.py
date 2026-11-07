@@ -1375,25 +1375,8 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
     def test_llm_connectivity(self) -> str:
         """
         Synchronous wrapper for atest_llm_connectivity.
-
-        If called from inside a running event loop (e.g. someone wrote
-        `await obj.test_llm_connectivity()`), emits a DeprecationWarning and
-        returns the coroutine so the `await` still works.
         """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop: normal synchronous usage
-            return _SyncBridge.run(self.atest_llm_connectivity())
-
-        warn(
-            "test_llm_connectivity() is now synchronous. In async code use "
-            "`await atest_llm_connectivity()` instead; in sync code, call "
-            "test_llm_connectivity() without `await`.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.atest_llm_connectivity()
+        return _SyncBridge.run(self.atest_llm_connectivity())
 
     async def aconnectivity_status(
         self,
@@ -1467,25 +1450,9 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         """
         Synchronous wrapper for connectivity_status.
 
-        This method provides a synchronous interface to the async connectivity_status method,
-        making it easier to use in synchronous code contexts. Will issue a deprecation warning
-        if called with `await`.
-
         Returns:
             dict: The same result dictionary as connectivity_status
         """
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            warn(
-                "connectivity_status() is synchronous on async namers. "
-                "Use `await aconnectivity_status()` in async code or call "
-                "connectivity_status() without `await` in sync code.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
         return _SyncBridge.run(
             self.aconnectivity_status(prompt, system_prompt=system_prompt)
         )
