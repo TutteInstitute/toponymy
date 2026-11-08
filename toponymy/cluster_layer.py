@@ -353,7 +353,7 @@ class ClusterLayer(ABC):
                 self._update_topic_names(new_names, topic_indices)
         else:
             raise ValueError(
-                "LLM must be an instance of LLMWrapper or AsyncLLMWrapper."
+                f"LLM must be an instance of LLMWrapper or AsyncLLMWrapper. Got LLM {llm} of {type(llm)} instead."
             )
 
     # pragma: no cover
@@ -501,7 +501,7 @@ class ClusterLayerText(ClusterLayer):
                 (
                     llm.generate_topic_name(
                         prompt,
-                        topic_extraction_function=(
+                        extract_topic_name_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
                             else lambda json_response: str(json_response["topic_name"])
@@ -590,7 +590,7 @@ class ClusterLayerText(ClusterLayer):
                     (
                         llm.generate_topic_name(
                             prompt,
-                            topic_extraction_function=(
+                            extract_topic_name_function=(
                                 self.prompt_template["layer"]["extract_topic_name"]
                                 if self.prompt_template
                                 else lambda json_response: str(
@@ -965,7 +965,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
                     result = llm.generate_topic_name(
                         prompt,
-                        topic_extraction_function=(
+                        extract_topic_name_function=(
                             self.prompt_template["layer"]["extract_topic_name"]
                             if self.prompt_template
                             else lambda json_response: (
@@ -1098,7 +1098,7 @@ class ClusterLayerSummaryText(ClusterLayerText):
                 retry_results = [
                     llm.generate_topic_name(
                         prompt,
-                        topic_extraction_function=extract_topic_name,
+                        extract_topic_name_function=extract_topic_name,
                         get_topic_name_regex=get_topic_name_regex,
                         max_tokens=2048,
                     )
