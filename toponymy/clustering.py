@@ -250,7 +250,7 @@ def build_cluster_tree(
     return result
 
 
-@numba.njit()
+@numba.njit(cache=True)
 def centroids_from_labels(
     cluster_labels: np.ndarray, vector_data: np.ndarray
 ) -> np.ndarray:  # pragma: no cover
