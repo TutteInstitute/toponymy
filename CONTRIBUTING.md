@@ -52,6 +52,10 @@ you are fixing a known issue please add the issue number to the PR message. If y
 are fixing a new issue feel free to file an issue and then reference it in the PR.
 You can [browse open issues](https://github.com/TutteInstitute/topicnameing/issues).
 
+### Pull request size
+
+Small pull requests are reviewed and merged faster. Prefer PRs that add or extend functionality while leaving every existing test unchanged, and keep any PR that modifies or removes existing tests separate and focused on that change, so reviewers can see exactly which behaviour changed. For anything larger than a small fix, please open an issue or draft PR first so we can agree on the scope.
+
 ### Code formatting
 
 This project uses [black](https://github.com/python/black) for code formatting (version pinned in `pyproject.toml`). 

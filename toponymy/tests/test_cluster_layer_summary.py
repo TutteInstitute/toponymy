@@ -4,6 +4,7 @@ from toponymy.cluster_layer import (
     ClusterLayer,
 )
 from toponymy.keyphrases import KeyphraseBuilder
+from toponymy.llm_wrappers import AsyncLLMWrapper, LLMWrapper
 
 import numpy as np
 
@@ -451,3 +452,97 @@ def test_summary_make_topic_name_vector(
     unlabelled_mask = cluster_label_vector < 0
     if unlabelled_mask.any():
         assert np.all(result[unlabelled_mask] == "Unlabelled")
+
+
+def _topic_json(name):
+    return {
+        "topic_name": name,
+        "topic_summary": f"{name} summary",
+        "topic_analysis": f"{name} analysis",
+    }
+
+
+def _name_two_topics(llm, monkeypatch):
+    cluster_layer = ClusterLayerSummaryText(np.arange(2), np.eye(2), 0)
+    cluster_layer.prompts = ["prompt 0", "prompt 1"]
+    monkeypatch.setattr(cluster_layer, "disambiguate_topics", lambda **kwargs: None)
+    return cluster_layer.name_topics(
+        llm,
+        1.0,
+        [[]],
+        "sentences",
+        "about pets",
+        all_topic_summaries=[[]],
+        all_topic_explanations=[[]],
+    )
+
+
+def test_summary_retry_unpacks_name_summary_and_explanation(monkeypatch):
+    class FirstNameFailsLLM(LLMWrapper):
+        def __init__(self):
+            self.responses = iter([None, _topic_json("Dogs"), _topic_json("Cats")])
+            self.max_tokens_per_call = []
+
+        def _call_llm(self, prompt, temperature, max_tokens):
+            raise AssertionError("not used")
+
+        def _call_llm_with_system_prompt(
+            self, system_prompt, user_prompt, temperature, max_tokens
+        ):
+            raise AssertionError("not used")
+
+        def generate_topic_name(
+            self, prompt, extract_topic_name_function=None, max_tokens=None, **kwargs
+        ):
+            self.max_tokens_per_call.append(max_tokens)
+            response = next(self.responses)
+            return "" if response is None else extract_topic_name_function(response)
+
+    llm = FirstNameFailsLLM()
+    names, summaries, explanations = _name_two_topics(llm, monkeypatch)
+
+    assert names == ["Cats", "Dogs"]
+    assert summaries == ["Cats summary", "Dogs summary"]
+    assert explanations == ["Cats analysis", "Dogs analysis"]
+    assert llm.max_tokens_per_call == [2048, 2048, 2048]
+
+
+def test_async_summary_retry_unpacks_name_summary_and_explanation(monkeypatch):
+    class FirstNameFailsAsyncLLM(AsyncLLMWrapper):
+        def __init__(self):
+            self.batches = iter([[None, _topic_json("Dogs")], [_topic_json("Cats")]])
+            self.max_tokens_per_call = []
+
+        async def _call_llm_batch(self, prompts, temperature, max_tokens):
+            raise AssertionError("not used")
+
+        async def _call_llm_with_system_prompt_batch(
+            self, prompts, temperature, max_tokens
+        ):
+            raise AssertionError("not used")
+
+        async def generate_topic_names(
+            self,
+            prompts,
+            extract_topic_name_function=None,
+            null_result_value="",
+            max_tokens=None,
+            **kwargs,
+        ):
+            self.max_tokens_per_call.append(max_tokens)
+            return [
+                (
+                    null_result_value
+                    if response is None
+                    else extract_topic_name_function(response)
+                )
+                for response in next(self.batches)
+            ]
+
+    llm = FirstNameFailsAsyncLLM()
+    names, summaries, explanations = _name_two_topics(llm, monkeypatch)
+
+    assert names == ["Cats", "Dogs"]
+    assert summaries == ["Cats summary", "Dogs summary"]
+    assert explanations == ["Cats analysis", "Dogs analysis"]
+    assert llm.max_tokens_per_call == [2048, 2048]

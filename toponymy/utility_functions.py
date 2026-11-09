@@ -43,6 +43,34 @@ def diversify_fixed_alpha(query_vector, candidate_neighbor_vectors, alpha=1.0):
     return retained_neighbor_indices
 
 
+# 512 candidates keep the table at 2 MB; above ~1024, recomputing is faster.
+MAX_CANDIDATES_FOR_DISTANCE_TABLE = 512
+
+
+@numba.njit(cache=True)
+def _distances_to_earlier_candidates(candidate_neighbor_vectors):
+    n_candidates = candidate_neighbor_vectors.shape[0]
+    distances = np.zeros((n_candidates, n_candidates))
+    for i in range(1, n_candidates):
+        distances[i, :i] = distance_to_vector(
+            candidate_neighbor_vectors[i], candidate_neighbor_vectors[:i]
+        )
+    return distances
+
+
+@numba.njit(cache=True)
+def _diversify_fixed_alpha_from_table(distance_to_query, distance_table, alpha):
+    retained_neighbor_indices = [0]
+    for i in range(1, distance_to_query.shape[0]):
+        for j in retained_neighbor_indices:
+            if alpha * distance_to_query[i] > distance_table[i, j]:
+                break
+        else:
+            retained_neighbor_indices.append(i)
+
+    return retained_neighbor_indices
+
+
 @numba.njit(cache=True)
 def diversify_max_alpha(
     query_vector,
@@ -52,12 +80,23 @@ def diversify_max_alpha(
     min_alpha=0.0,
     tolerance=0.01,
 ):
+    use_distance_table = (
+        candidate_neighbor_vectors.shape[0] <= MAX_CANDIDATES_FOR_DISTANCE_TABLE
+    )
+    if use_distance_table:
+        distance_to_query = distance_to_vector(query_vector, candidate_neighbor_vectors)
+        distance_table = _distances_to_earlier_candidates(candidate_neighbor_vectors)
     mid_alpha = (max_alpha + min_alpha) / 2.0
 
     while abs(max_alpha - min_alpha) > tolerance:
-        results = diversify_fixed_alpha(
-            query_vector, candidate_neighbor_vectors, alpha=mid_alpha
-        )
+        if use_distance_table:
+            results = _diversify_fixed_alpha_from_table(
+                distance_to_query, distance_table, alpha=mid_alpha
+            )
+        else:
+            results = diversify_fixed_alpha(
+                query_vector, candidate_neighbor_vectors, alpha=mid_alpha
+            )
         if len(results) >= n_results:
             min_alpha = mid_alpha
         else:
@@ -65,6 +104,10 @@ def diversify_max_alpha(
 
         mid_alpha = (min_alpha + max_alpha) / 2.0
 
+    if use_distance_table:
+        return _diversify_fixed_alpha_from_table(
+            distance_to_query, distance_table, alpha=min_alpha
+        )
     return diversify_fixed_alpha(
         query_vector, candidate_neighbor_vectors, alpha=min_alpha
     )
