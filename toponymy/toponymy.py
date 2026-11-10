@@ -1,8 +1,13 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
-from toponymy._annotation_bridge import copy_exemplars_to_layers, has_stock_exemplars
+from toponymy._annotation_bridge import (
+    copy_exemplars_to_layers,
+    copy_keyphrases_to_layers,
+    has_stock_exemplars,
+    has_stock_keyphrases,
+)
 from toponymy.annotation import Annotator, AnnotationStore, Executor
 from toponymy.exemplar_texts import exemplar_annotator
-from toponymy.keyphrases import KeyphraseBuilder
+from toponymy.keyphrases import InformationWeightedKeyphraseAnnotator, KeyphraseBuilder
 from toponymy.cluster_layer import (
     ClusterLayer,
     ClusterLayerSummaryText,
@@ -17,6 +22,7 @@ from toponymy._utils import handle_verbose_params
 from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 import copy
+from types import SimpleNamespace
 import numpy as np
 
 from tqdm.auto import tqdm
@@ -44,6 +50,18 @@ def _with_null_topic(annotator, null_topic):
         annotator = copy.copy(annotator)
         annotator.null_topic = null_topic
     return annotator
+
+
+def _run_annotators(executor, runs):
+    """Runs each (annotator, nodes) pair, raising on the first that has failed nodes."""
+    for annotator, nodes in runs:
+        failures = executor.run(annotator, nodes=nodes)
+        if failures:
+            node, reason = next(iter(failures.items()))
+            raise RuntimeError(
+                f"{type(annotator).__name__} failed for {len(failures)} node(s); "
+                f"first, {node}: {reason}"
+            )
 
 
 class Toponymy:
@@ -262,6 +280,30 @@ class Toponymy:
             runs.append((annotator, self.store_.tree.layer(i)))
         return runs
 
+    def _keyphrase_runs(self, keyphrase_method):
+        """The (annotator, nodes) pairs that make each layer's information weighted keyphrases."""
+        if keyphrase_method != "information_weighted":
+            return []
+        # The vectors fit embedded itself, so the annotator does not embed them again
+        fitted_keyphrases = SimpleNamespace(
+            object_x_keyphrase_matrix_=self.object_x_keyphrase_matrix_,
+            keyphrase_list_=self.keyphrase_list_,
+            keyphrase_vectors_=self.keyphrase_vectors_,
+        )
+        base = InformationWeightedKeyphraseAnnotator(
+            fitted_keyphrases, self.embedding_model
+        )
+        runs = []
+        for i, layer in enumerate(self.cluster_layers_):
+            if not has_stock_keyphrases(layer):
+                continue
+            # Copies share the keyphrase vectors across layers, as the legacy layers do
+            annotator = copy.copy(base)
+            annotator.n_keyphrases = layer.n_keyphrases
+            annotator.max_alpha = layer.keyphrase_diversify_alpha
+            runs.append((annotator, self.store_.tree.layer(i)))
+        return runs
+
     def fit(
         self,
         objects: List[Any],
@@ -350,14 +392,7 @@ class Toponymy:
             runs = self._exemplar_runs(
                 objects, embedding_vectors, exemplar_method, non_text_objects
             )
-        for annotator, nodes in runs:
-            failures = executor.run(annotator, nodes=nodes)
-            if failures:
-                node, reason = next(iter(failures.items()))
-                raise RuntimeError(
-                    f"{type(annotator).__name__} failed for {len(failures)} node(s); "
-                    f"first, {node}: {reason}"
-                )
+        _run_annotators(executor, runs)
         copy_exemplars_to_layers(self.store_, self.cluster_layers_)
 
         # Build keyphrase matrix
@@ -395,6 +430,11 @@ class Toponymy:
                 show_progress_bar=self.show_progress_bars,
             )
 
+        keyphrase_runs = self._keyphrase_runs(keyphrase_method)
+        _run_annotators(executor, keyphrase_runs)
+        if keyphrase_runs:
+            copy_keyphrases_to_layers(self.store_, self.cluster_layers_)
+
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
             enumerate(self.cluster_layers_),
@@ -403,13 +443,14 @@ class Toponymy:
             total=len(self.cluster_layers_),
             unit="layer",
         ):
-            layer.make_keyphrases(
-                self.keyphrase_list_,
-                self.object_x_keyphrase_matrix_,
-                self.keyphrase_vectors_,
-                self.embedding_model,
-                method=keyphrase_method,
-            )
+            if not keyphrase_runs or not has_stock_keyphrases(layer):
+                layer.make_keyphrases(
+                    self.keyphrase_list_,
+                    self.object_x_keyphrase_matrix_,
+                    self.keyphrase_vectors_,
+                    self.embedding_model,
+                    method=keyphrase_method,
+                )
 
             if i > 0:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
