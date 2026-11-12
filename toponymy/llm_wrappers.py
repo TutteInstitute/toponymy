@@ -216,6 +216,40 @@ class LLMErrorHandlingMixin:
 
         raise e
 
+    async def _asafe_call_llm(self, fn, *args, **kwargs) -> Any:
+        prompt = kwargs.get("prompt")
+        routine = kwargs.pop("routine", None)
+
+        try:
+            value = await fn(*args, **kwargs)
+
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_success",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "raw_response": value,
+                }
+            )
+
+            return CallResult(value=value)
+
+        except Exception as e:
+            if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
+                self._handle_exception(e)
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_error",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "error": {
+                        "type": type(e).__name__,
+                        "message": str(e),
+                    },
+                }
+            )
+            raise
+
     async def _safe_call_with_retry_result(
         self,
         fn,
@@ -232,21 +266,12 @@ class LLMErrorHandlingMixin:
                 reraise=True,
             ):
                 with attempt:
-                    value = await fn(*args, **kwargs)
-                    # SUCCESS emit
-                    self._emit_debug_callback(
-                        {
-                            "event": "llm_call_success",
-                            "routine": routine,
-                            "prompt": prompt,
-                            "raw_response": value,
-                        }
-                    )
-                    return CallResult(value=value)
-        except Exception as e:
-            if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
-                self._handle_exception(e)
+                    return await self._asafe_call_llm(fn, *args, **kwargs)
 
+        except (InvalidLLMInputError, FailFastLLMError):
+            raise
+
+        except Exception as e:
             # For other exceptions, we log a warning and return the error in the CallResult for potential handling by the caller.
             logger.warning(
                 "%s exhausted retries for LLM call (%s): %s",
@@ -257,7 +282,7 @@ class LLMErrorHandlingMixin:
             # ERROR emit
             self._emit_debug_callback(
                 {
-                    "event": "llm_call_error",
+                    "event": "llm_call_retries_exhausted",
                     "routine": routine,
                     "prompt": prompt,
                     "error": {
@@ -582,6 +607,24 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
         return ""
 
+    def parse_raw_response(
+        self,
+        topic_info_raw: str,
+        extract_topic_name_function=lambda x: x["topic_name"],
+        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+    ) -> TopicParseResult:
+        try:
+            topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
+            result = extract_topic_name_function(topic_info)
+            topic_result = result if isinstance(result, tuple) else str(result)
+            return TopicParseResult(
+                topic_payload=topic_result, raw_response=topic_info_raw, error=None
+            )
+        except Exception as e:
+            return TopicParseResult(
+                topic_payload=None, raw_response=topic_info_raw, error=e
+            )
+
     def _generate_topic_name_with_raw_response(
         self,
         prompt: Dict[str, Any],
@@ -599,17 +642,11 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             max_tokens=max_tokens,
             routine="generate_topic_name",
         )
-        try:
-            topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
-            result = extract_topic_name_function(topic_info)
-            topic_result = result if isinstance(result, tuple) else str(result)
-            return TopicParseResult(
-                topic_payload=topic_result, raw_response=topic_info_raw, error=None
-            )
-        except Exception as e:
-            return TopicParseResult(
-                topic_payload=None, raw_response=topic_info_raw, error=e
-            )
+        return self.parse_raw_response(
+            topic_info_raw,
+            extract_topic_name_function=extract_topic_name_function,
+            get_topic_name_regex=get_topic_name_regex,
+        )
 
     # @abstractmethod
     @retry(
@@ -1136,6 +1173,38 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             )
 
         return await self._call_llm_batch(prompts, temperature, max_tokens=max_tokens)
+
+    async def _acall_llm_for_prompt(
+        self,
+        prompt: Dict[str, Any],
+        temperature: float,
+        max_tokens: int,
+        routine: str = "default",
+    ) -> CallResult[str]:
+        """
+        This is the single point at which a prompt's renderings are resolved down to
+        one provider call, so that everything upstream of the wrapper can stay
+        provider agnostic.
+        """
+        supports_system_prompts = self.supports_system_prompts
+        prompt = validate_prompt(prompt, supports_system_prompts)
+
+        if supports_system_prompts:
+            return await self._asafe_call_llm(
+                self._call_single_llm_with_system,
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                routine=routine,
+            )
+
+        return await self._asafe_call_llm(
+            self._call_single_llm,
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            routine=routine,
+        )
 
     async def _generate_topic_names_with_raw_response(
         self,
