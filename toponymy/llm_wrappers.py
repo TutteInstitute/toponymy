@@ -413,6 +413,26 @@ def llm_output_to_result(llm_output: str, regex: str) -> dict:
     return result
 
 
+def parse_raw_response(
+    topic_info_raw: str,
+    extract_topic_name_function=lambda x: x["topic_name"],
+    get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+    null_result_value: str = "",
+) -> TopicParseResult:
+    try:
+        topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
+        result = extract_topic_name_function(topic_info)
+        topic_result = result if isinstance(result, tuple) else str(result)
+        return TopicParseResult(
+            topic_payload=topic_result, raw_response=topic_info_raw, error=None
+        )
+    except Exception as e:
+        warn(f"Failed to generate topic name: {e}")
+        return TopicParseResult(
+            topic_payload=null_result_value, raw_response=topic_info_raw, error=e
+        )
+
+
 def validate_prompt(prompt: Any, supports_system_prompts: bool) -> Dict[str, Any]:
     """
     Check that a prompt carries the rendering a wrapper is about to use.
@@ -607,24 +627,6 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         )
         return ""
 
-    def parse_raw_response(
-        self,
-        topic_info_raw: str,
-        extract_topic_name_function=lambda x: x["topic_name"],
-        get_topic_name_regex=GET_TOPIC_NAME_REGEX,
-    ) -> TopicParseResult:
-        try:
-            topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
-            result = extract_topic_name_function(topic_info)
-            topic_result = result if isinstance(result, tuple) else str(result)
-            return TopicParseResult(
-                topic_payload=topic_result, raw_response=topic_info_raw, error=None
-            )
-        except Exception as e:
-            return TopicParseResult(
-                topic_payload=None, raw_response=topic_info_raw, error=e
-            )
-
     def _generate_topic_name_with_raw_response(
         self,
         prompt: Dict[str, Any],
@@ -642,7 +644,7 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             max_tokens=max_tokens,
             routine="generate_topic_name",
         )
-        return self.parse_raw_response(
+        return parse_raw_response(
             topic_info_raw,
             extract_topic_name_function=extract_topic_name_function,
             get_topic_name_regex=get_topic_name_regex,
@@ -1258,34 +1260,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 continue
 
             # Attempt to parse the response
-            try:
-                topic_name_info = llm_output_to_result(
-                    response_text, get_topic_name_regex
+            results.append(
+                parse_raw_response(
+                    response_text,
+                    extract_topic_name_function,
+                    get_topic_name_regex,
+                    null_result_value,
                 )
-                extracted_name = extract_topic_name_function(topic_name_info)
-                topic_name = (
-                    extracted_name
-                    if isinstance(extracted_name, tuple)
-                    else str(extracted_name)
-                )
-                results.append(
-                    TopicParseResult(
-                        topic_payload=topic_name,
-                        raw_response=response_text,
-                        error=None,
-                    )
-                )
-            except Exception as e:
-                warn(
-                    f"Failed to generate topic name with {self.__class__.__name__}: {e}"
-                )
-                results.append(
-                    TopicParseResult(
-                        topic_payload=null_result_value,
-                        raw_response=response_text,
-                        error=e,
-                    )
-                )
+            )
 
         return results
 
