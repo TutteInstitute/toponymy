@@ -500,7 +500,7 @@ class KeyphraseBuilder:
         )
 
 
-@numba.njit()
+@numba.njit(cache=True)
 def longest_keyphrases(candidate_keyphrases):  # pragma: no cover
     """
     Builds a list of keyphrases that are not substrings of other keyphrases.
