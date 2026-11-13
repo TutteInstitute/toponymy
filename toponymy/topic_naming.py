@@ -9,7 +9,12 @@ from tenacity import (
 )
 
 
-from toponymy.annotation import AnnotationTree, DescendantsInput
+from toponymy.annotation import (
+    AnnotationTree,
+    DescendantsInput,
+    LayerExecutionStrategy,
+    Order,
+)
 from toponymy.llm_wrappers import (
     TopicParseResult,
     parse_raw_response,
@@ -135,6 +140,7 @@ class TopicNameAnnotator:
     }
     algorithm_output_type = "node"
     execution_mode: str
+    execution_strategy = LayerExecutionStrategy(Order.BOTTOM_UP)
 
     def __init__(self, llm_namer=None, topic_name_template=None):
         self.llm_namer = llm_namer
