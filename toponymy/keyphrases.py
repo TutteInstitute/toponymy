@@ -619,7 +619,7 @@ def information_weighted_keyphrases(
         contrastive_scores = np.squeeze(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
-        if sum(contrastive_scores) == 0:
+        if not contrastive_scores.any():
             result.append(["No notable keyphrases"])
             continue
 
@@ -658,7 +658,7 @@ def information_weighted_keyphrases(
         chosen_keyphrases = [
             keyphrase_list[column_map[j]]
             for j in reversed(chosen_indices)
-            if j in keyphrases_present_indices
+            if contrastive_scores[j] > 0
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -916,7 +916,7 @@ def bm25_keyphrases(
     ):
         # Sum over the cluster; get the top scoring indices
         contrastive_scores = bm25_matrix[cluster_num].toarray().flatten()
-        if sum(contrastive_scores) == 0:
+        if not contrastive_scores.any():
             result.append(["No notable keyphrases"])
             continue
 
@@ -955,7 +955,7 @@ def bm25_keyphrases(
         chosen_keyphrases = [
             keyphrase_list[column_map[j]]
             for j in reversed(chosen_indices)
-            if j in keyphrases_present_indices
+            if contrastive_scores[j] > 0
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -1073,7 +1073,7 @@ def submodular_selection_information_keyphrases(
         contrastive_scores = np.squeeze(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
-        if sum(contrastive_scores) == 0:
+        if not contrastive_scores.any():
             result.append(["No notable keyphrases"])
             continue
 
