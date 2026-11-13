@@ -24,3 +24,20 @@ class DummyAsyncSingleWrapper(AsyncLLMWrapper):
 
     async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
         return SYSTEM_RESPONSE
+
+
+class DummyAsyncProviderError(Exception):
+    pass
+
+
+class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
+    model = "dummy-model"
+    _supports_debug_callback = True
+
+    FAIL_FAST_EXCEPTIONS = (DummyAsyncProviderError,)
+
+    async def _call_single_llm(self, prompt, temperature, max_tokens):
+        raise DummyAsyncProviderError("bad config")
+
+    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
+        raise DummyAsyncProviderError("bad config")

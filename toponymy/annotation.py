@@ -35,6 +35,8 @@ from warnings import warn
 import numpy as np
 from sklearn.exceptions import NotFittedError
 
+from toponymy._utils import run_async
+
 T = TypeVar("T")
 
 NODE_NODE = "node-node"
@@ -1591,6 +1593,19 @@ def parse_algorithm_type(annotator, *, resolved_contract=None):
     return specs, output_spec
 
 
+@dataclass
+class RunContext:
+    specs: dict
+    output: Any
+    outputs: tuple[str, ...]
+    reads_from: dict[str, str]
+    writes_to: dict[str, str]
+    prepared: dict
+    units: list
+    required_inputs: set[str]
+    in_place: set[str]
+
+
 class Executor:
     """Executes annotators against its annotation store."""
 
@@ -1601,21 +1616,14 @@ class Executor:
     def tree(self) -> AnnotationTree:
         return self.store.tree
 
-    def run(
+    def _prepare_run(
         self,
         annotator: Annotator,
         *,
         nodes: Iterable[NodeId] | None = None,
         input_names: Mapping[str, str] | None = None,
         output_names: Mapping[str, str] | None = None,
-    ) -> dict[NodeId | tuple[NodeId, ...], str]:
-        """Run an annotator, reading and writing the store names given by
-        input_names={kwarg: store_name} and output_names={output: store_name}.
-        Unlisted names map to themselves.
-
-        Return ``{unit: reason}`` for units whose annotation failed, and
-        ``{node: reason}`` for nodes a multinode annotator left out of its result.
-        A failure keeps the old value of a node in an annotation the run also reads."""
+    ) -> RunContext:
 
         resolved_contract = _validate_annotator_contract(annotator)
 
@@ -1781,47 +1789,57 @@ class Executor:
         # A write to an annotation this run also reads keeps its old value on failure.
         # Replace with more explicit instructions for handling in-place updates later
         in_place = set(writes_to.values()) & {reads_from[n] for n in specs}
+        return RunContext(
+            specs=specs,
+            output=output,
+            outputs=outputs,
+            reads_from=reads_from,
+            writes_to=writes_to,
+            prepared=prepared,
+            units=units,
+            required_inputs=required_inputs,
+            in_place=in_place,
+        )
 
-        # Finally run .annotate over the units
-        failures = {}
-        for unit in units:
+    def _gather_inputs(self, context, unit):
+        kwargs = {}
+        for name, spec in context.specs.items():
             try:
-                kwargs = {}
-                for name, spec in specs.items():
-                    try:
-                        kwargs[name] = spec.gather(
-                            self.store[reads_from[name]], unit, prepared[name]
-                        )
-                    except NotAvailable as e:
-                        if name in required_inputs:
-                            raise e
-                result = annotator.annotate(unit, **kwargs)
-            except Exception as error:
-                # Nothing is written before annotate returns, so these are the prior states
-                for store_name in writes_to.values():
-                    output.fail(
-                        self.store[store_name],
-                        unit,
-                        keep_computed=store_name in in_place,
-                    )
-                failures[unit] = f"{type(error).__name__}: {error}"
-                continue
+                kwargs[name] = spec.gather(
+                    self.store[context.reads_from[name]],
+                    unit,
+                    context.prepared[name],
+                )
+            except NotAvailable as e:
+                if name in context.required_inputs:
+                    raise e
+        return kwargs
 
-            if set(result) != set(outputs):
-                raise ValueError(f"expected outputs {outputs!r}, got {tuple(result)!r}")
-            for name, value in result.items():
-                store_name = writes_to[name]
-                missing = output.write(self.store[store_name], unit, value)
-                if missing:
-                    output.fail(
-                        self.store[store_name],
-                        missing,
-                        keep_computed=store_name in in_place,
-                    )
-                    for node in missing:
-                        failures[node] = f"{name!r}: no value returned"
+    def _record_failure(self, context, unit, error, failures):
+        for store_name in context.writes_to.values():
+            context.output.fail(
+                self.store[store_name],
+                unit,
+                keep_computed=store_name in context.in_place,
+            )
+        failures[unit] = f"{type(error).__name__}: {error}"
 
-        return failures
+    def _write_result(self, context, unit, result, failures):
+        if set(result) != set(context.outputs):
+            raise ValueError(
+                f"expected outputs {context.outputs!r}, got {tuple(result)!r}"
+            )
+        for name, value in result.items():
+            store_name = context.writes_to[name]
+            missing = context.output.write(self.store[store_name], unit, value)
+            if missing:
+                context.output.fail(
+                    self.store[store_name],
+                    missing,
+                    keep_computed=store_name in context.in_place,
+                )
+                for node in missing:
+                    failures[node] = f"{name!r}: no value returned"
 
     def _order_units(self, units, specs, reads_from, writes_to):
         """
@@ -1851,3 +1869,109 @@ class Executor:
             return layers.pop()
 
         return sorted(units, key=layer, reverse=order is Order.TOP_DOWN)
+
+    def _check_execution_mode(self, annotator, expected):
+        mode = getattr(annotator, "execution_mode", "sync")
+        if mode not in {"sync", "async"}:
+            raise ValueError(f"unsupported execution mode: {mode!r}")
+        if mode != expected:
+            raise TypeError(
+                f"{type(annotator).__name__} has execution_mode={mode!r}; "
+                f"use {'arun' if mode == 'async' else 'run'}"
+            )
+
+    def _run_sync(
+        self,
+        annotator: Annotator,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
+        """Run an annotator with execution mode 'sync', reading and writing the store names given by
+        input_names={kwarg: store_name} and output_names={output: store_name}.
+        Unlisted names map to themselves.
+
+        Return ``{unit: reason}`` for units whose annotation failed, and
+        ``{node: reason}`` for nodes a multinode annotator left out of its result.
+        A failure keeps the old value of a node in an annotation the run also reads."""
+
+        self._check_execution_mode(annotator, "sync")
+
+        context = self._prepare_run(
+            annotator, nodes=nodes, input_names=input_names, output_names=output_names
+        )
+        failures = {}
+        for unit in context.units:
+            try:
+                kwargs = self._gather_inputs(context, unit)
+                result = annotator.annotate(unit, **kwargs)
+            except Exception as error:
+                self._record_failure(context, unit, error, failures)
+                # Nothing is written before annotate returns, so these maintain the prior states
+                continue
+
+            self._write_result(context, unit, result, failures)
+        return failures
+
+    async def arun(
+        self,
+        annotator: Annotator,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
+        """Run an annotator with execution mode 'async', reading and writing the store names given by
+        input_names={kwarg: store_name} and output_names={output: store_name}.
+        Unlisted names map to themselves. Publically exposes access for purely async behaviour.
+
+        Return ``{unit: reason}`` for units whose annotation failed, and
+        ``{node: reason}`` for nodes a multinode annotator left out of its result.
+        A failure keeps the old value of a node in an annotation the run also reads."""
+
+        self._check_execution_mode(annotator, "async")
+
+        context = self._prepare_run(
+            annotator, nodes=nodes, input_names=input_names, output_names=output_names
+        )
+        failures = {}
+        for unit in context.units:
+            try:
+                kwargs = self._gather_inputs(context, unit)
+                result = await annotator.aannotate(unit, **kwargs)
+            except Exception as error:
+                self._record_failure(context, unit, error, failures)
+                # Nothing is written before annotate returns, so these maintain the prior states
+                continue
+
+            self._write_result(context, unit, result, failures)
+        return failures
+
+    def run(
+        self,
+        annotator: Annotator,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
+
+        mode = getattr(annotator, "execution_mode", "sync")
+
+        if mode == "sync":
+            return self._run_sync(
+                annotator,
+                nodes=nodes,
+                input_names=input_names,
+                output_names=output_names,
+            )
+        if mode == "async":
+            return run_async(
+                self.arun(
+                    annotator,
+                    nodes=nodes,
+                    input_names=input_names,
+                    output_names=output_names,
+                )
+            )
