@@ -1182,7 +1182,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         temperature: float,
         max_tokens: int,
         routine: str = "default",
-    ) -> CallResult[str]:
+    ) -> str:
         """
         This is the single point at which a prompt's renderings are resolved down to
         one provider call, so that everything upstream of the wrapper can stay
@@ -1192,7 +1192,7 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
         prompt = validate_prompt(prompt, supports_system_prompts)
 
         if supports_system_prompts:
-            return await self._asafe_call_llm(
+            result = await self._asafe_call_llm(
                 self._call_single_llm_with_system,
                 prompt=prompt,
                 temperature=temperature,
@@ -1200,13 +1200,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 routine=routine,
             )
 
-        return await self._asafe_call_llm(
+        result = await self._asafe_call_llm(
             self._call_single_llm,
             prompt=prompt,
             temperature=temperature,
             max_tokens=max_tokens,
             routine=routine,
         )
+        return result.value
 
     async def _generate_topic_names_with_raw_response(
         self,

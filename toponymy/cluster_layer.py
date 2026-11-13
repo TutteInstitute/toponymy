@@ -39,33 +39,12 @@ from toponymy.prompt_construction import (
 )
 from tqdm.auto import tqdm
 import asyncio
-from toponymy._utils import handle_deprecated_prompt_format, handle_verbose_params
+from toponymy._utils import (
+    handle_deprecated_prompt_format,
+    handle_verbose_params,
+    run_async,
+)
 import warnings
-
-
-def run_async(coro):
-    """
-    Run an async coroutine in both Jupyter and regular Python environments.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop - regular Python
-        return asyncio.run(coro)
-    else:
-        # Running loop exists - likely Jupyter
-        try:
-            import nest_asyncio
-
-            nest_asyncio.apply()
-            return loop.run_until_complete(coro)
-        except ImportError:
-            # Fallback to thread-based approach
-            from concurrent.futures import ThreadPoolExecutor
-
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
 
 
 class ClusterLayer(ABC):
