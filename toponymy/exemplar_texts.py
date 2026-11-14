@@ -576,6 +576,19 @@ def diverse_exemplars(
     indices = []
     null_topic = np.mean(object_vectors, axis=0)
 
+    if len(cluster_label_vector) != len(object_vectors):
+        raise IndexError(
+            f"cluster_label_vector has {len(cluster_label_vector)} entries but "
+            f"object_vectors has {len(object_vectors)} rows"
+        )
+
+    # Stable sort: each cluster's indices stay ascending, as np.where returned them.
+    object_indices_by_cluster = np.argsort(cluster_label_vector, kind="stable")
+    sorted_labels = cluster_label_vector[object_indices_by_cluster]
+    cluster_ids = np.arange(cluster_label_vector.max() + 1)
+    cluster_starts = np.searchsorted(sorted_labels, cluster_ids, side="left")
+    cluster_ends = np.searchsorted(sorted_labels, cluster_ids, side="right")
+
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting central exemplars",
@@ -585,11 +598,10 @@ def diverse_exemplars(
         position=1,
     ):
 
-        # Get mask for current cluster
-        cluster_mask = cluster_label_vector == cluster_num
-
         # Store original indices for this cluster
-        original_indices = np.where(cluster_mask)[0]
+        original_indices = object_indices_by_cluster[
+            cluster_starts[cluster_num] : cluster_ends[cluster_num]
+        ]
 
         # Index objects by integer position — no np.array(objects) needed
         cluster_objects = [objects[i] for i in original_indices]
@@ -600,7 +612,7 @@ def diverse_exemplars(
             indices.append([])
             continue
 
-        cluster_object_vectors = object_vectors[cluster_mask] - null_topic
+        cluster_object_vectors = object_vectors[original_indices] - null_topic
         if method == "centroid":
             # Select the central exemplars as the objects to each centroid
             exemplar_distances = pairwise_distances(
