@@ -83,6 +83,21 @@ def test_empty_cluster_diverse(
     assert len(exemplar_results[0]) == 0
 
 
+def test_diverse_exemplars_rejects_mismatched_lengths(
+    test_object_cluster_label_vector,
+    all_topic_objects,
+    topic_vectors,
+    test_object_centroid_vectors,
+):
+    with pytest.raises(IndexError):
+        diverse_exemplars(
+            cluster_label_vector=test_object_cluster_label_vector,
+            objects=all_topic_objects,
+            object_vectors=topic_vectors[:-1],
+            centroid_vectors=test_object_centroid_vectors,
+        )
+
+
 @pytest.mark.parametrize(
     "submodular_function", ["facility_location", "saturated_coverage"]
 )
