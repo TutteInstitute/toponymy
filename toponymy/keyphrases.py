@@ -507,9 +507,13 @@ def longest_keyphrases(candidate_keyphrases):  # pragma: no cover
     """
     result = []
     for i, phrase in enumerate(candidate_keyphrases):
+        prefixed = " " + phrase
+        suffixed = phrase + " "
         for other in candidate_keyphrases:
-            if f" {phrase}" in other or f"{phrase} " in other:
+            if prefixed in other or suffixed in other:
                 phrase = other
+                prefixed = " " + phrase
+                suffixed = phrase + " "
 
         if phrase not in result:
             candidate_keyphrases[i] = phrase
