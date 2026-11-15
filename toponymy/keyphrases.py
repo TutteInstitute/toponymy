@@ -742,6 +742,8 @@ def central_keyphrases(
         cluster_label_vector, object_x_keyphrase_matrix
     )
 
+    null_topic = np.mean(keyphrase_vectors, axis=0)
+
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
@@ -752,14 +754,10 @@ def central_keyphrases(
         position=1,
     ):
         # Sum over the cluster; get the non-zero indices
-        base_candidate_indices = np.where(
-            np.squeeze(
-                np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-            )
-            > 0
-        )[0]
-
-        null_topic = np.mean(keyphrase_vectors, axis=0)
+        cluster_counts = np.squeeze(
+            np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
+        )
+        base_candidate_indices = np.where(cluster_counts > 0)[0]
 
         # Map the indices back to the original vocabulary
         base_candidates = [
@@ -786,9 +784,7 @@ def central_keyphrases(
             np.asarray([keyphrase_vector_mapping[phrase] for phrase in base_candidates])
             - null_topic
         )
-        base_weights = np.squeeze(
-            np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-        )[base_candidate_indices]
+        base_weights = cluster_counts[base_candidate_indices]
         centroid = np.average(base_vectors, axis=0, weights=base_weights)
 
         # Select the central keyphrases as the closest samples to the centroid
