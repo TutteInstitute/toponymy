@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict
+from warnings import warn
 
 from tenacity import (
     retry,
@@ -21,10 +22,26 @@ from toponymy.llm_wrappers import (
     LLMWrapper,
     AsyncLLMWrapper,
     _should_retry,
+    FailFastLLMError,
+    InvalidLLMInputError,
 )
 from toponymy.prompt_construction import topic_name_prompt_by_node
 from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_KINDS
 import numpy as np
+
+NULL_RESPONSE_VALUE = ""
+
+
+def _topic_name_error_callback(retry_state):
+    """Callback function for when all retries are exhausted. Logs the error and returns an empty string."""
+    exc = retry_state.outcome.exception()
+    if isinstance(exc, (FailFastLLMError, InvalidLLMInputError)):
+        raise exc
+    raw_response = getattr(exc, "raw_response", None)
+    warn(f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}")
+    return TopicParseResult(
+        topic_payload=NULL_RESPONSE_VALUE, error=exc, raw_response=raw_response
+    )
 
 
 def topic_name_retry():
@@ -37,6 +54,7 @@ def topic_name_retry():
         ),
         retry=retry_if_exception(_should_retry),
         reraise=True,
+        retry_error_callback=_topic_name_error_callback,
     )
 
 
@@ -62,6 +80,8 @@ class TopicNamerTemplate:
     max_num_keyphrases: int = 32
     max_num_subtopics: int = 16
     max_num_exemplars: int = 128
+    lowest_detail_level: float = 0.0
+    highest_detail_level: float = 1.0
 
     """
     TODO: 
@@ -93,7 +113,12 @@ class TopicNamerTemplate:
             current_keyphrases=keyphrases,
             object_description=self.object_description,
             corpus_description=self.corpus_description,
-            summary_kind=summary_kind(node, self.tree),
+            summary_kind=summary_kind(
+                node,
+                self.tree,
+                lowest_detail_level=self.lowest_detail_level,
+                highest_detail_level=self.highest_detail_level,
+            ),
             exemplar_start_delimiter=self.exemplar_start_delimiter,
             exemplar_end_delimiter=self.exemplar_end_delimiter,
             prompt_template=self.prompt_template,
@@ -104,7 +129,7 @@ class TopicNamerTemplate:
     def parse(
         self,
         topic_info_raw: str,
-        null_response_value: str = "",
+        null_response_value: str = NULL_RESPONSE_VALUE,
     ) -> TopicParseResult:
         get_topic_name_regex = self.prompt_template["layer"].get("get_topic_name_regex")
         extract_topic_name_function = self.prompt_template["layer"].get(
@@ -121,7 +146,7 @@ class TopicNamerTemplate:
 class TopicNameAnnotator:
     """
     TODO IGNORE FOR NOW:
-    * where does max_tokens (the kind of call?) and temperature (the llm?) come from?
+    * where does/should temperature (the llm?) come from?
     """
 
     inputs = []
@@ -141,6 +166,8 @@ class TopicNameAnnotator:
     algorithm_output_type = "node"
     execution_mode: str
     execution_strategy = LayerExecutionStrategy(Order.BOTTOM_UP)
+    max_tokens: int | None = None
+    temperature: int | None = None
 
     def __init__(self, llm_namer=None, topic_name_template=None):
         self.llm_namer = llm_namer
@@ -151,6 +178,10 @@ class TopicNameAnnotator:
             self.execution_mode = "async"
         else:
             raise TypeError("llm_namer must be an LLMWrapper or AsyncLLMWrapper")
+        if self.max_tokens is None:
+            self.max_tokens = 128
+        if self.temperature is None:
+            self.temperature = 0.4
 
     def _build_prompt(
         self,
@@ -225,11 +256,15 @@ class TopicNameAnnotator:
         """
         raw_response = self.llm_namer._call_llm_for_prompt(
             prompt,
-            temperature=0.4,
+            temperature=self.temperature,
             routine="TopicNameAnnotator.annotate",
-            max_tokens=None,
+            max_tokens=self.max_tokens,
         )
-        return self.topic_name_template.parse(raw_response)
+        try:
+            return self.topic_name_template.parse(raw_response)
+        except Exception as exc:
+            exc.raw_response = raw_response
+            raise
 
     @topic_name_retry()
     async def _agenerate_and_parse(self, prompt):
@@ -238,11 +273,15 @@ class TopicNameAnnotator:
         """
         raw_response = await self.llm_namer._acall_llm_for_prompt(
             prompt,
-            temperature=0.4,
+            temperature=self.temperature,
             routine="TopicNameAnnotator.aannotate",
-            max_tokens=None,
+            max_tokens=self.max_tokens,
         )
-        return self.topic_name_template.parse(raw_response)
+        try:
+            return self.topic_name_template.parse(raw_response)
+        except Exception as exc:
+            exc.raw_response = raw_response
+            raise
 
     def annotate(
         self,
@@ -271,7 +310,11 @@ class TopicNameAnnotator:
         )
 
         if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
-            topic_name = self._generate_and_parse(prompt).topic_payload
+            result = self._generate_and_parse(prompt)
+            if not result.error:
+                topic_name = result.topic_payload
+            else:
+                raise result.error
         else:
             topic_name = prompt.removeprefix("[!SKIP!]: ")
 
@@ -308,7 +351,10 @@ class TopicNameAnnotator:
 
         if isinstance(prompt, dict) or not prompt.startswith("[!SKIP!]: "):
             result = await self._agenerate_and_parse(prompt)
-            topic_name = result.topic_payload
+            if not result.error:
+                topic_name = result.topic_payload
+            else:
+                raise result.error
         else:
             topic_name = prompt.removeprefix("[!SKIP!]: ")
 

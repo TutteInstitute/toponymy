@@ -503,7 +503,7 @@ def test_toponymy_with_mock_namer(
     model.fit(all_sentences, object_vectors, clusterable_vectors)
 
     # Verify topic names
-    assert len(model.topic_names_[1]) > 0
+    assert len(model.topic_names_[1]) > 0, model.store_.tree
     for topic_name in model.topic_names_[1]:
         assert isinstance(topic_name, str)
         assert len(topic_name.strip()) > 0

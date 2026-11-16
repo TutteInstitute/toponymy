@@ -1904,6 +1904,13 @@ class Executor:
         return kwargs
 
     def _record_failure(self, context, unit, error, failures):
+        """XXX for debugging. Remove later or use it with verbose.
+        traceback.print_exception(
+            type(error),
+            error,
+            error.__traceback__,
+        )
+        """
         for store_name in context.writes_to.values():
             context.output.fail(
                 self.store[store_name],

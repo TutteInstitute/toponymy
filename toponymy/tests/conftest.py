@@ -17,7 +17,11 @@ import time
 import umap
 
 from sentence_transformers import SentenceTransformer
-from toponymy.llm_wrappers import HuggingFaceNamer, AsyncHuggingFaceNamer
+from toponymy.llm_wrappers import (
+    HuggingFaceNamer,
+    AsyncHuggingFaceNamer,
+    AsyncOllamaNamer,
+)
 from toponymy.clustering import centroids_from_labels, ToponymyClusterer
 from toponymy.tools.notebook_test_helpers import OLLAMA_CI_MODELS, get_test_ollama_model
 from toponymy.tests.helpers.llm_test_config import make_mock_data
@@ -25,6 +29,7 @@ from toponymy.tests.helpers.dummy_wrappers import (
     DummySingleWrapper,
     DummyAsyncSingleWrapper,
 )
+from toponymy.annotation import Annotation, AnnotationStore, Executor, AnnotationTree
 
 logger = logging.getLogger(__name__)
 
@@ -43,21 +48,6 @@ def llm():
 def null_llm():
     """Fixture for a null LLM model."""
     return HuggingFaceNamer("hf-internal-testing/tiny-random-gpt2")
-
-
-@pytest.fixture(scope="function")
-def async_llm():
-    """Fixture for the async LLM model."""
-    return AsyncHuggingFaceNamer(
-        "Qwen/Qwen2.5-0.5B-Instruct",
-        max_concurrent_requests=4,
-        device="cpu",
-    )
-    # return AsyncHuggingFace(
-    #     "Qwen/Qwen3-0.6B",
-    #     llm_specific_instructions=" /no_think",
-    #     max_concurrent_requests=4,
-    # )
 
 
 def ollama_has_model(model_or_family: str, family=False) -> bool:
@@ -166,6 +156,33 @@ def ollama_running(_ollama_sufficient_resources) -> bool:
         except subprocess.TimeoutExpired:
             started_process.kill()
             started_process.wait()
+
+
+@pytest.fixture(scope="function")
+def async_llm(ollama_running):
+    """Fixture for the async LLM model."""
+    model_name = get_test_ollama_model()
+    if not ollama_running:
+        pytest.skip("Ollama service is not available or failed to start")
+
+    if not ollama_has_model(model_name):
+        pytest.skip(f"Ollama model {model_name} is not available")
+
+    return AsyncOllamaNamer(
+        model=model_name,  # Very small model for CI
+        api_base="http://localhost:11434",
+    )
+
+    # return AsyncHuggingFaceNamer(
+    #     "Qwen/Qwen2.5-0.5B-Instruct",
+    #     max_concurrent_requests=4,
+    #     device="cpu",
+    # )
+    # return AsyncHuggingFace(
+    #     "Qwen/Qwen3-0.6B",
+    #     llm_specific_instructions=" /no_think",
+    #     max_concurrent_requests=4,
+    # )
 
 
 @pytest.fixture(params=["sync", "async"], ids=["sync_wrapper", "async_wrapper"])
@@ -373,3 +390,55 @@ def notebook_testing_env(notebook_output_dir):
             os.environ.pop("NB_TEST_OUTPUT_DIR", None)
         else:
             os.environ["NB_TEST_OUTPUT_DIR"] = old_output_dir
+
+
+@pytest.fixture
+def valid_cluster_tree():
+    # Root is (2, 0)
+    return {
+        (1, 0): [(0, 0)],
+        (1, 1): [(0, 1)],
+        (1, 2): [(0, 7), (0, 6), (0, 5)],
+        (1, 3): [(0, 4)],
+        (2, 0): [(1, 0), (1, 1), (1, 2), (1, 3), (0, 2), (0, 3)],
+    }
+
+
+@pytest.fixture
+def topic_store(valid_cluster_tree):
+    tree = AnnotationTree(valid_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+    return AnnotationStore(tree, [topic])
+
+
+@pytest.fixture
+def deep_cluster_tree():
+    # Root is (4, 0)
+    return {
+        (4, 0): [(3, 0), (3, 1)],
+        (3, 0): [(2, 0), (2, 1)],
+        (3, 1): [(2, 2)],
+        (2, 0): [(1, 0), (1, 1)],
+        (2, 1): [(1, 2)],
+        (2, 2): [(1, 3), (1, 4)],
+        (1, 0): [(0, 0), (0, 1)],
+        (1, 1): [(0, 2)],
+        (1, 3): [(0, 3), (0, 4)],
+        (1, 4): [(0, 5)],
+    }
+
+
+@pytest.fixture
+def deep_topic_store(deep_cluster_tree):
+    tree = AnnotationTree(deep_cluster_tree)
+    topic = Annotation("topic", tree)
+    for node in tree.nodes:
+        topic[node] = f"T{node.layer}-{node.cluster}"
+    return AnnotationStore(tree, [topic])
+
+
+@pytest.fixture
+def example_executor(topic_store):
+    return Executor(topic_store)

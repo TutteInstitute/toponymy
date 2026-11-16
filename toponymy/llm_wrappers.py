@@ -1,10 +1,7 @@
 import asyncio
 import os
-import string
-from unittest import result
 from warnings import warn, filterwarnings
 import threading
-import tokenizers
 import transformers
 import weakref
 
@@ -401,16 +398,34 @@ def repair_json_string_backslashes(s: str) -> str:
     return temp_s
 
 
-def llm_output_to_result(llm_output: str, regex: str) -> dict:
-    json_portion = re.findall(regex, llm_output, re.DOTALL)[0]
-    try:
-        result = json.loads(json_portion)
-    except json.JSONDecodeError:
-        # Attempt to repair the JSON string
-        repaired_json = repair_json_string_backslashes(json_portion)
-        result = json.loads(repaired_json)
+class LLMOutputParseError(ValueError):
+    """Raised when LLM output can't be parsed into the expected structure."""
 
-    return result
+
+def llm_output_to_result(llm_output: str, regex: str) -> dict:
+    matches = re.findall(regex, llm_output, re.DOTALL)
+    if not matches:
+        raise LLMOutputParseError(
+            f"No match for regex in LLM output "
+            f"({len(llm_output)} chars):\n"
+            f"{llm_output}\n"
+        )
+    json_portion = matches[0]
+
+    try:
+        return json.loads(json_portion)
+    except json.JSONDecodeError:
+        repaired_json = repair_json_string_backslashes(json_portion)
+        try:
+            return json.loads(repaired_json)
+        except json.JSONDecodeError as e:
+            raise LLMOutputParseError(
+                f"Extracted text is not valid JSON, even after backslash repair: {e}\n"
+                f"----- EXTRACTED (repaired) -----\n"
+                f"{repaired_json}\n"
+                f"----- FULL LLM OUTPUT -----\n"
+                f"{llm_output}"
+            ) from e
 
 
 def parse_raw_response(
@@ -427,7 +442,6 @@ def parse_raw_response(
             topic_payload=topic_result, raw_response=topic_info_raw, error=None
         )
     except Exception as e:
-        warn(f"Failed to generate topic name: {e}")
         return TopicParseResult(
             topic_payload=null_result_value, raw_response=topic_info_raw, error=e
         )

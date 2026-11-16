@@ -1,9 +1,12 @@
+import asyncio
+from collections import defaultdict
+import pytest
+import threading
+import time
 from types import SimpleNamespace
 
-from collections import defaultdict
 import numpy as np
 import pandas as pd
-import pytest
 from sklearn.exceptions import NotFittedError
 
 from toponymy.annotation import (
@@ -16,6 +19,7 @@ from toponymy.annotation import (
     Executor,
     IndexedAnnotation,
     InvalidAnnotationTree,
+    LayerExecutionStrategy,
     LayerInput,
     MultiNodeInput,
     MultiNodeOutput,
@@ -23,26 +27,16 @@ from toponymy.annotation import (
     NotAvailable,
     NodeInput,
     NodeOutput,
-    _members_by_cluster,
+    Order,
     parse_algorithm_type,
+    Runner,
+    _members_by_cluster,
 )
 from toponymy.exemplar_texts import (
     DiverseExemplarAnnotator,
     RandomExemplarAnnotator,
     SubmodularExemplarAnnotator,
 )
-
-
-@pytest.fixture
-def valid_cluster_tree():
-    # Root is (2, 0)
-    return {
-        (1, 0): [(0, 0)],
-        (1, 1): [(0, 1)],
-        (1, 2): [(0, 7), (0, 6), (0, 5)],
-        (1, 3): [(0, 4)],
-        (2, 0): [(1, 0), (1, 1), (1, 2), (1, 3), (0, 2), (0, 3)],
-    }
 
 
 @pytest.fixture
@@ -579,15 +573,10 @@ def test_annotation_from_layered_list_raises_on_incomplete_input(valid_cluster_t
         Annotation.from_layered_list("topics", tree, incomplete_layered_values)
 
 
-def test_executor_node_node_string_algorithm_type_contract(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-
-    store = AnnotationStore(tree, [topic])
-    executor = Executor(store)
+def test_executor_node_node_string_algorithm_type_contract(example_executor):
+    executor = example_executor
+    store = executor.store
+    tree = store.tree
 
     class EchoAnnotator:
         inputs = ("topic",)
@@ -606,15 +595,9 @@ def test_executor_node_node_string_algorithm_type_contract(valid_cluster_tree):
     assert store["named_topic"][NodeId(1, 2)] == "name:T1-2"
 
 
-def test_executor_explicit_node_and_descendants_input_contract(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-
-    store = AnnotationStore(tree, [topic])
-    executor = Executor(store)
+def test_executor_explicit_node_and_descendants_input_contract(example_executor):
+    executor = example_executor
+    store = executor.store
 
     class NodeAndDescendantsAnnotator:
         inputs = ("topic", "desc_topics")
@@ -703,15 +686,6 @@ class LayerSizeAnnotator:
         if unit[0].layer == self.failing_layer:
             raise RuntimeError("boom")
         return {"layer_size": {node: len(topic) for node in unit}}
-
-
-@pytest.fixture
-def topic_store(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-    return AnnotationStore(tree, [topic])
 
 
 def test_executor_multinode_annotator_runs_once_per_group(topic_store):
@@ -881,14 +855,9 @@ def test_parse_algorithm_type_shorthand_returns_output_instance():
     assert isinstance(output, NodeOutput)
 
 
-def test_executor_explicit_contract_with_node_output_type(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-
-    store = AnnotationStore(tree, [topic])
-    executor = Executor(store)
+def test_executor_explicit_contract_with_node_output_type(example_executor):
+    executor = example_executor
+    store = executor.store
 
     class ExplicitAnnotator:
         inputs = ("topic",)
@@ -906,14 +875,9 @@ def test_executor_explicit_contract_with_node_output_type(valid_cluster_tree):
     assert store["named_topic"][NodeId(0, 0)] == "name:T0-0"
 
 
-def test_executor_explicit_contract_with_node_output_dict(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-
-    store = AnnotationStore(tree, [topic])
-    executor = Executor(store)
+def test_executor_explicit_contract_with_node_output_dict(example_executor):
+    executor = example_executor
+    store = executor.store
 
     class ExplicitAnnotator:
         inputs = ("topic",)
@@ -950,14 +914,9 @@ def test_executor_explicit_contract_requires_output_types(valid_cluster_tree):
         executor.run(MissingOutputTypeAnnotator())
 
 
-def test_executor_explicit_contract_rejects_unknown_output_spec(valid_cluster_tree):
-    tree = AnnotationTree(valid_cluster_tree)
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-
-    store = AnnotationStore(tree, [topic])
-    executor = Executor(store)
+def test_executor_explicit_contract_rejects_unknown_output_spec(example_executor):
+    executor = example_executor
+    store = example_executor.store
 
     class BadOutputSpecAnnotator:
         inputs = ("topic",)
@@ -973,15 +932,10 @@ def test_executor_explicit_contract_rejects_unknown_output_spec(valid_cluster_tr
 
 
 def test_parse_algorithm_type_prefers_algorithm_type_when_both_present(
-    valid_cluster_tree,
+    example_executor,
 ):
-    tree = AnnotationTree(valid_cluster_tree)
-    topic = Annotation("topic", tree)
-    for node in tree.nodes:
-        topic[node] = f"T{node.layer}-{node.cluster}"
-
-    store = AnnotationStore(tree, [topic])
-    executor = Executor(store)
+    executor = example_executor
+    store = example_executor.store
 
     class BothContractsAnnotator:
         inputs = ("topic",)
@@ -1963,3 +1917,177 @@ class TestExecutorWithIndexedAnnotation:
             Executor(store).run(TwoOutputs())
 
         assert "created_first" not in store
+
+
+class TestRunner:
+    def test_runner_sync_executes_all_units(self):
+        runner = Runner()
+        outcomes = runner.run(
+            [1, 2, 3],
+            lambda unit: unit * 10,
+        )
+
+        assert [outcome.unit for outcome in outcomes] == [1, 2, 3]
+        assert [outcome.result for outcome in outcomes] == [10, 20, 30]
+        assert all(outcome.error is None for outcome in outcomes)
+
+    def test_runner_sync_captures_individual_failures(self):
+        runner = Runner()
+
+        def invoke(unit):
+            if unit == 2:
+                raise ValueError("test failure")
+            return unit * 10
+
+        outcomes = runner.run([1, 2, 3], invoke)
+
+        assert outcomes[0].result == 10
+        assert outcomes[0].error is None
+
+        assert outcomes[1].result is None
+        assert isinstance(outcomes[1].error, ValueError)
+
+        assert outcomes[2].result == 30
+        assert outcomes[2].error is None
+
+    def test_runner_sync_respects_max_concurrency(self):
+        runner = Runner(max_concurrency=2)
+
+        active = 0
+        max_active = 0
+        lock = threading.Lock()
+
+        def invoke(unit):
+            nonlocal active, max_active
+
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+
+            time.sleep(0.03)
+
+            with lock:
+                active -= 1
+
+            return unit
+
+        outcomes = runner.run(list(range(8)), invoke)
+
+        assert [outcome.result for outcome in outcomes] == list(range(8))
+        assert 1 < max_active <= 2
+
+    def test_runner_sync_handles_empty_group(self):
+        runner = Runner()
+
+        assert runner.run([], lambda unit: unit) == []
+
+    @pytest.mark.asyncio
+    async def test_runner_async_executes_all_units(self):
+        runner = Runner()
+
+        async def invoke(unit):
+            return unit * 10
+
+        outcomes = await runner.arun([1, 2, 3], invoke)
+
+        assert [outcome.unit for outcome in outcomes] == [1, 2, 3]
+        assert [outcome.result for outcome in outcomes] == [10, 20, 30]
+        assert all(outcome.error is None for outcome in outcomes)
+
+    @pytest.mark.asyncio
+    async def test_runner_async_captures_individual_failures(self):
+        runner = Runner()
+
+        async def invoke(unit):
+            if unit == 2:
+                raise ValueError("test failure")
+            return unit * 10
+
+        outcomes = await runner.arun([1, 2, 3], invoke)
+
+        assert outcomes[0].result == 10
+        assert outcomes[0].error is None
+
+        assert outcomes[1].result is None
+        assert isinstance(outcomes[1].error, ValueError)
+
+        assert outcomes[2].result == 30
+        assert outcomes[2].error is None
+
+    @pytest.mark.asyncio
+    async def test_runner_async_respects_max_concurrency(self):
+        runner = Runner(max_concurrency=2)
+
+        active = 0
+        max_active = 0
+
+        async def invoke(unit):
+            nonlocal active, max_active
+
+            active += 1
+            max_active = max(max_active, active)
+
+            await asyncio.sleep(0.03)
+
+            active -= 1
+            return unit
+
+        outcomes = await runner.arun(list(range(8)), invoke)
+
+        assert [outcome.result for outcome in outcomes] == list(range(8))
+        assert 1 < max_active <= 2
+
+    @pytest.mark.asyncio
+    async def test_runner_async_handles_empty_group(self):
+        runner = Runner()
+
+        async def invoke(unit):
+            return unit
+
+        assert await runner.arun([], invoke) == []
+
+    @pytest.mark.parametrize("max_concurrency", [0, -1])
+    def test_runner_rejects_invalid_concurrency(self, max_concurrency):
+        with pytest.raises(ValueError):
+            Runner(max_concurrency=max_concurrency)
+
+
+class TestExecutionStrategy:
+    def test_layer_execution_strategy_bottom_up(self, topic_store):
+        tree = topic_store.tree
+
+        strategy = LayerExecutionStrategy(Order.BOTTOM_UP)
+        groups = list(strategy.group_units(tree.nodes))
+
+        assert len(groups) == tree.n_layers
+
+        for layer, group in enumerate(groups):
+            assert set(group) == set(tree.layer(layer))
+
+    def test_layer_execution_strategy_top_down(self, topic_store):
+        tree = topic_store.tree
+
+        strategy = LayerExecutionStrategy(Order.TOP_DOWN)
+        groups = list(strategy.group_units(tree.nodes))
+
+        assert len(groups) == tree.n_layers
+
+        expected_layers = reversed(range(tree.n_layers))
+
+        for layer, group in zip(expected_layers, groups):
+            assert set(group) == set(tree.layer(layer))
+
+    def test_layer_execution_strategy_preserves_units_within_layer(self, topic_store):
+        tree = topic_store.tree
+
+        strategy = LayerExecutionStrategy(Order.BOTTOM_UP)
+        groups = list(strategy.group_units(tree.nodes))
+
+        for group in groups:
+            layer = group[0].layer
+            assert group == list(tree.layer(layer))
+
+    def test_layer_execution_strategy_handles_empty_input(self, topic_store):
+        strategy = LayerExecutionStrategy(Order.BOTTOM_UP)
+
+        assert list(strategy.group_units([])) == []
