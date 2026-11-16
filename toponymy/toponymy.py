@@ -458,6 +458,21 @@ class Toponymy:
         if keyphrase_runs:
             copy_keyphrases_to_layers(self.store_, self.cluster_layers_)
 
+        template = TopicNamerTemplate(
+            object_description=self.object_description,
+            corpus_description=self.corpus_description,
+            tree=self.store_.tree,
+            exemplar_start_delimiter=self.exemplar_delimiters[0],
+            exemplar_end_delimiter=self.exemplar_delimiters[1],
+            prompt_template=self.prompt_template,
+            lowest_detail_level=self.lowest_detail_level,
+            highest_detail_level=self.highest_detail_level,
+        )
+        topic_annotator = TopicNameAnnotator(
+            llm_namer=self.llm_wrapper,
+            topic_name_template=template,
+        )
+
         # Iterate through the layers and build the topic names
         for i, layer in tqdm(
             enumerate(self.cluster_layers_),
@@ -474,7 +489,25 @@ class Toponymy:
                     self.embedding_model,
                     method=keyphrase_method,
                 )
+            # by layer loop, no keyphrases yet
+            layer_nodes = self.store_.tree.layer(i)
 
+            failures = executor.run(topic_annotator, nodes=layer_nodes)
+            if len(failures) > 0:
+                print("FAILED")
+            print(f"layer: {i}, failures:{failures}")
+            print(f"layer: {i}, store: {self.store_}")
+            layer.topic_names = [
+                (
+                    self.store_.draft_topics[node]
+                    if self.store_.draft_topics.states[node] == AnnotationState.COMPUTED
+                    else ""
+                )
+                for node in self.store_.tree.layer(i)
+            ]
+            self.topic_names_[i] = layer.topic_names
+            self.topic_name_vectors_[i] = layer.make_topic_name_vector()
+        """
             if i > 0:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
                     self.cluster_layers_[0].embed_topic_names(self.embedding_model)
@@ -542,7 +575,7 @@ class Toponymy:
                     self.embedding_model,
                 )
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
-
+        """
         # Compute and cache topic sizes for efficient access and serialization
         self.topic_sizes_ = self._compute_topic_sizes()
 
