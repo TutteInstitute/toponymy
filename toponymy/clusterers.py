@@ -3,8 +3,9 @@
 This module sits alongside :mod:`toponymy.clustering`, which is unchanged and
 still used by :class:`toponymy.Toponymy`. Several names here also exist there
 (``Clusterer``, ``ClusterLayer``, ``KMeansClusterer``, ``PLSCANClusterer``,
-``EVoCClusterer``, ``build_cluster_tree``). They are separate implementations
-with different contracts, so import them from ``toponymy.clusterers`` explicitly.
+``ToponymyClusterer``, ``EVoCClusterer``, ``build_cluster_tree``). They are
+separate implementations with different contracts, so import them from
+``toponymy.clusterers`` explicitly.
 
 A clusterer produces clustering structure and holds no topic state:
 ``cluster_layers_``, the partition of the observations at each resolution, and
@@ -779,6 +780,17 @@ class PLSCANClusterer(Clusterer):
         ):
             if _nonnegative_integer(getattr(self, name), name) < minimum:
                 raise ValueError(f"{name} must be at least {minimum}")
+
+
+class ToponymyClusterer(PLSCANClusterer):
+    """:class:`PLSCANClusterer` under the legacy ``ToponymyClusterer`` name.
+
+    It takes the same parameters, with the same defaults, and fits in the same
+    way. The legacy :class:`toponymy.clustering.ToponymyClusterer`, still
+    exported as ``toponymy.ToponymyClusterer`` and used by
+    :class:`toponymy.Toponymy`, runs a different algorithm with other defaults
+    and options.
+    """
 
 
 class EVoCClusterer(Clusterer):
