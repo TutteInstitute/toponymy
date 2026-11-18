@@ -136,14 +136,13 @@ def build_count_matrix(
     for doc in docs:
         ngram_counter = {}
         for gram in ngrammer(doc):
-            try:
-                ngram_idx = vocab[gram]
-                if ngram_idx in ngram_counter:
-                    ngram_counter[ngram_idx] += 1
-                else:
-                    ngram_counter[ngram_idx] = 1
-            except KeyError:
+            ngram_idx = vocab.get(gram)
+            if ngram_idx is None:
                 continue
+            if ngram_idx in ngram_counter:
+                ngram_counter[ngram_idx] += 1
+            else:
+                ngram_counter[ngram_idx] = 1
 
         col_indices.extend(ngram_counter.keys())
         data.extend(ngram_counter.values())
