@@ -1,7 +1,11 @@
 from __future__ import annotations
+import traceback
 from typing import TYPE_CHECKING
 from abc import abstractmethod
 from types import MappingProxyType
+import asyncio
+
+from concurrent.futures import ThreadPoolExecutor
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -10,6 +14,7 @@ from dataclasses import dataclass
 
 from typing import (
     Any,
+    Callable,
     Dict,
     Iterable,
     List,
@@ -34,6 +39,8 @@ from warnings import warn
 
 import numpy as np
 from sklearn.exceptions import NotFittedError
+
+from toponymy._utils import run_async
 
 T = TypeVar("T")
 
@@ -1168,6 +1175,41 @@ class AnnotationStore(Mapping[str, BaseAnnotation[Any]]):
         return f"AnnotationStore({parts})"
 
 
+class Order(Enum):
+    BOTTOM_UP = "bottom-up"
+    TOP_DOWN = "top-down"
+
+
+class ExecutionStrategy(Protocol):
+    def group_units(
+        self,
+        units: Sequence[Any],
+    ) -> Iterable[Sequence[Any]]: ...
+
+
+class SequentialExecutionStrategy:
+    def group_units(self, units):
+        return ([unit] for unit in units)
+
+
+class LayerExecutionStrategy:
+    def __init__(self, order):
+        self.order = order
+
+    def group_units(self, units):
+        groups = {}
+
+        for unit in units:
+            layer = unit.layer
+            groups.setdefault(layer, []).append(unit)
+
+        layers = sorted(groups)
+        if self.order is Order.TOP_DOWN:
+            layers.reverse()
+
+        return [groups[layer] for layer in layers]
+
+
 @runtime_checkable
 class Annotator(Protocol):
     """Structural contract for an annotation algorithm.
@@ -1229,6 +1271,8 @@ class Annotator(Protocol):
     inputs: Sequence[str]
     outputs: Sequence[str]
     algorithm_type: Any
+    execution_mode: str = "sync"
+    execution_strategy: ExecutionStrategy = SequentialExecutionStrategy()
 
     def annotate(
         self,
@@ -1262,15 +1306,55 @@ class Annotator(Protocol):
         ...
 
 
-class Order(Enum):
-    BOTTOM_UP = "bottom-up"
-    TOP_DOWN = "top-down"
+@dataclass
+class UnitOutcome:
+    unit: Any
+    result: Any = None
+    error: Exception | None = None
+
+
+class Runner:
+    def __init__(self, max_concurrency: int = 1):
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be at least 1")
+
+        self.max_concurrency = max_concurrency
+
+    def run(self, units, invoke):
+        def capture(unit):
+            try:
+                return UnitOutcome(unit, result=invoke(unit))
+            except Exception as error:
+                return UnitOutcome(unit, error=error)
+
+        if self.max_concurrency == 1:
+            return [capture(unit) for unit in units]
+
+        with ThreadPoolExecutor(max_workers=self.max_concurrency) as pool:
+            return list(pool.map(capture, units))
+
+    async def arun(self, units, invoke):
+        async def capture(unit):
+            try:
+                return UnitOutcome(
+                    unit,
+                    result=await invoke(unit),
+                )
+            except Exception as error:
+                return UnitOutcome(unit, error=error)
+
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def bounded_invoke(unit):
+            async with semaphore:
+                return await capture(unit)
+
+        return await asyncio.gather(*(bounded_invoke(unit) for unit in units))
 
 
 class InputSpec:
     source = None
     from_output = None
-    order = None
 
     def prepare(self, annotator, annotation, nodes):
         """Execute once per run, before any annotate(). Good for once-per-run precomputations
@@ -1325,7 +1409,6 @@ class NodeInput(InputSpec):
 
 @dataclass(frozen=True)
 class DescendantsInput(InputSpec):
-    order = Order.BOTTOM_UP
     depth: Optional[int] = None
     source: Optional[str] = None
     from_output: Optional[str] = None
@@ -1591,31 +1674,38 @@ def parse_algorithm_type(annotator, *, resolved_contract=None):
     return specs, output_spec
 
 
+@dataclass
+class RunContext:
+    specs: dict
+    output: Any
+    outputs: tuple[str, ...]
+    reads_from: dict[str, str]
+    writes_to: dict[str, str]
+    prepared: dict
+    unit_groups: list[list[Any]]
+    required_inputs: set[str]
+    in_place: set[str]
+
+
 class Executor:
     """Executes annotators against its annotation store."""
 
-    def __init__(self, store: AnnotationStore):
+    def __init__(self, store: AnnotationStore, runner: Runner = None):
         self.store = store
+        self.runner = runner or Runner()
 
     @property
     def tree(self) -> AnnotationTree:
         return self.store.tree
 
-    def run(
+    def _prepare_run(
         self,
         annotator: Annotator,
         *,
         nodes: Iterable[NodeId] | None = None,
         input_names: Mapping[str, str] | None = None,
         output_names: Mapping[str, str] | None = None,
-    ) -> dict[NodeId | tuple[NodeId, ...], str]:
-        """Run an annotator, reading and writing the store names given by
-        input_names={kwarg: store_name} and output_names={output: store_name}.
-        Unlisted names map to themselves.
-
-        Return ``{unit: reason}`` for units whose annotation failed, and
-        ``{node: reason}`` for nodes a multinode annotator left out of its result.
-        A failure keeps the old value of a node in an annotation the run also reads."""
+    ) -> RunContext:
 
         resolved_contract = _validate_annotator_contract(annotator)
 
@@ -1776,78 +1866,192 @@ class Executor:
             units = selected_nodes
         else:
             raise ValueError("a multinode annotator needs an input that defines groups")
-        units = self._order_units(units, specs, reads_from, writes_to)
 
+        strategy = getattr(
+            annotator,
+            "execution_strategy",
+            SequentialExecutionStrategy(),
+        )
+
+        unit_groups = [list(group) for group in strategy.group_units(units)]
         # A write to an annotation this run also reads keeps its old value on failure.
         # Replace with more explicit instructions for handling in-place updates later
         in_place = set(writes_to.values()) & {reads_from[n] for n in specs}
+        return RunContext(
+            specs=specs,
+            output=output,
+            outputs=outputs,
+            reads_from=reads_from,
+            writes_to=writes_to,
+            prepared=prepared,
+            unit_groups=unit_groups,
+            required_inputs=required_inputs,
+            in_place=in_place,
+        )
 
-        # Finally run .annotate over the units
-        failures = {}
-        for unit in units:
+    def _gather_inputs(self, context, unit):
+        kwargs = {}
+        for name, spec in context.specs.items():
             try:
-                kwargs = {}
-                for name, spec in specs.items():
-                    try:
-                        kwargs[name] = spec.gather(
-                            self.store[reads_from[name]], unit, prepared[name]
-                        )
-                    except NotAvailable as e:
-                        if name in required_inputs:
-                            raise e
-                result = annotator.annotate(unit, **kwargs)
-            except Exception as error:
-                # Nothing is written before annotate returns, so these are the prior states
-                for store_name in writes_to.values():
-                    output.fail(
-                        self.store[store_name],
-                        unit,
-                        keep_computed=store_name in in_place,
-                    )
-                failures[unit] = f"{type(error).__name__}: {error}"
-                continue
+                kwargs[name] = spec.gather(
+                    self.store[context.reads_from[name]],
+                    unit,
+                    context.prepared[name],
+                )
+            except NotAvailable as e:
+                if name in context.required_inputs:
+                    raise e
+        return kwargs
 
-            if set(result) != set(outputs):
-                raise ValueError(f"expected outputs {outputs!r}, got {tuple(result)!r}")
-            for name, value in result.items():
-                store_name = writes_to[name]
-                missing = output.write(self.store[store_name], unit, value)
-                if missing:
-                    output.fail(
-                        self.store[store_name],
-                        missing,
-                        keep_computed=store_name in in_place,
-                    )
-                    for node in missing:
-                        failures[node] = f"{name!r}: no value returned"
+    def _record_failure(self, context, unit, error, failures):
+        """XXX for debugging. Remove later or use it with verbose.
+        traceback.print_exception(
+            type(error),
+            error,
+            error.__traceback__,
+        )
+        """
+        for store_name in context.writes_to.values():
+            context.output.fail(
+                self.store[store_name],
+                unit,
+                keep_computed=store_name in context.in_place,
+            )
+        failures[unit] = f"{type(error).__name__}: {error}"
+
+    def _write_result(self, context, unit, result, failures):
+        if set(result) != set(context.outputs):
+            raise ValueError(
+                f"expected outputs {context.outputs!r}, got {tuple(result)!r}"
+            )
+        for name, value in result.items():
+            store_name = context.writes_to[name]
+            missing = context.output.write(self.store[store_name], unit, value)
+            if missing:
+                context.output.fail(
+                    self.store[store_name],
+                    missing,
+                    keep_computed=store_name in context.in_place,
+                )
+                for node in missing:
+                    failures[node] = f"{name!r}: no value returned"
+
+    def _commit_outcomes(self, context, outcomes, failures):
+        for outcome in outcomes:
+            if outcome.error is not None:
+                self._record_failure(
+                    context,
+                    outcome.unit,
+                    outcome.error,
+                    failures,
+                )
+            else:
+                self._write_result(
+                    context,
+                    outcome.unit,
+                    outcome.result,
+                    failures,
+                )
+
+    def _check_execution_mode(self, annotator, expected):
+        mode = getattr(annotator, "execution_mode", "sync")
+        if mode not in {"sync", "async"}:
+            raise ValueError(f"unsupported execution mode: {mode!r}")
+        if mode != expected:
+            raise TypeError(
+                f"{type(annotator).__name__} has execution_mode={mode!r}; "
+                f"use {'arun' if mode == 'async' else 'run'}"
+            )
+
+    def _run_sync(
+        self,
+        annotator: Annotator,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
+        """Run an annotator with execution mode 'sync', reading and writing the store names given by
+        input_names={kwarg: store_name} and output_names={output: store_name}.
+        Unlisted names map to themselves.
+
+        Return ``{unit: reason}`` for units whose annotation failed, and
+        ``{node: reason}`` for nodes a multinode annotator left out of its result.
+        A failure keeps the old value of a node in an annotation the run also reads."""
+
+        self._check_execution_mode(annotator, "sync")
+
+        context = self._prepare_run(
+            annotator, nodes=nodes, input_names=input_names, output_names=output_names
+        )
+        failures = {}
+
+        def invoke(unit):
+            inputs = self._gather_inputs(context, unit)
+            return annotator.annotate(unit, **inputs)
+
+        for group in context.unit_groups:
+            outcomes = self.runner.run(group, invoke)
+            self._commit_outcomes(context, outcomes, failures)
 
         return failures
 
-    def _order_units(self, units, specs, reads_from, writes_to):
-        """
-        Reorders the units based on the specified layer order in the specs, or
-        return them as-is if no order is specified.
+    async def arun(
+        self,
+        annotator: Annotator,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
+        """Run an annotator with execution mode 'async', reading and writing the store names given by
+        input_names={kwarg: store_name} and output_names={output: store_name}.
+        Unlisted names map to themselves. Publically exposes access for purely async behaviour.
 
-        Only matters when the output of one unit affects the input of another unit.
-        """
-        written = set(writes_to.values())
-        orders = {
-            spec.order
-            for name, spec in specs.items()
-            if spec.order is not None and reads_from[name] in written
-        }
-        if len(orders) > 1:
-            raise ValueError(f"Input specs require conflicting orders: {orders}")
-        if not orders:
-            return units
-        order = orders.pop()
+        Return ``{unit: reason}`` for units whose annotation failed, and
+        ``{node: reason}`` for nodes a multinode annotator left out of its result.
+        A failure keeps the old value of a node in an annotation the run also reads."""
 
-        def layer(unit):
-            layers = {n.layer for n in ((unit,) if isinstance(unit, NodeId) else unit)}
-            if len(layers) > 1:
-                raise ValueError(
-                    f"{order.value} order can't place {unit}, which spans layers {sorted(layers)}"
+        self._check_execution_mode(annotator, "async")
+
+        context = self._prepare_run(
+            annotator, nodes=nodes, input_names=input_names, output_names=output_names
+        )
+        failures = {}
+
+        async def invoke(unit):
+            inputs = self._gather_inputs(context, unit)
+            return await annotator.aannotate(unit, **inputs)
+
+        for group in context.unit_groups:
+            outcomes = await self.runner.arun(group, invoke)
+            self._commit_outcomes(context, outcomes, failures)
+        return failures
+
+    def run(
+        self,
+        annotator: Annotator,
+        *,
+        nodes: Iterable[NodeId] | None = None,
+        input_names: Mapping[str, str] | None = None,
+        output_names: Mapping[str, str] | None = None,
+    ) -> dict[NodeId | tuple[NodeId, ...], str]:
+
+        mode = getattr(annotator, "execution_mode", "sync")
+
+        if mode == "sync":
+            return self._run_sync(
+                annotator,
+                nodes=nodes,
+                input_names=input_names,
+                output_names=output_names,
+            )
+        if mode == "async":
+            return run_async(
+                self.arun(
+                    annotator,
+                    nodes=nodes,
+                    input_names=input_names,
+                    output_names=output_names,
                 )
-            return layers.pop()
-
-        return sorted(units, key=layer, reverse=order is Order.TOP_DOWN)
+            )

@@ -11,6 +11,8 @@ from toponymy.llm_wrappers import (
 
 from toponymy.tests.helpers.dummy_wrappers import (
     DummyAsyncSingleWrapper,
+    DummyAsyncProviderError,
+    DummyAsyncFailFastWrapper,
     SINGLE_RESPONSE,
     SYSTEM_RESPONSE,
 )
@@ -22,6 +24,11 @@ from toponymy.tests.helpers.llm_test_config import (
 
 BATCH_SINGLE_RESPONSE = '{"topic_name": "batch-ok", "topic_specificity": 0.9}'
 BATCH_SYSTEM_RESPONSE = '{"topic_name": "batch-system-ok", "topic_specificity": 0.9}'
+CALL_VALUE = "value"
+
+
+async def call_fn(**kwargs):
+    return CALL_VALUE
 
 
 class MockCallResult:
@@ -32,23 +39,6 @@ class MockCallResult:
     @staticmethod
     def failure(error: Exception | None = None) -> CallResult[str]:
         return CallResult(error=error or RuntimeError("temporary failure"))
-
-
-class DummyAsyncProviderError(Exception):
-    pass
-
-
-class DummyAsyncFailFastWrapper(AsyncLLMWrapper):
-    model = "dummy-model"
-    _supports_debug_callback = True
-
-    FAIL_FAST_EXCEPTIONS = (DummyAsyncProviderError,)
-
-    async def _call_single_llm(self, prompt, temperature, max_tokens):
-        raise DummyAsyncProviderError("bad config")
-
-    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
-        raise DummyAsyncProviderError("bad config")
 
 
 class DummyBatchWrapper(AsyncLLMWrapper):
@@ -430,3 +420,124 @@ async def test_async_atest_llm_connectivity_failure():
     result = await wrapper.atest_llm_connectivity()
 
     assert result == "<error>"
+
+
+class TestAsafeCallLLM:
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_success_emits_callback_and_returns_result(self):
+        events = []
+        wrapper = DummyAsyncSingleWrapper()
+        wrapper.callback = lambda payload: events.append(payload)
+
+        result = await wrapper._asafe_call_llm(
+            call_fn,
+            prompt="test prompt",
+            temperature=0.4,
+            max_tokens=128,
+            routine="my_routine",
+        )
+
+        assert isinstance(result, CallResult)
+        assert result.ok is True
+        assert result.value == CALL_VALUE
+        assert result.error is None
+        assert len(events) == 1
+
+        event = events[0]
+        assert event["wrapper"] == "DummyAsyncSingleWrapper"
+        assert event["model"] == "dummy-model"
+        assert event["event"] == "llm_call_success"
+        assert event["routine"] == "my_routine"
+        assert event["prompt"] == "test prompt"
+        assert event["raw_response"] == CALL_VALUE
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_success_no_callback(self):
+        wrapper = DummyAsyncSingleWrapper()
+        wrapper.callback = None
+
+        result = await wrapper._asafe_call_llm(call_fn)
+        assert result.value == CALL_VALUE
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_error_emits_callback_and_raises(self):
+        events = []
+        wrapper = DummyAsyncSingleWrapper()
+        wrapper.callback = lambda payload: events.append(payload)
+
+        async def fn(**kwargs):
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            await wrapper._asafe_call_llm(fn, prompt="p", routine="r")
+
+        assert len(events) == 1
+        event = events[0]
+        assert event["event"] == "llm_call_error"
+        assert event["routine"] == "r"
+        assert event["prompt"] == "p"
+        assert event["error"]["type"] == "RuntimeError"
+        assert event["error"]["message"] == "boom"
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_invalid_input_raises_without_callback(self):
+        events = []
+        wrapper = DummyAsyncSingleWrapper()
+        wrapper.callback = lambda payload: events.append(payload)
+
+        async def fn(**kwargs):
+            raise InvalidLLMInputError("bad")
+
+        with pytest.raises(InvalidLLMInputError, match="bad"):
+            await wrapper._asafe_call_llm(fn, prompt="p")
+
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_fail_fast_raises_without_callback(self):
+        events = []
+        wrapper = DummyAsyncFailFastWrapper()
+        wrapper.callback = lambda payload: events.append(payload)
+
+        async def fn(**kwargs):
+            raise DummyAsyncProviderError("bad config")
+
+        with pytest.raises(FailFastLLMError, match="dummy-model"):
+            await wrapper._asafe_call_llm(fn, prompt="p")
+
+        assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_callback_exception_is_swallowed(self):
+        wrapper = DummyAsyncSingleWrapper()
+        # callback raises
+        wrapper.callback = lambda payload: 1 / 0
+
+        # Should not propagate callback error
+        result = await wrapper._asafe_call_llm(call_fn, prompt="p")
+        assert result.value == CALL_VALUE
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_routine_is_popped_from_kwargs(self):
+        received_kwargs = {}
+
+        async def fn(**kwargs):
+            received_kwargs.update(kwargs)
+            return "ok"
+
+        wrapper = DummyAsyncSingleWrapper()
+        wrapper.callback = lambda p: None
+
+        await wrapper._asafe_call_llm(fn, routine="r", prompt="p")
+        # routine should not be passed to fn
+        assert "routine" not in received_kwargs
+        assert received_kwargs.get("prompt") == "p"
+
+    @pytest.mark.asyncio
+    async def test_asafe_call_llm_passes_args_and_kwargs_through(self):
+        async def fn(a, b, kw=None, prompt=None, routine=None):
+            return a + b + (kw or 0)
+
+        wrapper = DummyAsyncSingleWrapper()
+        result = await wrapper._asafe_call_llm(fn, 1, 2, kw=3, prompt="p")
+        assert result.value == 6

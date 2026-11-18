@@ -1,5 +1,6 @@
 """Utility functions for internal use."""
 
+import asyncio
 import os
 import warnings
 from typing import Optional, Tuple
@@ -178,3 +179,28 @@ def resolve_api_key(
         )
 
     return None
+
+
+def run_async(coro):
+    """
+    Run an async coroutine in both Jupyter and regular Python environments.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop - regular Python
+        return asyncio.run(coro)
+    else:
+        # Running loop exists - likely Jupyter
+        try:
+            import nest_asyncio
+
+            nest_asyncio.apply()
+            return loop.run_until_complete(coro)
+        except ImportError:
+            # Fallback to thread-based approach
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, coro)
+                return future.result()

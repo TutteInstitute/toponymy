@@ -1,10 +1,15 @@
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy._annotation_bridge import (
     copy_exemplars_to_layers,
-    copy_keyphrases_to_layers,
     has_stock_exemplars,
+    copy_keyphrases_to_layers,
     has_stock_keyphrases,
 )
+from toponymy.annotation import Annotator, AnnotationStore, Executor, AnnotationState
+from toponymy.exemplar_texts import exemplar_annotator
+from toponymy.keyphrases import KeyphraseBuilder
+from toponymy.topic_naming import TopicNameAnnotator, TopicNamerTemplate
+
 from toponymy.annotation import Annotator, AnnotationStore, Executor
 from toponymy.exemplar_texts import exemplar_annotator
 from toponymy.keyphrases import InformationWeightedKeyphraseAnnotator, KeyphraseBuilder

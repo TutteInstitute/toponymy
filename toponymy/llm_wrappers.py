@@ -1,10 +1,7 @@
 import asyncio
 import os
-import string
-from unittest import result
 from warnings import warn, filterwarnings
 import threading
-import tokenizers
 import transformers
 import weakref
 
@@ -216,6 +213,40 @@ class LLMErrorHandlingMixin:
 
         raise e
 
+    async def _asafe_call_llm(self, fn, *args, **kwargs) -> Any:
+        prompt = kwargs.get("prompt")
+        routine = kwargs.pop("routine", None)
+
+        try:
+            value = await fn(*args, **kwargs)
+
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_success",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "raw_response": value,
+                }
+            )
+
+            return CallResult(value=value)
+
+        except Exception as e:
+            if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
+                self._handle_exception(e)
+            self._emit_debug_callback(
+                {
+                    "event": "llm_call_error",
+                    "routine": routine,
+                    "prompt": prompt,
+                    "error": {
+                        "type": type(e).__name__,
+                        "message": str(e),
+                    },
+                }
+            )
+            raise
+
     async def _safe_call_with_retry_result(
         self,
         fn,
@@ -232,21 +263,12 @@ class LLMErrorHandlingMixin:
                 reraise=True,
             ):
                 with attempt:
-                    value = await fn(*args, **kwargs)
-                    # SUCCESS emit
-                    self._emit_debug_callback(
-                        {
-                            "event": "llm_call_success",
-                            "routine": routine,
-                            "prompt": prompt,
-                            "raw_response": value,
-                        }
-                    )
-                    return CallResult(value=value)
-        except Exception as e:
-            if isinstance(e, (InvalidLLMInputError, *self.FAIL_FAST_EXCEPTIONS)):
-                self._handle_exception(e)
+                    return await self._asafe_call_llm(fn, *args, **kwargs)
 
+        except (InvalidLLMInputError, FailFastLLMError):
+            raise
+
+        except Exception as e:
             # For other exceptions, we log a warning and return the error in the CallResult for potential handling by the caller.
             logger.warning(
                 "%s exhausted retries for LLM call (%s): %s",
@@ -257,7 +279,7 @@ class LLMErrorHandlingMixin:
             # ERROR emit
             self._emit_debug_callback(
                 {
-                    "event": "llm_call_error",
+                    "event": "llm_call_retries_exhausted",
                     "routine": routine,
                     "prompt": prompt,
                     "error": {
@@ -376,16 +398,53 @@ def repair_json_string_backslashes(s: str) -> str:
     return temp_s
 
 
-def llm_output_to_result(llm_output: str, regex: str) -> dict:
-    json_portion = re.findall(regex, llm_output, re.DOTALL)[0]
-    try:
-        result = json.loads(json_portion)
-    except json.JSONDecodeError:
-        # Attempt to repair the JSON string
-        repaired_json = repair_json_string_backslashes(json_portion)
-        result = json.loads(repaired_json)
+class LLMOutputParseError(ValueError):
+    """Raised when LLM output can't be parsed into the expected structure."""
 
-    return result
+
+def llm_output_to_result(llm_output: str, regex: str) -> dict:
+    matches = re.findall(regex, llm_output, re.DOTALL)
+    if not matches:
+        raise LLMOutputParseError(
+            f"No match for regex in LLM output "
+            f"({len(llm_output)} chars):\n"
+            f"{llm_output}\n"
+        )
+    json_portion = matches[0]
+
+    try:
+        return json.loads(json_portion)
+    except json.JSONDecodeError:
+        repaired_json = repair_json_string_backslashes(json_portion)
+        try:
+            return json.loads(repaired_json)
+        except json.JSONDecodeError as e:
+            raise LLMOutputParseError(
+                f"Extracted text is not valid JSON, even after backslash repair: {e}\n"
+                f"----- EXTRACTED (repaired) -----\n"
+                f"{repaired_json}\n"
+                f"----- FULL LLM OUTPUT -----\n"
+                f"{llm_output}"
+            ) from e
+
+
+def parse_raw_response(
+    topic_info_raw: str,
+    extract_topic_name_function=lambda x: x["topic_name"],
+    get_topic_name_regex=GET_TOPIC_NAME_REGEX,
+    null_result_value: str = "",
+) -> TopicParseResult:
+    try:
+        topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
+        result = extract_topic_name_function(topic_info)
+        topic_result = result if isinstance(result, tuple) else str(result)
+        return TopicParseResult(
+            topic_payload=topic_result, raw_response=topic_info_raw, error=None
+        )
+    except Exception as e:
+        return TopicParseResult(
+            topic_payload=null_result_value, raw_response=topic_info_raw, error=e
+        )
 
 
 def validate_prompt(prompt: Any, supports_system_prompts: bool) -> Dict[str, Any]:
@@ -599,17 +658,11 @@ class LLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
             max_tokens=max_tokens,
             routine="generate_topic_name",
         )
-        try:
-            topic_info = llm_output_to_result(topic_info_raw, get_topic_name_regex)
-            result = extract_topic_name_function(topic_info)
-            topic_result = result if isinstance(result, tuple) else str(result)
-            return TopicParseResult(
-                topic_payload=topic_result, raw_response=topic_info_raw, error=None
-            )
-        except Exception as e:
-            return TopicParseResult(
-                topic_payload=None, raw_response=topic_info_raw, error=e
-            )
+        return parse_raw_response(
+            topic_info_raw,
+            extract_topic_name_function=extract_topic_name_function,
+            get_topic_name_regex=get_topic_name_regex,
+        )
 
     # @abstractmethod
     @retry(
@@ -1137,6 +1190,39 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
 
         return await self._call_llm_batch(prompts, temperature, max_tokens=max_tokens)
 
+    async def _acall_llm_for_prompt(
+        self,
+        prompt: Dict[str, Any],
+        temperature: float,
+        max_tokens: int,
+        routine: str = "default",
+    ) -> str:
+        """
+        This is the single point at which a prompt's renderings are resolved down to
+        one provider call, so that everything upstream of the wrapper can stay
+        provider agnostic.
+        """
+        supports_system_prompts = self.supports_system_prompts
+        prompt = validate_prompt(prompt, supports_system_prompts)
+
+        if supports_system_prompts:
+            result = await self._asafe_call_llm(
+                self._call_single_llm_with_system,
+                prompt=prompt,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                routine=routine,
+            )
+
+        result = await self._asafe_call_llm(
+            self._call_single_llm,
+            prompt=prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            routine=routine,
+        )
+        return result.value
+
     async def _generate_topic_names_with_raw_response(
         self,
         prompts: List[Dict[str, Any]],
@@ -1189,34 +1275,14 @@ class AsyncLLMWrapper(DebugCallbackMixin, LLMErrorHandlingMixin, ABC):
                 continue
 
             # Attempt to parse the response
-            try:
-                topic_name_info = llm_output_to_result(
-                    response_text, get_topic_name_regex
+            results.append(
+                parse_raw_response(
+                    response_text,
+                    extract_topic_name_function,
+                    get_topic_name_regex,
+                    null_result_value,
                 )
-                extracted_name = extract_topic_name_function(topic_name_info)
-                topic_name = (
-                    extracted_name
-                    if isinstance(extracted_name, tuple)
-                    else str(extracted_name)
-                )
-                results.append(
-                    TopicParseResult(
-                        topic_payload=topic_name,
-                        raw_response=response_text,
-                        error=None,
-                    )
-                )
-            except Exception as e:
-                warn(
-                    f"Failed to generate topic name with {self.__class__.__name__}: {e}"
-                )
-                results.append(
-                    TopicParseResult(
-                        topic_payload=null_result_value,
-                        raw_response=response_text,
-                        error=e,
-                    )
-                )
+            )
 
         return results
 
