@@ -1,5 +1,4 @@
 from __future__ import annotations
-import traceback
 from typing import TYPE_CHECKING
 from abc import abstractmethod
 from types import MappingProxyType
@@ -1356,6 +1355,10 @@ class InputSpec:
     source = None
     from_output = None
 
+    @property
+    def required_order(self):
+        return None
+
     def prepare(self, annotator, annotation, nodes):
         """Execute once per run, before any annotate(). Good for once-per-run precomputations
         by the annotator needs. For example, computing a needed aggregate statistic or
@@ -1412,6 +1415,10 @@ class DescendantsInput(InputSpec):
     depth: Optional[int] = None
     source: Optional[str] = None
     from_output: Optional[str] = None
+
+    @property
+    def required_order(self):
+        return Order.BOTTOM_UP if self.from_output is not None else None
 
     def gather(self, annotation, unit, prepared):
         below = annotation.tree.descendants(unit, depth=self.depth)
@@ -1874,9 +1881,31 @@ class Executor:
         )
 
         unit_groups = [list(group) for group in strategy.group_units(units)]
+        written_annotations = set(writes_to.values())
+
+        for name, spec in specs.items():
+            if reads_from[name] not in written_annotations:
+                continue
+
+            required_order = spec.required_order
+            strategy_order = getattr(strategy, "order", None)
+
+            if (
+                required_order is not None
+                and strategy_order is not None
+                and strategy_order is not required_order
+            ):
+                warn(
+                    f"input {name!r} reads from an annotation produced in this run "
+                    f"and requires {required_order.value} execution, but the "
+                    f"strategy specifies {strategy_order.value}. "
+                    "Input values may be unavailable."
+                )
+
         # A write to an annotation this run also reads keeps its old value on failure.
         # Replace with more explicit instructions for handling in-place updates later
         in_place = set(writes_to.values()) & {reads_from[n] for n in specs}
+
         return RunContext(
             specs=specs,
             output=output,
@@ -1904,13 +1933,14 @@ class Executor:
         return kwargs
 
     def _record_failure(self, context, unit, error, failures):
-        """XXX for debugging. Remove later or use it with verbose.
-        traceback.print_exception(
-            type(error),
-            error,
-            error.__traceback__,
-        )
-        """
+        ## XXX for debugging. Remove later or use it with verbose.
+        # import traceback
+        # traceback.print_exception(
+        #     type(error),
+        #     error,
+        #     error.__traceback__,
+        # )
+
         for store_name in context.writes_to.values():
             context.output.fail(
                 self.store[store_name],
