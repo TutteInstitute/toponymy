@@ -1,6 +1,10 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+from toponymy._annotation_bridge import copy_layers_to_store
+from toponymy.annotation import Annotation, AnnotationStore, AnnotationTree
 from toponymy.cluster_layer import ClusterLayerText
 from toponymy.exemplar_texts import DiverseExemplarAnnotator, diverse_exemplars
 from toponymy.keyphrases import KeyphraseBuilder
@@ -28,6 +32,20 @@ def make_model(llm, embedder, fitted_clusterer):
         )
 
     return make
+
+
+def test_copy_layers_to_store_fills_only_nodes_no_annotator_computed():
+    tree = AnnotationTree({(1, 0): [(0, 0), (0, 1)]})
+    store = AnnotationStore(tree)
+    keyphrases = Annotation("keyphrases", tree)
+    keyphrases[(0, 0)] = ["annotated"]
+    store.add(keyphrases)
+    layers = [SimpleNamespace(keyphrases=[["legacy a"], ["legacy b"]])]
+
+    copy_layers_to_store(store, layers, "keyphrases", "keyphrases")
+
+    assert store.keyphrases[(0, 0)] == ["annotated"]
+    assert store.keyphrases[(0, 1)] == ["legacy b"]
 
 
 @pytest.mark.parametrize(
@@ -82,13 +100,18 @@ def test_fit_leaves_custom_layer_classes_alone(
     layer = fitted_clusterer.cluster_layers_[-1]
     layer.__class__ = CustomLayer
     try:
-        make_model().fit(
+        model = make_model().fit(
             all_sentences, object_vectors, clusterable_vectors, exemplar_method="random"
         )
     finally:
         layer.__class__ = ClusterLayerText
 
     assert layer.custom_method == "random"
+    nodes = model.store_.tree.layer(len(model.cluster_layers_) - 1)
+    assert [model.store_.exemplars[node] for node in nodes] == layer.exemplars
+    assert [
+        model.store_.exemplar_original_indices[node] for node in nodes
+    ] == layer.exemplar_indices
 
 
 def test_fit_keyphrases_match_the_layer_method(
@@ -118,14 +141,16 @@ def test_fit_annotates_information_weighted_keyphrases(
         assert [model.store_.keyphrases[node] for node in nodes] == layer.keyphrases
 
 
-def test_fit_other_keyphrase_methods_are_not_annotated(
+def test_fit_copies_other_keyphrase_methods_into_the_store(
     make_model, all_sentences, object_vectors, clusterable_vectors
 ):
     model = make_model().fit(
         all_sentences, object_vectors, clusterable_vectors, keyphrase_method="central"
     )
 
-    assert "keyphrases" not in model.store_
+    for layer_id, layer in enumerate(model.cluster_layers_):
+        nodes = model.store_.tree.layer(layer_id)
+        assert [model.store_.keyphrases[node] for node in nodes] == layer.keyphrases
 
 
 def test_fit_leaves_custom_keyphrase_layers_alone(
@@ -139,11 +164,13 @@ def test_fit_leaves_custom_keyphrase_layers_alone(
     layer = fitted_clusterer.cluster_layers_[-1]
     layer.__class__ = CustomLayer
     try:
-        make_model().fit(all_sentences, object_vectors, clusterable_vectors)
+        model = make_model().fit(all_sentences, object_vectors, clusterable_vectors)
     finally:
         layer.__class__ = ClusterLayerText
 
     assert layer.custom_keyphrases
+    nodes = model.store_.tree.layer(len(model.cluster_layers_) - 1)
+    assert [model.store_.keyphrases[node] for node in nodes] == layer.keyphrases
 
 
 def test_fit_runs_the_given_annotators(

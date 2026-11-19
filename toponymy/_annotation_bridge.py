@@ -1,9 +1,22 @@
-"""Temporary bridge that copies annotations from the store back onto the legacy layers.
+"""Temporary bridge that copies annotations between the store and the legacy layers.
 
 Remove once the prompt templates read from the annotation store.
 """
 
+from toponymy.annotation import Annotation, AnnotationState
 from toponymy.cluster_layer import ClusterLayerText
+
+
+def copy_layers_to_store(store, layers, name, attribute) -> None:
+    """Copies each layer's ``attribute`` into ``store[name]`` for the nodes no annotator computed."""
+    if name not in store:
+        store.add(Annotation(name, store.tree))
+    annotation = store[name]
+    for layer_id, layer in enumerate(layers):
+        nodes = store.tree.layer(layer_id)
+        for node, value in zip(nodes, getattr(layer, attribute), strict=True):
+            if annotation.states[node] is not AnnotationState.COMPUTED:
+                annotation[node] = value
 
 
 def has_stock_exemplars(layer) -> bool:
