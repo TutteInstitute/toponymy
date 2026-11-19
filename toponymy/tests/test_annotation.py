@@ -18,6 +18,7 @@ from toponymy.annotation import (
     DescendantsInput,
     Executor,
     IndexedAnnotation,
+    InputSpec,
     InvalidAnnotationTree,
     LayerExecutionStrategy,
     LayerInput,
@@ -37,23 +38,6 @@ from toponymy.exemplar_texts import (
     RandomExemplarAnnotator,
     SubmodularExemplarAnnotator,
 )
-
-
-@pytest.fixture
-def deep_cluster_tree():
-    # Root is (4, 0)
-    return {
-        (4, 0): [(3, 0), (3, 1)],
-        (3, 0): [(2, 0), (2, 1)],
-        (3, 1): [(2, 2)],
-        (2, 0): [(1, 0), (1, 1)],
-        (2, 1): [(1, 2)],
-        (2, 2): [(1, 3), (1, 4)],
-        (1, 0): [(0, 0), (0, 1)],
-        (1, 1): [(0, 2)],
-        (1, 3): [(0, 3), (0, 4)],
-        (1, 4): [(0, 5)],
-    }
 
 
 @pytest.fixture
@@ -622,6 +606,25 @@ def test_executor_explicit_node_and_descendants_input_contract(example_executor)
     # Layer-1 node (1,2) has children (0,5), (0,6), (0,7)
     assert summary[NodeId(1, 2)]["topic"] == "T1-2"
     assert set(summary[NodeId(1, 2)]["desc"]) == {"T0-5", "T0-6", "T0-7"}
+
+
+@pytest.mark.parametrize("output", ["result", ""])
+def test_descendants_input_requires_bottom_up_when_reading_from_output(output):
+    spec = DescendantsInput(from_output=output)
+
+    assert spec.required_order is Order.BOTTOM_UP
+
+
+def test_descendants_input_has_no_order_requirement_for_store_input():
+    spec = DescendantsInput()
+
+    assert spec.required_order is None
+
+
+def test_default_input_specs_have_no_order_requirement():
+    spec = InputSpec()
+
+    assert spec.required_order is None
 
 
 def test_executor_in_place_failure_preserves_only_existing_values(valid_cluster_tree):

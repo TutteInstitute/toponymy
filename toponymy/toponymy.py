@@ -1,16 +1,16 @@
-from toponymy.clustering import ToponymyClusterer, Clusterer
-from toponymy._annotation_bridge import (
-    copy_exemplars_to_layers,
-    has_stock_exemplars,
-    copy_keyphrases_to_layers,
-    has_stock_keyphrases,
-)
-from toponymy.annotation import Annotator, AnnotationStore, Executor, AnnotationState
-from toponymy.exemplar_texts import exemplar_annotator
-from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.topic_naming import TopicNameAnnotator, TopicNamerTemplate
+import copy
+from types import SimpleNamespace
+from typing import List, Any, Optional, Type, Dict, Tuple
 
-from toponymy.annotation import Annotator, AnnotationStore, Executor
+import numpy as np
+from sklearn.base import BaseEstimator
+from sklearn.utils.validation import check_is_fitted
+from tqdm.auto import tqdm
+
+
+from toponymy.annotation import Annotator, AnnotationStore, Executor, AnnotationState
+from toponymy.clustering import ToponymyClusterer, Clusterer
+from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.exemplar_texts import exemplar_annotator
 from toponymy.keyphrases import InformationWeightedKeyphraseAnnotator, KeyphraseBuilder
 from toponymy.cluster_layer import (
@@ -18,21 +18,17 @@ from toponymy.cluster_layer import (
     ClusterLayerSummaryText,
     ClusterLayerText,
 )
-from toponymy.topic_tree import TopicTree
 from toponymy.llm_wrappers import LLMWrapper
-from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_PROMPT_TEMPLATES
+from toponymy.topic_naming import TopicNameAnnotator, TopicNamerTemplate
+from toponymy.topic_tree import TopicTree
+from toponymy._annotation_bridge import (
+    copy_exemplars_to_layers,
+    has_stock_exemplars,
+    copy_keyphrases_to_layers,
+    has_stock_keyphrases,
+)
 from toponymy._utils import handle_verbose_params
-
-from sklearn.base import BaseEstimator
-from sklearn.utils.validation import check_is_fitted
-import copy
-from types import SimpleNamespace
-import numpy as np
-
-from tqdm.auto import tqdm
-
-from typing import List, Any, Optional, Type, Dict, Tuple
 
 
 def _exemplar_annotator_of(annotators):
