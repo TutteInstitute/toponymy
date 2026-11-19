@@ -47,3 +47,16 @@ def copy_keyphrases_to_layers(store, layers) -> None:
             layer.keyphrases = [
                 store.keyphrases[node] for node in store.tree.layer(layer_id)
             ]
+
+
+def copy_topics_to_layers(store, layers) -> None:
+    """Copies the store's topics onto the layers whose topics were annotated."""
+    for layer_id, layer in enumerate(layers):
+        layer.topic_names = [
+            (
+                store.draft_topics[node]
+                if store.draft_topics.states[node] == AnnotationState.COMPUTED
+                else ""
+            )
+            for node in store.tree.layer(layer_id)
+        ]
