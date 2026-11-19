@@ -1,3 +1,5 @@
+import itertools
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -6,9 +8,32 @@ import pytest
 from toponymy._annotation_bridge import copy_layers_to_store
 from toponymy.annotation import Annotation, AnnotationStore, AnnotationTree
 from toponymy.cluster_layer import ClusterLayerText
+from toponymy.clustering import build_cluster_tree, centroids_from_labels
 from toponymy.exemplar_texts import DiverseExemplarAnnotator, diverse_exemplars
 from toponymy.keyphrases import KeyphraseBuilder
+from toponymy.tests.helpers.dummy_wrappers import DummySingleWrapper
 from toponymy.toponymy import Toponymy, _with_null_topic
+
+
+class CountingNamer(DummySingleWrapper):
+    """Names each topic "Topic <n>" in call order, except that the calls in ``fail_calls`` get no name."""
+
+    def __init__(self, fail_calls=()):
+        self.calls = itertools.count()
+        self.fail_calls = set(fail_calls)
+        self.prompts = []
+
+    def _respond(self, prompt):
+        self.prompts.append(prompt)
+        call = next(self.calls)
+        name = "" if call in self.fail_calls else f"Topic {call}"
+        return json.dumps({"topic_name": name, "topic_specificity": 0.9})
+
+    def _call_llm(self, prompt, temperature, max_tokens):
+        return self._respond(prompt)
+
+    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
+        return self._respond(prompt)
 
 
 @pytest.fixture(scope="module")
@@ -29,6 +54,20 @@ def make_model(llm, embedder, fitted_clusterer):
             keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
             verbose=False,
             **kwargs,
+        )
+
+    return make
+
+
+@pytest.fixture
+def make_counting_model(embedder, fitted_clusterer):
+    def make(namer):
+        return Toponymy(
+            namer,
+            embedder,
+            fitted_clusterer,
+            keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
+            verbose=False,
         )
 
     return make
@@ -171,6 +210,95 @@ def test_fit_leaves_custom_keyphrase_layers_alone(
     assert layer.custom_keyphrases
     nodes = model.store_.tree.layer(len(model.cluster_layers_) - 1)
     assert [model.store_.keyphrases[node] for node in nodes] == layer.keyphrases
+
+
+@pytest.mark.parametrize(
+    "method", ["central", "facility_location", "saturated_coverage"]
+)
+def test_fit_subtopics_match_the_layer_method(
+    make_counting_model,
+    embedder,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+    method,
+):
+    model = make_counting_model(CountingNamer()).fit(
+        all_sentences, object_vectors, clusterable_vectors, subtopic_method=method
+    )
+
+    names = model.topic_names_[0]
+    name_vectors = embedder.encode(names)
+    for layer_id, layer in enumerate(model.cluster_layers_[1:], 1):
+        fitted = layer.subtopics
+        expected = ClusterLayerText.make_subtopics(
+            layer,
+            names,
+            model.cluster_layers_[0].cluster_labels,
+            name_vectors,
+            method=method,
+        )
+        assert fitted == expected
+        nodes = model.store_.tree.layer(layer_id)
+        assert [model.store_.subtopics[node] for node in nodes] == expected
+
+
+def test_fit_prompts_above_layer_1_list_the_subtopics(
+    embedder, fitted_clusterer, all_sentences, object_vectors, clusterable_vectors
+):
+    fine = fitted_clusterer.cluster_layers_[0].cluster_labels
+    labels = [
+        fine,
+        np.where(fine >= 0, fine // 2, -1),
+        np.where(fine >= 0, fine // 4, -1),
+    ]
+    prefit = SimpleNamespace(
+        cluster_layers_=[
+            ClusterLayerText(
+                layer_labels, centroids_from_labels(layer_labels, object_vectors), i
+            )
+            for i, layer_labels in enumerate(labels)
+        ],
+        cluster_tree_=build_cluster_tree(labels),
+    )
+    namer = CountingNamer()
+    Toponymy(
+        namer,
+        embedder,
+        prefit,
+        keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
+        verbose=False,
+    ).fit(all_sentences, object_vectors, clusterable_vectors)
+
+    assert any("miscellaneous detailed subtopics" in str(p) for p in namer.prompts)
+
+
+def test_fit_leaves_unnamed_layer_0_topics_out_of_the_subtopics(
+    make_counting_model, all_sentences, object_vectors, clusterable_vectors
+):
+    model = make_counting_model(CountingNamer(fail_calls={0, 1})).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
+
+    assert model.topic_names_[0].count("") == 2
+    tree = model.store_.tree
+    for layer_id in range(1, len(model.cluster_layers_)):
+        for node in tree.layer(layer_id):
+            assert "" not in model.store_.subtopics[node]
+
+
+def test_fit_rejects_an_unknown_subtopic_method(
+    make_counting_model, all_sentences, object_vectors, clusterable_vectors
+):
+    namer = CountingNamer()
+    with pytest.raises(ValueError, match="Unknown subtopic_method"):
+        make_counting_model(namer).fit(
+            all_sentences,
+            object_vectors,
+            clusterable_vectors,
+            subtopic_method="nonsense",
+        )
+    assert not namer.prompts
 
 
 def test_fit_runs_the_given_annotators(

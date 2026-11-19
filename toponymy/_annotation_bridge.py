@@ -49,6 +49,12 @@ def copy_keyphrases_to_layers(store, layers) -> None:
             ]
 
 
+def copy_subtopics_to_layers(store, layers) -> None:
+    """Copies the store's subtopics onto the layers above layer 0."""
+    for layer_id, layer in enumerate(layers[1:], 1):
+        layer.subtopics = [store.subtopics[node] for node in store.tree.layer(layer_id)]
+
+
 def copy_topics_to_layers(store, layers) -> None:
     """Copies the store's topics onto the layers whose topics were annotated."""
     for layer_id, layer in enumerate(layers):
