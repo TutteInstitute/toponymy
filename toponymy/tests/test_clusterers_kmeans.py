@@ -20,9 +20,10 @@ from toponymy.clusterers import KMeansClusterer, validate_cluster_tree
 def kmeans_double(monkeypatch):
     """Install a stand-in for ``KMeans`` and return its class.
 
-    A fit labels observation ``i`` with ``i % n_clusters``, unless ``labels``
-    maps the cluster count to other labels. The class lists the instances
-    created; set ``fail_at`` to the index of a fit to make that fit raise.
+    A fit labels row ``i`` with ``i % n_clusters``, unless ``labels`` maps the
+    cluster count to other labels. The class lists the instances created; set
+    ``fail_at`` to the index of a fit to make that fit raise. Each instance
+    keeps the ``vectors`` and ``sample_weight`` it was fitted with.
     """
 
     class KMeansDouble:
@@ -34,8 +35,9 @@ def kmeans_double(monkeypatch):
             self.options = options
             type(self).instances.append(self)
 
-        def fit_predict(self, vectors):
+        def fit_predict(self, vectors, sample_weight=None):
             self.vectors = vectors
+            self.sample_weight = sample_weight
             if self.instances.index(self) == self.fail_at:
                 raise RuntimeError("KMeans failed")
             n_clusters = self.options["n_clusters"]
@@ -77,7 +79,14 @@ def test_each_layer_asks_for_a_quarter_of_the_clusters_below_it(
     assert [kmeans.options for kmeans in kmeans_double.instances] == [
         {"n_clusters": n, "random_state": 7, "verbose": True} for n in n_clusters
     ]
-    assert all(kmeans.vectors is vectors for kmeans in kmeans_double.instances)
+    # Only the finest layer is fitted on the vectors. Each coarser one is fitted
+    # on one centroid per cluster below it, weighted by the cluster sizes.
+    first, *coarser = kmeans_double.instances
+    assert first.vectors is vectors
+    assert first.sample_weight is None
+    for kmeans, n_centroids in zip(coarser, n_clusters):
+        assert len(kmeans.vectors) == n_centroids
+        assert kmeans.sample_weight.sum() == n_observations
 
 
 def test_no_observations_give_no_layers(kmeans_double):
@@ -87,22 +96,41 @@ def test_no_observations_give_no_layers(kmeans_double):
     assert not kmeans_double.instances
 
 
-def test_crossing_resolutions_are_joined_by_containment(kmeans_double):
+def test_coarse_layers_are_fitted_on_weighted_centroids(kmeans_double):
+    vectors = np.array([[0.0], [3.0], [6.0], [10.0], [20.0], [24.0], [100.0], [104.0]])
+    # The stand-in makes four clusters although eight were asked for, as KMeans
+    # may when points repeat. The second fit then gets four centroids.
     kmeans_double.labels = {
-        8: np.array([0, 0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7]),
-        2: np.array([0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
+        8: np.array([0, 0, 0, 1, 2, 2, 3, 3]),
+        2: np.array([0, 1, 1, 0]),
     }
     clusterer = KMeansClusterer(min_clusters=2, base_n_clusters=8)
-    clusterer.fit(np.ones((12, 2)))
+    clusterer.fit(vectors)
 
-    # Cluster 0 of the finest layer straddles both coarse clusters, so it
-    # attaches to the root rather than to the first cluster it overlaps.
-    assert clusterer.cluster_tree_ == {
-        (1, 0): [(0, 1), (0, 2)],
-        (1, 1): [(0, 3), (0, 4), (0, 5), (0, 6), (0, 7)],
-        (2, 0): [(0, 0), (1, 0), (1, 1)],
-    }
-    validate_cluster_tree(clusterer.cluster_tree_, clusterer.cluster_layers_)
+    _, coarse = kmeans_double.instances
+    np.testing.assert_allclose(coarse.vectors, [[3.0], [10.0], [22.0], [102.0]])
+    np.testing.assert_array_equal(coarse.sample_weight, [3, 1, 2, 2])
+    assert coarse.options["n_clusters"] == 2
+    # Every observation takes the label of its cluster's centroid.
+    np.testing.assert_array_equal(
+        clusterer.cluster_layers_[1].labels, [0, 0, 0, 1, 1, 1, 0, 0]
+    )
+
+
+def test_a_layer_never_asks_for_more_clusters_than_centroids(kmeans_double):
+    kmeans_double.labels = {8: np.array([0, 0, 0, 0, 1, 1, 1, 1])}
+    clusterer = KMeansClusterer(min_clusters=4, base_n_clusters=8)
+    clusterer.fit(np.arange(8.0).reshape(-1, 1))
+
+    # Two clusters came back, so a coarser fit asks for no more than two.
+    assert [layer.labels.max() + 1 for layer in clusterer] == [2]
+    clusterer.set_params(min_clusters=1, base_n_clusters=16).fit(np.ones((16, 1)))
+    assert [kmeans.options["n_clusters"] for kmeans in kmeans_double.instances[1:]] == [
+        16,
+        4,
+        1,
+    ]
+    assert len(kmeans_double.instances[-1].vectors) == 4
 
 
 def test_refitting_replaces_every_layer(kmeans_double):
@@ -242,3 +270,74 @@ def test_small_inputs_and_an_invalid_random_state():
     with pytest.raises(ValueError, match="random_state"):
         clusterer.set_params(random_state="seed").fit(vectors)
     assert clusterer.cluster_layers_ is before
+
+
+def _parents(tree):
+    return {child: parent for parent, children in tree.items() for child in children}
+
+
+def _assert_nested(clusterer):
+    layers = list(clusterer)
+    for fine, coarse in zip(layers, layers[1:]):
+        for cluster in fine:
+            members = fine.labels == cluster.label
+            assert np.unique(coarse.labels[members]).size == 1
+
+
+def test_layers_are_nested_and_the_tree_links_neighbouring_layers():
+    vectors, _ = _blobs()
+    clusterer = KMeansClusterer(min_clusters=4, base_n_clusters=64, random_state=0)
+    clusterer.fit(vectors)
+
+    assert [len(layer) for layer in clusterer] == [64, 16, 4]
+    _assert_nested(clusterer)
+    parents = _parents(clusterer.cluster_tree_)
+    # Every cluster below the top layer has a parent in the very next layer,
+    # never one further up or the root. The top layer hangs off the root.
+    root = (3, 0)
+    for layer_index, layer in enumerate(clusterer):
+        for cluster in layer:
+            parent = parents[(layer_index, cluster.label)]
+            assert parent[0] == layer_index + 1
+            assert (parent == root) == (layer_index == 2)
+    validate_cluster_tree(clusterer.cluster_tree_, clusterer.cluster_layers_)
+
+
+def test_nested_layers_do_not_depend_on_the_blobs():
+    # Uniform noise has no cluster structure, which is where independent fits
+    # overlapped most.
+    vectors = np.random.default_rng(1).normal(size=(500, 5))
+    clusterer = KMeansClusterer(min_clusters=2, base_n_clusters=100, random_state=0)
+    clusterer.fit(vectors)
+
+    assert [len(layer) for layer in clusterer] == [100, 25, 6, 1][
+        : len(clusterer.cluster_layers_)
+    ]
+    _assert_nested(clusterer)
+    assert all(
+        parent[0] == child[0] + 1
+        for child, parent in _parents(clusterer.cluster_tree_).items()
+    )
+
+
+def test_the_same_random_state_gives_the_same_tree():
+    vectors, _ = _blobs()
+    first = KMeansClusterer(min_clusters=4, base_n_clusters=64, random_state=3)
+    second = clone(first)
+    assert first.fit(vectors).cluster_tree_ == second.fit(vectors).cluster_tree_
+
+
+@pytest.mark.filterwarnings("ignore::sklearn.exceptions.ConvergenceWarning")
+@pytest.mark.parametrize("n_observations", [1, 3, 5, 12])
+def test_small_and_repeated_inputs_give_valid_nested_layers(n_observations):
+    # Fewer observations than base_n_clusters, and repeated points that leave
+    # k-means with fewer distinct clusters than it was asked for.
+    vectors = np.tile([[0.0, 1.0], [5.0, 5.0], [9.0, 0.0]], (4, 1))[:n_observations]
+    clusterer = KMeansClusterer(min_clusters=1, base_n_clusters=16, random_state=0)
+    clusterer.fit(vectors)
+
+    assert len(clusterer.cluster_layers_[0]) <= n_observations
+    sizes = [len(layer) for layer in clusterer]
+    assert sizes == sorted(sizes, reverse=True)
+    _assert_nested(clusterer)
+    validate_cluster_tree(clusterer.cluster_tree_, clusterer.cluster_layers_)

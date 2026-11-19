@@ -469,20 +469,41 @@ class Clusterer(ABC, BaseEstimator):
         self.cluster_tree_ = tree
 
 
+def _weighted_group_means(
+    points: NDArray, weights: NDArray | None, labels: NDArray
+) -> tuple[NDArray, NDArray, NDArray]:
+    """Return the weighted mean and total weight of the points of each label.
+
+    ``weights`` of None means a weight of 1 per point. The groups are in
+    ascending label order. The third result gives the group of each point.
+    """
+    ids, groups = np.unique(labels, return_inverse=True)
+    if weights is None:
+        weights = np.ones(len(points))
+    totals = np.bincount(groups, weights=weights, minlength=len(ids))
+    membership = sparse.csr_array(
+        (weights, (groups, np.arange(len(points)))), shape=(len(ids), len(points))
+    )
+    return (membership @ points) / totals[:, None], totals, groups
+
+
 class KMeansClusterer(Clusterer):
     """Cluster vectors with k-means at several resolutions.
 
-    Each layer is a separate :class:`sklearn.cluster.KMeans` fit. The finest
-    asks for ``base_n_clusters`` clusters, or one per observation if there are
-    fewer observations. Each further layer asks for a quarter as many, rounded
-    down, while that is at least ``min_clusters``: ``base_n_clusters=64`` and
-    ``min_clusters=4`` give layers of 64, 16 and 4 clusters.
+    The finest layer is a :class:`sklearn.cluster.KMeans` fit on the vectors.
+    It asks for ``base_n_clusters`` clusters, or one per observation if there
+    are fewer observations. Each coarser layer is a fit on the centroids of the
+    layer below it, weighted by the sizes of its clusters, and asks for a
+    quarter as many clusters, rounded down, while that is at least
+    ``min_clusters`` (and never more than there are centroids):
+    ``base_n_clusters=64`` and ``min_clusters=4`` give layers of 64, 16 and 4
+    clusters. Every observation takes the label of its cluster's centroid, so
+    the layers nest: each cluster lies inside exactly one cluster of the next
+    layer, and ``cluster_tree_`` links them directly.
 
     The layers keep the labels KMeans returned as cluster IDs. k-means assigns
-    every observation, so there is no noise. The fits are independent and their
-    clusters need not nest, so ``cluster_tree_`` attaches each cluster to the
-    nearest cluster above that contains all of it, as built by
-    :func:`build_cluster_tree`.
+    every observation, so there is no noise. ``cluster_tree_`` is built from the
+    labels by :func:`build_cluster_tree`.
 
     Parameters
     ----------
@@ -544,14 +565,22 @@ class KMeansClusterer(Clusterer):
             resolutions.append(min(self.base_n_clusters, vectors.shape[0]))
             while resolutions[-1] // 4 >= self.min_clusters:
                 resolutions.append(resolutions[-1] // 4)
-        labels = [
-            KMeans(
-                n_clusters=n_clusters,
+        labels = []
+        # Each layer clusters ``points``, with a weight per row. The first
+        # layer clusters the observations; later ones the centroids of the
+        # layer below. ``rows`` gives the row of ``points`` of each observation.
+        points, weights = vectors, None
+        rows = np.arange(vectors.shape[0])
+        for index, n_clusters in enumerate(resolutions):
+            fitted = KMeans(
+                n_clusters=min(n_clusters, len(points)),
                 random_state=self.random_state,
                 verbose=self.verbose,
-            ).fit_predict(vectors)
-            for n_clusters in resolutions
-        ]
+            ).fit_predict(points, sample_weight=weights)
+            labels.append(fitted[rows])
+            if index + 1 < len(resolutions):
+                points, weights, groups = _weighted_group_means(points, weights, fitted)
+                rows = groups[rows]
         self._set_labels(labels)
         return self
 
