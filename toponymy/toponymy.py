@@ -26,6 +26,7 @@ from toponymy._annotation_bridge import (
     copy_exemplars_to_layers,
     has_stock_exemplars,
     copy_keyphrases_to_layers,
+    copy_layers_to_store,
     has_stock_keyphrases,
 )
 from toponymy._utils import handle_verbose_params
@@ -413,6 +414,15 @@ class Toponymy:
             )
         _run_annotators(executor, runs)
         copy_exemplars_to_layers(self.store_, self.cluster_layers_)
+        copy_layers_to_store(
+            self.store_, self.cluster_layers_, "exemplars", "exemplars"
+        )
+        copy_layers_to_store(
+            self.store_,
+            self.cluster_layers_,
+            "exemplar_original_indices",
+            "exemplar_indices",
+        )
 
         # Build keyphrase matrix
         if non_text_objects:
@@ -453,6 +463,18 @@ class Toponymy:
         _run_annotators(executor, keyphrase_runs)
         if keyphrase_runs:
             copy_keyphrases_to_layers(self.store_, self.cluster_layers_)
+        for layer in self.cluster_layers_:
+            if not keyphrase_runs or not has_stock_keyphrases(layer):
+                layer.make_keyphrases(
+                    self.keyphrase_list_,
+                    self.object_x_keyphrase_matrix_,
+                    self.keyphrase_vectors_,
+                    self.embedding_model,
+                    method=keyphrase_method,
+                )
+        copy_layers_to_store(
+            self.store_, self.cluster_layers_, "keyphrases", "keyphrases"
+        )
 
         template = TopicNamerTemplate(
             object_description=self.object_description,
@@ -477,14 +499,6 @@ class Toponymy:
             total=len(self.cluster_layers_),
             unit="layer",
         ):
-            if not keyphrase_runs or not has_stock_keyphrases(layer):
-                layer.make_keyphrases(
-                    self.keyphrase_list_,
-                    self.object_x_keyphrase_matrix_,
-                    self.keyphrase_vectors_,
-                    self.embedding_model,
-                    method=keyphrase_method,
-                )
             # by layer loop, no keyphrases yet
             layer_nodes = self.store_.tree.layer(i)
 
@@ -503,7 +517,7 @@ class Toponymy:
             ]
             self.topic_names_[i] = layer.topic_names
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
-        """
+            """
             if i > 0:
                 if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
                     self.cluster_layers_[0].embed_topic_names(self.embedding_model)
