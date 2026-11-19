@@ -28,6 +28,7 @@ from toponymy._annotation_bridge import (
     copy_keyphrases_to_layers,
     copy_layers_to_store,
     has_stock_keyphrases,
+    copy_topics_to_layers,
 )
 from toponymy._utils import handle_verbose_params
 
@@ -476,84 +477,31 @@ class Toponymy:
             self.store_, self.cluster_layers_, "keyphrases", "keyphrases"
         )
 
-        # Iterate through the layers and build the topic names
-        for i, layer in tqdm(
-            enumerate(self.cluster_layers_),
-            desc=f"Building topic names by layer",
-            disable=not self.show_progress_bars,
-            total=len(self.cluster_layers_),
-            unit="layer",
-        ):
-            if i > 0:
-                if not hasattr(self.cluster_layers_[0], "topic_name_embeddings"):
-                    self.cluster_layers_[0].embed_topic_names(self.embedding_model)
+        template = TopicNamerTemplate(
+            object_description=self.object_description,
+            corpus_description=self.corpus_description,
+            tree=self.store_.tree,
+            exemplar_start_delimiter=self.exemplar_delimiters[0],
+            exemplar_end_delimiter=self.exemplar_delimiters[1],
+            prompt_template=self.prompt_template,
+            lowest_detail_level=self.lowest_detail_level,
+            highest_detail_level=self.highest_detail_level,
+        )
+        topic_annotator = TopicNameAnnotator(
+            llm_namer=self.llm_wrapper,
+            topic_name_template=template,
+        )
 
-            if _summarize_topics:
-                if i > 0:
-                    layer.make_subtopics(
-                        self.topic_names_[0],
-                        self.cluster_layers_[0].cluster_labels,
-                        self.cluster_layers_[0].topic_name_embeddings,
-                        self.embedding_model,
-                        method=subtopic_method,
-                        topic_summaries=self.topic_summaries_[0],
-                        topic_explanations=self.topic_explanations_[0],
-                    )
-                layer.make_prompts(
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                    None,
-                    None,
-                    self.topic_summaries_,
-                    self.topic_explanations_,
-                )
-                (
-                    self.topic_names_[i],
-                    self.topic_summaries_[i],
-                    self.topic_explanations_[i],
-                ) = layer.name_topics(
-                    self.llm_wrapper,
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                    self.embedding_model,
-                    self.topic_summaries_,
-                    self.topic_explanations_,
-                )
-            else:
-                if i > 0:
-                    layer.make_subtopics(
-                        self.topic_names_[0],
-                        self.cluster_layers_[0].cluster_labels,
-                        self.cluster_layers_[0].topic_name_embeddings,
-                        self.embedding_model,
-                        method=subtopic_method,
-                    )
-                layer.make_prompts(
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                )
-                self.topic_names_[i] = layer.name_topics(
-                    self.llm_wrapper,
-                    detail_levels[i],
-                    self.topic_names_,
-                    self.object_description,
-                    self.corpus_description,
-                    self.cluster_tree_,
-                    self.embedding_model,
-                )
+        failures = executor.run(topic_annotator)
+
+        copy_topics_to_layers(self.store_, self.cluster_layers_)
+
+        for i, layer in enumerate(self.cluster_layers_):
+            self.topic_names_[i] = layer.topic_names
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
 
-        # Compute and cache topic sizes for efficient access and serialization
-        self.topic_sizes_ = self._compute_topic_sizes()
+            # Compute and cache topic sizes for efficient access and serialization
+            self.topic_sizes_ = self._compute_topic_sizes()
 
         return self
 
