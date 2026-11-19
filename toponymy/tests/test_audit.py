@@ -10,7 +10,6 @@ from toponymy.audit import (
     create_comparison_df,
     create_layer_summary_df,
     create_keyphrase_analysis_df,
-    create_prompt_analysis_df,
     get_cluster_details,
     get_cluster_documents,
     export_audit_excel,
@@ -126,17 +125,6 @@ class TestAuditFunctions:
 
         # Each cluster has 5 keyphrases, 10 clusters
         assert len(keyphrase_df) == 50
-
-    def test_create_prompt_analysis_df(self):
-        """Test creating prompt analysis DataFrame."""
-        prompt_df = create_prompt_analysis_df(self.mock_model)
-
-        assert isinstance(prompt_df, pd.DataFrame)
-        assert "layer" in prompt_df.columns
-        assert "cluster_id" in prompt_df.columns
-        assert "prompt_length" in prompt_df.columns
-        assert "topic_name" in prompt_df.columns
-        assert "topic_name_length" in prompt_df.columns
 
     def test_get_cluster_details(self):
         """Test getting detailed cluster information."""

@@ -240,48 +240,6 @@ def create_keyphrase_analysis_df(
     return pd.DataFrame(keyphrase_data)
 
 
-def create_prompt_analysis_df(toponymy_instance) -> pd.DataFrame:
-    """
-    Analyze prompt characteristics across all layers and clusters.
-
-    Args:
-        toponymy_instance: Fitted Toponymy model
-
-    Returns:
-        pd.DataFrame with prompt statistics
-    """
-    prompt_data = []
-
-    for layer_idx, layer in enumerate(toponymy_instance.cluster_layers_):
-        if hasattr(layer, "prompts"):
-            for cluster_idx, prompt in enumerate(layer.prompts):
-                if cluster_idx < len(layer.topic_names):
-                    prompt_str = str(prompt)
-
-                    # Count keyphrases that appear in prompt
-                    keyphrases_in_prompt = 0
-                    if cluster_idx < len(layer.keyphrases):
-                        keyphrases_in_prompt = sum(
-                            1
-                            for kp in layer.keyphrases[cluster_idx][:10]
-                            if kp.lower() in prompt_str.lower()
-                        )
-
-                    prompt_data.append(
-                        {
-                            "layer": layer_idx,
-                            "cluster_id": cluster_idx,
-                            "prompt_length": len(prompt_str),
-                            "num_exemplars_in_prompt": prompt_str.count("EXAMPLE"),
-                            "num_keyphrases_in_prompt": keyphrases_in_prompt,
-                            "topic_name": layer.topic_names[cluster_idx],
-                            "topic_name_length": len(layer.topic_names[cluster_idx]),
-                        }
-                    )
-
-    return pd.DataFrame(prompt_data)
-
-
 def create_layer_summary_df(toponymy_instance) -> pd.DataFrame:
     """
     Create a summary DataFrame showing statistics for each layer.
@@ -355,10 +313,6 @@ def export_audit_excel(toponymy_instance, filename: str = "toponymy_audit.xlsx")
                 kp_df.to_excel(
                     writer, sheet_name=f"Layer {layer_idx} Keyphrases", index=False
                 )
-
-        # Prompt analysis
-        prompt_df = create_prompt_analysis_df(toponymy_instance)
-        prompt_df.to_excel(writer, sheet_name="Prompt Analysis", index=False)
 
     print(f"Audit data exported to {filename}")
 
