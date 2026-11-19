@@ -341,11 +341,15 @@ class Toponymy:
         for i, layer in enumerate(layers[1:], 1):
             if subtopic_method == "central":
                 annotator = CentralSubtopicAnnotator(
-                    layer.n_subtopics, layer.subtopic_diversify_alpha, null_topic
+                    n_subtopics=layer.n_subtopics,
+                    diversify_alpha=layer.subtopic_diversify_alpha,
+                    null_topic=null_topic,
                 )
             else:
                 annotator = SubmodularSubtopicAnnotator(
-                    layer.n_subtopics, null_topic, subtopic_method
+                    n_subtopics=layer.n_subtopics,
+                    null_topic=null_topic,
+                    submodular_function=subtopic_method,
                 )
             runs.append((annotator, tree.layer(i)))
         _run_annotators(

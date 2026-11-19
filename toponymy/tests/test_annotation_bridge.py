@@ -61,11 +61,11 @@ def make_model(llm, embedder, fitted_clusterer):
 
 @pytest.fixture
 def make_counting_model(embedder, fitted_clusterer):
-    def make(namer):
+    def make(namer, clusterer=fitted_clusterer):
         return Toponymy(
             namer,
             embedder,
-            fitted_clusterer,
+            clusterer,
             keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
             verbose=False,
         )
@@ -244,8 +244,13 @@ def test_fit_subtopics_match_the_layer_method(
 
 
 def test_fit_prompts_above_layer_1_list_the_subtopics(
-    embedder, fitted_clusterer, all_sentences, object_vectors, clusterable_vectors
+    make_counting_model,
+    fitted_clusterer,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
 ):
+    # Subtopics reach the prompts from layer 2 up, and the shared clusterer has two layers
     fine = fitted_clusterer.cluster_layers_[0].cluster_labels
     labels = [
         fine,
@@ -262,13 +267,9 @@ def test_fit_prompts_above_layer_1_list_the_subtopics(
         cluster_tree_=build_cluster_tree(labels),
     )
     namer = CountingNamer()
-    Toponymy(
-        namer,
-        embedder,
-        prefit,
-        keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
-        verbose=False,
-    ).fit(all_sentences, object_vectors, clusterable_vectors)
+    make_counting_model(namer, prefit).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
 
     assert any("miscellaneous detailed subtopics" in str(p) for p in namer.prompts)
 
@@ -276,6 +277,7 @@ def test_fit_prompts_above_layer_1_list_the_subtopics(
 def test_fit_leaves_unnamed_layer_0_topics_out_of_the_subtopics(
     make_counting_model, all_sentences, object_vectors, clusterable_vectors
 ):
+    # fit names layer 0 before the other layers, so calls 0 and 1 are layer 0 topics
     model = make_counting_model(CountingNamer(fail_calls={0, 1})).fit(
         all_sentences, object_vectors, clusterable_vectors
     )
