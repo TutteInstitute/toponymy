@@ -131,7 +131,10 @@ def cluster_topic_names_for_renaming(
             topic_names, show_progress_bar=False
         )
     distances = pairwise_distances(topic_name_embeddings, metric="cosine")
-    threshold = find_threshold_for_max_cluster_size(distances)
+    # Clusters only merge below the threshold, so a zero threshold would never group duplicates
+    threshold = max(
+        find_threshold_for_max_cluster_size(distances), COSINE_DISTANCE_EPSILON
+    )
     clustering = AgglomerativeClustering(
         n_clusters=None,
         distance_threshold=threshold,
@@ -290,6 +293,75 @@ def distinguish_topic_names_prompt(
         "is_very_specific_summary": is_very_specific,
         "is_general_summary": is_general,
         "has_major_subtopics": has_any_major_subtopics,
+    }
+
+    if prompt_template is not None:
+        template_set = prompt_template["disambiguate_topics"]
+    else:
+        template_set = PROMPT_TEMPLATES["disambiguate_topics"]
+
+    return render_prompt(template_set, render_params)
+
+
+def distinguish_topic_names_prompt_for_group(
+    topic_names: List[str],
+    keyphrases: List[List[str]],
+    exemplar_texts: List[List[str]],
+    major_subtopics: List[List[str]],
+    minor_subtopics: List[List[str]],
+    other_subtopics: List[List[str]],
+    object_description: str,
+    corpus_description: str,
+    summary_kind: str,
+    max_num_keyphrases: int = 32,
+    max_num_subtopics: int = 16,
+    max_num_exemplars: int = 128,
+    exemplar_start_delimiter: str = '    * "',
+    exemplar_end_delimiter: str = '"\n',
+    prompt_template: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
+    """
+    Construct a prompt for distinguishing a group of similarly named topics.
+
+    This is ``distinguish_topic_names_prompt`` with each topic's information given
+    directly, one list entry per topic in the order of ``topic_names``, rather than
+    looked up by index in per-layer lists.
+
+    Returns
+    -------
+    prompt: dict
+        LLM Prompt for distinguishing between the topics, keyed by rendering
+        ("system", "user" and "combined").
+    """
+    unique_topic_names = list(dict.fromkeys(topic_names))
+    if len(unique_topic_names) == 1:
+        larger_topic = unique_topic_names[0]
+    else:
+        unique_topic_names = unique_topic_names[:3]
+        larger_topic = (
+            ", ".join(unique_topic_names[:-1]) + " and " + unique_topic_names[-1]
+        )
+    if len(larger_topic) == 0:
+        larger_topic = f"topics found in {corpus_description}"
+
+    render_params = {
+        "larger_topic": larger_topic,
+        "document_type": object_description,
+        "corpus_description": corpus_description,
+        "topics": topic_names,
+        "cluster_keywords": [k[:max_num_keyphrases] for k in keyphrases],
+        "cluster_subtopics": {
+            "major": major_subtopics,
+            "minor": minor_subtopics,
+            "misc": [s[:max_num_subtopics] for s in other_subtopics],
+        },
+        "cluster_sentences": [e[:max_num_exemplars] for e in exemplar_texts],
+        "exemplar_start_delimiter": exemplar_start_delimiter,
+        "exemplar_end_delimiter": exemplar_end_delimiter,
+        "summary_kind": summary_kind,
+        "is_very_specific_summary": "very specific" in summary_kind,
+        "is_general_summary": "general" in summary_kind,
+        "has_major_subtopics": any(major_subtopics),
     }
 
     if prompt_template is not None:

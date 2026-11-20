@@ -1,5 +1,6 @@
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, List
 from warnings import warn
 
 from tenacity import (
@@ -13,11 +14,14 @@ from tenacity import (
 from toponymy.annotation import (
     AnnotationTree,
     DescendantsInput,
+    GroupDescendantsInput,
     LayerExecutionStrategy,
+    MultiNodeInput,
     Order,
 )
 from toponymy.llm_wrappers import (
     TopicParseResult,
+    llm_output_to_result,
     parse_raw_response,
     LLMWrapper,
     AsyncLLMWrapper,
@@ -25,8 +29,17 @@ from toponymy.llm_wrappers import (
     FailFastLLMError,
     InvalidLLMInputError,
 )
-from toponymy.prompt_construction import topic_name_prompt_by_node
-from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_KINDS
+from toponymy.prompt_construction import (
+    cluster_topic_names_for_renaming,
+    distinguish_topic_names_prompt_for_group,
+    topic_name_prompt_by_node,
+)
+from toponymy.templates import (
+    GET_TOPIC_CLUSTER_NAMES_REGEX,
+    PROMPT_TEMPLATES,
+    SUMMARY_KINDS,
+    default_extract_topic_names,
+)
 import numpy as np
 
 NULL_RESPONSE_VALUE = ""
@@ -141,6 +154,57 @@ class TopicNamerTemplate:
             get_topic_name_regex,
             null_response_value,
         )
+
+    def render_disambiguation(
+        self,
+        group,
+        *,
+        topic_names,
+        exemplars,
+        keyphrases,
+        major_subtopics,
+        minor_subtopics,
+        other_subtopics,
+    ) -> Dict[str, str]:
+        """Render the prompt that renames a group of topics, given one list entry per topic."""
+        return distinguish_topic_names_prompt_for_group(
+            topic_names=topic_names,
+            keyphrases=keyphrases,
+            exemplar_texts=exemplars,
+            major_subtopics=major_subtopics,
+            minor_subtopics=minor_subtopics,
+            other_subtopics=other_subtopics,
+            object_description=self.object_description,
+            corpus_description=self.corpus_description,
+            summary_kind=summary_kind(
+                group[0],
+                self.tree,
+                lowest_detail_level=self.lowest_detail_level,
+                highest_detail_level=self.highest_detail_level,
+            ),
+            max_num_keyphrases=self.max_num_keyphrases,
+            max_num_subtopics=self.max_num_subtopics,
+            max_num_exemplars=self.max_num_exemplars,
+            exemplar_start_delimiter=self.exemplar_start_delimiter,
+            exemplar_end_delimiter=self.exemplar_end_delimiter,
+            prompt_template=self.prompt_template,
+        )
+
+    def parse_disambiguation(
+        self, raw_response: str, old_names: List[str]
+    ) -> List[str]:
+        """Parse the new names, in the order of ``old_names``; raise if any is missing."""
+        section = self.prompt_template["disambiguate_topics"]
+        regex = section.get("get_topic_names_regex", GET_TOPIC_CLUSTER_NAMES_REGEX)
+        extract = section.get("extract_topic_names", default_extract_topic_names)
+        new_names = extract(
+            llm_output_to_result(raw_response, regex), old_names, raw_response
+        )
+        if len(new_names) != len(old_names) or not all(new_names):
+            raise ValueError(
+                f"Expected {len(old_names)} nonempty names for {old_names}, got {new_names}"
+            )
+        return [str(name) for name in new_names]
 
 
 class TopicNameAnnotator:
@@ -361,3 +425,182 @@ class TopicNameAnnotator:
         if topic_name == "":
             raise ValueError("Failed to generate a valid topic name")
         return {"draft_topics": topic_name}  # keys have to match outputs
+
+
+class TopicDisambiguationAnnotator:
+    """Give distinct names to topics of a layer whose names are too similar.
+
+    The nodes of each layer are grouped by complete linkage clustering of their name
+    embeddings, as the legacy layers do, and each group of up to
+    ``max_topics_per_prompt`` topics is renamed with one LLM call. ``topic_names`` is
+    updated in place, so a group whose call fails keeps its names, and
+    ``replaced_topic_names`` records each grouped node's name before the call.
+
+    Parameters
+    ----------
+    llm_namer : LLMWrapper or AsyncLLMWrapper
+        The LLM that renames the topics.
+    topic_name_template : TopicNamerTemplate
+        Renders the prompts and parses the responses.
+    max_topics_per_prompt : int, optional
+        Larger groups are split into chunks of this size, by default 12.
+    """
+
+    inputs = ("topic_names", "topic_name_embeddings")
+    optional_inputs = ("exemplars", "keyphrases", "subtopics", "child_topics")
+    outputs = ("topic_names", "replaced_topic_names")
+    algorithm_input_type = {
+        "topic_names": MultiNodeInput(from_output="topic_names"),
+        "topic_name_embeddings": MultiNodeInput(groups="clashing_groups"),
+        "exemplars": "multinode",
+        "keyphrases": "multinode",
+        "subtopics": "multinode",
+        "child_topics": GroupDescendantsInput(from_output="topic_names", depth=1),
+    }
+    algorithm_output_type = "multinode"
+    temperature = 0.4
+
+    def __init__(self, llm_namer, topic_name_template, max_topics_per_prompt=12):
+        if isinstance(llm_namer, LLMWrapper):
+            self.execution_mode = "sync"
+        elif isinstance(llm_namer, AsyncLLMWrapper):
+            self.execution_mode = "async"
+        else:
+            raise TypeError("llm_namer must be an LLMWrapper or AsyncLLMWrapper")
+        self.llm_namer = llm_namer
+        self.topic_name_template = topic_name_template
+        self.max_topics_per_prompt = max_topics_per_prompt
+        self.max_tokens = getattr(llm_namer, "max_tokens_cluster_names", 1024)
+
+    def clashing_groups(self, topic_name_embeddings):
+        """Group the nodes of each layer whose names embed close together."""
+        by_layer = defaultdict(list)
+        for node in topic_name_embeddings:
+            by_layer[node.layer].append(node)
+        groups = []
+        for nodes in by_layer.values():
+            if len(nodes) < 2:
+                continue
+            vectors = np.asarray([topic_name_embeddings[node] for node in nodes])
+            clusters, labels = cluster_topic_names_for_renaming(
+                topic_names=[], topic_name_embeddings=vectors
+            )
+            for cluster in clusters:
+                members = [
+                    node for node, label in zip(nodes, labels) if label == cluster
+                ]
+                for start in range(0, len(members), self.max_topics_per_prompt):
+                    chunk = members[start : start + self.max_topics_per_prompt]
+                    if len(chunk) > 1:
+                        groups.append(tuple(chunk))
+        return groups
+
+    def _build_prompt(
+        self, group, old_names, exemplars, keyphrases, subtopics, child_topics
+    ):
+        def per_node(values):
+            return [values[node] if values else [] for node in group]
+
+        def children_in_layer(offset):
+            return [
+                [
+                    name
+                    for child, name in (child_topics or {}).get(node, {}).items()
+                    if child.layer == node.layer - offset
+                ]
+                for node in group
+            ]
+
+        return self.topic_name_template.render_disambiguation(
+            group,
+            topic_names=old_names,
+            exemplars=per_node(exemplars),
+            keyphrases=per_node(keyphrases),
+            major_subtopics=children_in_layer(1),
+            minor_subtopics=children_in_layer(2),
+            other_subtopics=per_node(subtopics),
+        )
+
+    @staticmethod
+    def _result(group, old_names, result):
+        if result.error:
+            raise result.error
+        return {
+            "topic_names": dict(zip(group, result.topic_payload)),
+            "replaced_topic_names": dict(zip(group, old_names)),
+        }
+
+    @topic_name_retry()
+    def _generate_and_parse(self, prompt, old_names):
+        raw_response = self.llm_namer._call_llm_for_prompt(
+            prompt,
+            temperature=self.temperature,
+            routine="TopicDisambiguationAnnotator.annotate",
+            max_tokens=self.max_tokens,
+        )
+        try:
+            new_names = self.topic_name_template.parse_disambiguation(
+                raw_response, old_names
+            )
+        except Exception as exc:
+            exc.raw_response = raw_response
+            raise
+        return TopicParseResult(
+            topic_payload=new_names, raw_response=raw_response, error=None
+        )
+
+    @topic_name_retry()
+    async def _agenerate_and_parse(self, prompt, old_names):
+        raw_response = await self.llm_namer._acall_llm_for_prompt(
+            prompt,
+            temperature=self.temperature,
+            routine="TopicDisambiguationAnnotator.aannotate",
+            max_tokens=self.max_tokens,
+        )
+        try:
+            new_names = self.topic_name_template.parse_disambiguation(
+                raw_response, old_names
+            )
+        except Exception as exc:
+            exc.raw_response = raw_response
+            raise
+        return TopicParseResult(
+            topic_payload=new_names, raw_response=raw_response, error=None
+        )
+
+    def annotate(
+        self,
+        group,
+        *,
+        topic_names,
+        topic_name_embeddings,
+        exemplars=None,
+        keyphrases=None,
+        subtopics=None,
+        child_topics=None,
+    ):
+        old_names = [topic_names[node] for node in group]
+        prompt = self._build_prompt(
+            group, old_names, exemplars, keyphrases, subtopics, child_topics
+        )
+        return self._result(
+            group, old_names, self._generate_and_parse(prompt, old_names)
+        )
+
+    async def aannotate(
+        self,
+        group,
+        *,
+        topic_names,
+        topic_name_embeddings,
+        exemplars=None,
+        keyphrases=None,
+        subtopics=None,
+        child_topics=None,
+    ):
+        old_names = [topic_names[node] for node in group]
+        prompt = self._build_prompt(
+            group, old_names, exemplars, keyphrases, subtopics, child_topics
+        )
+        result = await self._agenerate_and_parse(prompt, old_names)
+        return self._result(group, old_names, result)

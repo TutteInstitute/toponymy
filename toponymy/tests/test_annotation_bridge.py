@@ -1,5 +1,3 @@
-import itertools
-import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -11,29 +9,8 @@ from toponymy.cluster_layer import ClusterLayerText
 from toponymy.clustering import build_cluster_tree, centroids_from_labels
 from toponymy.exemplar_texts import DiverseExemplarAnnotator, diverse_exemplars
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.tests.helpers.dummy_wrappers import DummySingleWrapper
+from toponymy.tests.helpers.dummy_wrappers import CountingNamer
 from toponymy.toponymy import Toponymy, _with_null_topic
-
-
-class CountingNamer(DummySingleWrapper):
-    """Names each topic "Topic <n>" in call order, except that the calls in ``fail_calls`` get no name."""
-
-    def __init__(self, fail_calls=()):
-        self.calls = itertools.count()
-        self.fail_calls = set(fail_calls)
-        self.prompts = []
-
-    def _respond(self, prompt):
-        self.prompts.append(prompt)
-        call = next(self.calls)
-        name = "" if call in self.fail_calls else f"Topic {call}"
-        return json.dumps({"topic_name": name, "topic_specificity": 0.9})
-
-    def _call_llm(self, prompt, temperature, max_tokens):
-        return self._respond(prompt)
-
-    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
-        return self._respond(prompt)
 
 
 @pytest.fixture(scope="module")
@@ -68,6 +45,26 @@ def make_counting_model(embedder, fitted_clusterer):
             clusterer,
             keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
             verbose=False,
+        )
+
+    return make
+
+
+@pytest.fixture
+def make_prefit_clusterer(fitted_clusterer, object_vectors):
+    """Make a prefit clusterer whose layer i joins 2**i layer 0 clusters of the shared one."""
+    fine = fitted_clusterer.cluster_layers_[0].cluster_labels
+
+    def make(n_layers):
+        labels = [np.where(fine >= 0, fine // 2**i, -1) for i in range(n_layers)]
+        return SimpleNamespace(
+            cluster_layers_=[
+                ClusterLayerText(
+                    layer_labels, centroids_from_labels(layer_labels, object_vectors), i
+                )
+                for i, layer_labels in enumerate(labels)
+            ],
+            cluster_tree_=build_cluster_tree(labels),
         )
 
     return make
@@ -245,33 +242,66 @@ def test_fit_subtopics_match_the_layer_method(
 
 def test_fit_prompts_above_layer_1_list_the_subtopics(
     make_counting_model,
-    fitted_clusterer,
+    make_prefit_clusterer,
     all_sentences,
     object_vectors,
     clusterable_vectors,
 ):
     # Subtopics reach the prompts from layer 2 up, and the shared clusterer has two layers
-    fine = fitted_clusterer.cluster_layers_[0].cluster_labels
-    labels = [
-        fine,
-        np.where(fine >= 0, fine // 2, -1),
-        np.where(fine >= 0, fine // 4, -1),
-    ]
-    prefit = SimpleNamespace(
-        cluster_layers_=[
-            ClusterLayerText(
-                layer_labels, centroids_from_labels(layer_labels, object_vectors), i
-            )
-            for i, layer_labels in enumerate(labels)
-        ],
-        cluster_tree_=build_cluster_tree(labels),
-    )
     namer = CountingNamer()
-    make_counting_model(namer, prefit).fit(
+    make_counting_model(namer, make_prefit_clusterer(3)).fit(
         all_sentences, object_vectors, clusterable_vectors
     )
 
     assert any("miscellaneous detailed subtopics" in str(p) for p in namer.prompts)
+
+
+def test_fit_gives_clashing_topics_distinct_names(
+    make_counting_model,
+    make_prefit_clusterer,
+    embedder,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+):
+    namer = CountingNamer(name="Same topic")
+    model = make_counting_model(namer, make_prefit_clusterer(3)).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
+
+    store = model.store_
+    names = model.topic_names_[0]
+    assert len(set(names)) == len(names)
+    replaced = store.replaced_topic_names.computed(store.tree.layer(0))
+    assert set(replaced.values()) == {"Same topic"}
+    assert any("Major subtopics" in p["user"] for p in namer.disambiguation_prompts)
+    # The embeddings, which the subtopics read, are of the final names
+    nodes = list(store.topic_name_embeddings)
+    np.testing.assert_allclose(
+        [store.topic_name_embeddings[node] for node in nodes],
+        embedder.encode([store.topic_names[node] for node in nodes]),
+        rtol=1e-5,
+        atol=1e-6,
+    )
+
+
+@pytest.mark.parametrize("rename, passes", [(True, 1), (False, 2)])
+def test_fit_disambiguates_again_while_a_name_is_shared_by_more_than_two_topics(
+    make_counting_model,
+    make_prefit_clusterer,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+    rename,
+    passes,
+):
+    # Every topic of the single layer is in the one group
+    namer = CountingNamer(name="Same topic", rename=rename)
+    make_counting_model(namer, make_prefit_clusterer(1)).fit(
+        all_sentences, object_vectors, clusterable_vectors
+    )
+
+    assert len(namer.disambiguation_prompts) == passes
 
 
 def test_fit_leaves_unnamed_layer_0_topics_out_of_the_subtopics(

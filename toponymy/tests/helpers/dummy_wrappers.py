@@ -1,3 +1,7 @@
+import itertools
+import json
+import re
+
 from toponymy.llm_wrappers import AsyncLLMWrapper, LLMWrapper
 
 SINGLE_RESPONSE = '{"topic_name": "single-ok", "topic_specificity": 0.9}'
@@ -24,6 +28,51 @@ class DummyAsyncSingleWrapper(AsyncLLMWrapper):
 
     async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
         return SYSTEM_RESPONSE
+
+
+class CountingNamer(DummySingleWrapper):
+    """Names each topic "Topic <n>" in call order, or ``name`` if given.
+
+    A disambiguation prompt gets "Topic <n>.<i>" for its i-th topic, or ``name``
+    for every topic unless ``rename``. The calls in ``fail_calls`` get empty names.
+    """
+
+    def __init__(self, fail_calls=(), name=None, rename=True):
+        self.calls = itertools.count()
+        self.fail_calls = set(fail_calls)
+        self.name = name
+        self.rename = rename
+        self.prompts = []
+        self.disambiguation_prompts = []
+
+    def _respond(self, prompt):
+        self.prompts.append(prompt)
+        call = next(self.calls)
+        failed = call in self.fail_calls
+        text = "\n".join(prompt.values())
+        if "new_topic_name_mapping" in text:
+            self.disambiguation_prompts.append(prompt)
+            n_topics = max(int(i) for i in re.findall(r'^"(\d+)\. ', text, re.M))
+            mapping = {
+                f"{i}.": (
+                    "" if failed else f"Topic {call}.{i}" if self.rename else self.name
+                )
+                for i in range(1, n_topics + 1)
+            }
+            return json.dumps(
+                {
+                    "new_topic_name_mapping": mapping,
+                    "topic_specificities": [0.9] * n_topics,
+                }
+            )
+        name = "" if failed else self.name or f"Topic {call}"
+        return json.dumps({"topic_name": name, "topic_specificity": 0.9})
+
+    def _call_llm(self, prompt, temperature, max_tokens):
+        return self._respond(prompt)
+
+    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
+        return self._respond(prompt)
 
 
 class DummyAsyncProviderError(Exception):

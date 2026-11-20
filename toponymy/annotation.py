@@ -1480,6 +1480,25 @@ class MultiNodeInput(GroupedInputSpec):
         return call_method(annotator, self.groups, annotation.computed(nodes))
 
 
+@dataclass(frozen=True, kw_only=True)
+class GroupDescendantsInput(GroupedInputSpec):
+    """Gather, for each node of a group, the computed values of its descendants.
+
+    ``annotate`` receives a mapping of node to ``{descendant: value}``, within
+    ``depth`` edges as for ``AnnotationTree.descendants``. Descendants without a
+    computed value are left out, so the input is always available.
+    """
+
+    depth: Optional[int] = None
+
+    def gather(self, annotation, unit, prepared):
+        tree = annotation.tree
+        return {
+            node: annotation.computed(nodes=tree.descendants(node, depth=self.depth))
+            for node in unit
+        }
+
+
 @dataclass(frozen=True)
 class PrepareMethodNodeInput(InputSpec):
     method: str
