@@ -332,6 +332,17 @@ def test_cluster_topic_names_for_renaming_no_clusters():
     assert len(labels) == len(topic_names)
 
 
+def test_cluster_topic_names_for_renaming_groups_identical_names():
+    topic_name_embeddings = np.tile([[0.1, 0.2, 0.3]], (6, 1))
+
+    clusters_for_renaming, labels = cluster_topic_names_for_renaming(
+        [], topic_name_embeddings
+    )
+
+    assert len(clusters_for_renaming) == 1
+    assert set(labels) == {0}
+
+
 def test_cluster_topic_names_for_renaming_invalid_input():
     topic_names = ["Topic A", "Topic B", "Topic C", "Topic D"]
 
