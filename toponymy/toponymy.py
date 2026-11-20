@@ -9,7 +9,7 @@ from sklearn.utils.validation import check_is_fitted
 from tqdm.auto import tqdm
 
 
-from toponymy.annotation import Annotator, AnnotationStore, Executor, AnnotationState
+from toponymy.annotation import Annotator, AnnotationStore, Executor
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.exemplar_texts import exemplar_annotator

@@ -53,12 +53,13 @@ class CountingNamer(DummySingleWrapper):
         if "new_topic_name_mapping" in text:
             self.disambiguation_prompts.append(prompt)
             n_topics = max(int(i) for i in re.findall(r'^"(\d+)\. ', text, re.M))
-            mapping = {
-                f"{i}.": (
-                    "" if failed else f"Topic {call}.{i}" if self.rename else self.name
-                )
-                for i in range(1, n_topics + 1)
-            }
+            if failed:
+                new_names = [""] * n_topics
+            elif self.rename:
+                new_names = [f"Topic {call}.{i}" for i in range(1, n_topics + 1)]
+            else:
+                new_names = [self.name] * n_topics
+            mapping = {f"{i}.": name for i, name in enumerate(new_names, start=1)}
             return json.dumps(
                 {
                     "new_topic_name_mapping": mapping,

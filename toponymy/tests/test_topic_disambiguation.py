@@ -4,7 +4,10 @@ from tenacity import wait_none
 
 from toponymy.annotation import Annotation, AnnotationStore, AnnotationTree, Executor
 from toponymy.clusterers import build_cluster_tree
-from toponymy.tests.helpers.dummy_wrappers import CountingNamer
+from toponymy.tests.helpers.dummy_wrappers import (
+    CountingNamer,
+    DummyAsyncSingleWrapper,
+)
 from toponymy.topic_naming import TopicDisambiguationAnnotator, TopicNamerTemplate
 
 # Six layer 0 clusters of three objects each, nested two to a layer 1 cluster
@@ -130,10 +133,31 @@ def test_the_prompt_lists_each_topics_children_and_subtopics():
 def test_parse_disambiguation_rejects_missing_or_empty_names(response):
     template = TopicNamerTemplate("sentences", "a test corpus", make_store().tree)
 
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         template.parse_disambiguation(response, ["Same", "Same"])
 
 
 def test_rejects_a_namer_that_is_not_an_llm_wrapper():
     with pytest.raises(TypeError, match="LLMWrapper"):
         make_annotator(object(), make_store())
+
+
+class AsyncCountingNamer(DummyAsyncSingleWrapper):
+    def __init__(self):
+        self.namer = CountingNamer()
+
+    async def _call_single_llm(self, prompt, temperature, max_tokens):
+        return self.namer._respond(prompt)
+
+    async def _call_single_llm_with_system(self, prompt, temperature, max_tokens):
+        return self.namer._respond(prompt)
+
+
+def test_an_async_namer_renames_clashing_topics():
+    store = make_store()
+    annotator = make_annotator(AsyncCountingNamer(), store)
+
+    assert annotator.execution_mode == "async"
+    assert not Executor(store).run(annotator, nodes=store.tree.layer(0))
+    assert len(set(names_of(store, 0))) == len(NAMES[0])
+    assert set(store.replaced_topic_names.computed().values()) == {"Same"}

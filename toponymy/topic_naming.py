@@ -522,13 +522,25 @@ class TopicDisambiguationAnnotator:
         )
 
     @staticmethod
-    def _result(group, old_names, result):
+    def _outputs(group, old_names, result):
         if result.error:
             raise result.error
         return {
             "topic_names": dict(zip(group, result.topic_payload)),
             "replaced_topic_names": dict(zip(group, old_names)),
         }
+
+    def _parse(self, raw_response, old_names):
+        try:
+            new_names = self.topic_name_template.parse_disambiguation(
+                raw_response, old_names
+            )
+        except Exception as exc:
+            exc.raw_response = raw_response
+            raise
+        return TopicParseResult(
+            topic_payload=new_names, raw_response=raw_response, error=None
+        )
 
     @topic_name_retry()
     def _generate_and_parse(self, prompt, old_names):
@@ -538,16 +550,7 @@ class TopicDisambiguationAnnotator:
             routine="TopicDisambiguationAnnotator.annotate",
             max_tokens=self.max_tokens,
         )
-        try:
-            new_names = self.topic_name_template.parse_disambiguation(
-                raw_response, old_names
-            )
-        except Exception as exc:
-            exc.raw_response = raw_response
-            raise
-        return TopicParseResult(
-            topic_payload=new_names, raw_response=raw_response, error=None
-        )
+        return self._parse(raw_response, old_names)
 
     @topic_name_retry()
     async def _agenerate_and_parse(self, prompt, old_names):
@@ -557,16 +560,7 @@ class TopicDisambiguationAnnotator:
             routine="TopicDisambiguationAnnotator.aannotate",
             max_tokens=self.max_tokens,
         )
-        try:
-            new_names = self.topic_name_template.parse_disambiguation(
-                raw_response, old_names
-            )
-        except Exception as exc:
-            exc.raw_response = raw_response
-            raise
-        return TopicParseResult(
-            topic_payload=new_names, raw_response=raw_response, error=None
-        )
+        return self._parse(raw_response, old_names)
 
     def annotate(
         self,
@@ -583,7 +577,7 @@ class TopicDisambiguationAnnotator:
         prompt = self._build_prompt(
             group, old_names, exemplars, keyphrases, subtopics, child_topics
         )
-        return self._result(
+        return self._outputs(
             group, old_names, self._generate_and_parse(prompt, old_names)
         )
 
@@ -603,4 +597,4 @@ class TopicDisambiguationAnnotator:
             group, old_names, exemplars, keyphrases, subtopics, child_topics
         )
         result = await self._agenerate_and_parse(prompt, old_names)
-        return self._result(group, old_names, result)
+        return self._outputs(group, old_names, result)
