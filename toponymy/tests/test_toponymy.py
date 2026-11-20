@@ -206,7 +206,7 @@ def test_toponymy_alternative_options(
         object_vectors,
         clusterable_vectors,
         keyphrase_method="bm25",
-        subtopic_method="information_weighted",
+        subtopic_method="saturated_coverage",
     )
     embedded_topic_names = embedder.encode(model.topic_names_[1])
     distance_matrix = pairwise_distances(
@@ -257,7 +257,7 @@ def test_toponymy_alternative_options_2(
         object_vectors,
         clusterable_vectors,
         keyphrase_method="bm25",
-        subtopic_method="information_weighted",
+        subtopic_method="saturated_coverage",
     )
     embedded_topic_names = embedder.encode(model.topic_names_[1])
     distance_matrix = pairwise_distances(
@@ -417,7 +417,7 @@ def test_toponymy_async_ollama(
             object_vectors,
             clusterable_vectors,
             keyphrase_method="bm25",
-            subtopic_method="information_weighted",
+            subtopic_method="saturated_coverage",
         )
 
         # Verify that topic names were generated

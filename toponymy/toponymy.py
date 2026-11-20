@@ -13,6 +13,11 @@ from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.exemplar_texts import exemplar_annotator
 from toponymy.keyphrases import InformationWeightedKeyphraseAnnotator, KeyphraseBuilder
+from toponymy.subtopics import (
+    CentralSubtopicAnnotator,
+    SubmodularSubtopicAnnotator,
+    TopicNameEmbeddingAnnotator,
+)
 from toponymy.cluster_layer import (
     ClusterLayer,
     ClusterLayerSummaryText,
@@ -29,6 +34,7 @@ from toponymy._annotation_bridge import (
     copy_layers_to_store,
     has_stock_keyphrases,
     copy_topics_to_layers,
+    copy_subtopics_to_layers,
 )
 from toponymy._utils import handle_verbose_params
 
@@ -55,10 +61,13 @@ def _with_null_topic(annotator, null_topic):
     return annotator
 
 
-def _run_annotators(executor, runs):
+_SUBTOPIC_METHODS = ("central", "facility_location", "saturated_coverage")
+
+
+def _run_annotators(executor, runs, **wiring):
     """Runs each (annotator, nodes) pair, raising on the first that has failed nodes."""
     for annotator, nodes in runs:
-        failures = executor.run(annotator, nodes=nodes)
+        failures = executor.run(annotator, nodes=nodes, **wiring)
         if failures:
             node, reason = next(iter(failures.items()))
             raise RuntimeError(
@@ -307,6 +316,52 @@ class Toponymy:
             runs.append((annotator, self.store_.tree.layer(i)))
         return runs
 
+    def _annotate_subtopics(self, executor, subtopic_method):
+        """Stores the subtopics of the nodes above layer 0, chosen from the layer 0 draft topics."""
+        tree, layers = self.store_.tree, self.cluster_layers_
+        if len(layers) < 2:
+            return
+        draft_topics = self.store_.draft_topics
+        named = [
+            node
+            for node in tree.layer(0)
+            if draft_topics.states[node] is AnnotationState.COMPUTED
+        ]
+        if not named:
+            return
+        _run_annotators(
+            executor,
+            [(TopicNameEmbeddingAnnotator(self.embedding_model), named)],
+            input_names={"topic_names": "draft_topics"},
+            output_names={"topic_name_embeddings": "draft_topic_embeddings"},
+        )
+        embeddings = self.store_.draft_topic_embeddings
+        null_topic = np.mean([embeddings[node] for node in named], axis=0)
+        runs = []
+        for i, layer in enumerate(layers[1:], 1):
+            if subtopic_method == "central":
+                annotator = CentralSubtopicAnnotator(
+                    n_subtopics=layer.n_subtopics,
+                    diversify_alpha=layer.subtopic_diversify_alpha,
+                    null_topic=null_topic,
+                )
+            else:
+                annotator = SubmodularSubtopicAnnotator(
+                    n_subtopics=layer.n_subtopics,
+                    null_topic=null_topic,
+                    submodular_function=subtopic_method,
+                )
+            runs.append((annotator, tree.layer(i)))
+        _run_annotators(
+            executor,
+            runs,
+            input_names={
+                "subtopic_names": "draft_topics",
+                "subtopic_vectors": "draft_topic_embeddings",
+            },
+        )
+        copy_subtopics_to_layers(self.store_, layers)
+
     def fit(
         self,
         objects: List[Any],
@@ -335,7 +390,7 @@ class Toponymy:
         keyphrase_method: str, Optional
             The method to use for generating keyphrases. Default is "information_weighted". Other options are "saturated_coverage", "facility_location", "graph_cut", "central" and "bm25".
         subtopic_method: str, Optional
-            The method to use for generating subtopics. Default is "facility_location". Other options are "information_weighted".
+            The method to use for choosing the subtopics of the topics above layer 0. Default is "central". Other options are "facility_location" and "saturated_coverage".
 
         Returns:
         --------
@@ -347,6 +402,10 @@ class Toponymy:
 
         if self.annotators is not None and exemplar_method is not None:
             raise ValueError("exemplar_method cannot be combined with annotators")
+        if subtopic_method not in _SUBTOPIC_METHODS:
+            raise ValueError(
+                f"Unknown subtopic_method {subtopic_method!r}; use one of {_SUBTOPIC_METHODS}"
+            )
 
         # Build our layers and cluster tree
         if hasattr(self.clusterer, "cluster_layers_") and hasattr(
@@ -492,7 +551,15 @@ class Toponymy:
             topic_name_template=template,
         )
 
-        failures = executor.run(topic_annotator)
+        # Subtopics come from the layer 0 names, so layer 0 is named first
+        tree = self.store_.tree
+        executor.run(topic_annotator, nodes=tree.layer(0))
+        self._annotate_subtopics(executor, subtopic_method)
+        upper = [
+            node for i in range(1, len(self.cluster_layers_)) for node in tree.layer(i)
+        ]
+        if upper:
+            executor.run(topic_annotator, nodes=upper)
 
         copy_topics_to_layers(self.store_, self.cluster_layers_)
 

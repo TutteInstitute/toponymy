@@ -8,6 +8,7 @@ from sklearn.decomposition import DictionaryLearning
 from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
+from toponymy.annotation import DescendantsInput, LayerInput
 from toponymy.exemplar_texts import (
     FacilityLocationSelection,
     SaturatedCoverageSelection,
@@ -615,3 +616,204 @@ def information_weighted_summary_subtopics(
         )
 
     return result
+
+
+class TopicNameEmbeddingAnnotator:
+    """Embed the topic name of each node, with one encode call per layer.
+
+    Parameters
+    ----------
+    embedding_model : TextEmbedderProtocol
+        The model that embeds the names.
+
+    Attributes
+    ----------
+    inputs : tuple of str
+        ``topic_names``.
+    outputs : tuple of str
+        ``topic_name_embeddings``.
+
+    Notes
+    -----
+    Each layer is embedded as a unit, so a layer with a node whose name is missing
+    or failed is not embedded at all.
+    """
+
+    inputs = ("topic_names",)
+    outputs = ("topic_name_embeddings",)
+    algorithm_input_type = {"topic_names": LayerInput()}
+    algorithm_output_type = "multinode"
+
+    def __init__(self, embedding_model: TextEmbedderProtocol):
+        self.embedding_model = embedding_model
+
+    def annotate(self, layer_nodes, *, topic_names):
+        """Embed the names of the selected nodes of one layer.
+
+        Returns
+        -------
+        dict
+            ``{"topic_name_embeddings": {node: vector}}``.
+        """
+        nodes = list(layer_nodes)
+        vectors = self.embedding_model.encode(
+            [topic_names[node] for node in nodes], show_progress_bar=False
+        )
+        return {"topic_name_embeddings": dict(zip(nodes, vectors))}
+
+
+def _layer_zero_subtopics(subtopic_names, subtopic_vectors, null_topic):
+    """The names and centred vectors of the layer 0 descendants, in cluster order."""
+    nodes = sorted(node for node in subtopic_names if node.layer == 0)
+    names = [subtopic_names[node] for node in nodes]
+    vectors = np.asarray([subtopic_vectors[node] for node in nodes])
+    if null_topic is not None and len(nodes):
+        vectors = vectors - null_topic
+    return names, vectors
+
+
+class CentralSubtopicAnnotator:
+    """Select a node's subtopics from the names of its layer 0 descendants.
+
+    The names are ranked by cosine distance to their mean, and a diverse subset of
+    the closest is kept. This is the annotator form of ``central_subtopics``, except
+    that the candidates are the node's layer 0 descendants in the cluster tree
+    rather than the layer 0 clusters that share objects with it. The two agree when
+    the clusterer's layers nest.
+
+    Parameters
+    ----------
+    n_subtopics : int, optional
+        The number of subtopics to select for each node, by default 64.
+    diversify_alpha : float, optional
+        The largest alpha to try when diversifying the selection, by default 1.0.
+    null_topic : np.ndarray, optional
+        Subtracted from the name embeddings before any distance is computed. This
+        is typically the mean embedding of all layer 0 names. If None, nothing is
+        subtracted.
+
+    Attributes
+    ----------
+    inputs : tuple of str
+        ``subtopic_names`` and ``subtopic_vectors``, read from the ``topic_names``
+        and ``topic_name_embeddings`` of each node's descendants.
+    outputs : tuple of str
+        ``subtopics``.
+    """
+
+    inputs = ("subtopic_names", "subtopic_vectors")
+    outputs = ("subtopics",)
+    algorithm_input_type = {
+        "subtopic_names": DescendantsInput(source="topic_names"),
+        "subtopic_vectors": DescendantsInput(source="topic_name_embeddings"),
+    }
+    algorithm_output_type = "node"
+
+    def __init__(
+        self,
+        n_subtopics: int = 64,
+        diversify_alpha: float = 1.0,
+        null_topic: Optional[np.ndarray] = None,
+    ):
+        self.n_subtopics = n_subtopics
+        self.diversify_alpha = diversify_alpha
+        self.null_topic = null_topic
+
+    def annotate(self, node, *, subtopic_names, subtopic_vectors):
+        """Select subtopics for one node.
+
+        Returns
+        -------
+        dict
+            ``{"subtopics": list of str}``, empty for a node with no named layer 0
+            descendants.
+        """
+        names, vectors = _layer_zero_subtopics(
+            subtopic_names, subtopic_vectors, self.null_topic
+        )
+        if not names:
+            return {"subtopics": []}
+        centroid = np.mean(vectors, axis=0)
+        order = np.argsort(
+            np.squeeze(pairwise_distances([centroid], vectors, metric="cosine"), 0)
+        )[: self.n_subtopics**2]
+        chosen = diversify(
+            centroid,
+            vectors[order],
+            self.n_subtopics,
+            max_alpha=self.diversify_alpha,
+        )[: self.n_subtopics]
+        return {"subtopics": [names[order[j]] for j in chosen]}
+
+
+class SubmodularSubtopicAnnotator:
+    """Select a node's subtopics from its layer 0 descendants by submodular selection.
+
+    This is the annotator form of ``submodular_subtopics``, except that the
+    candidates are the node's layer 0 descendants in the cluster tree rather than
+    the layer 0 clusters that share objects with it. The two agree when the
+    clusterer's layers nest. A node with fewer candidates than ``n_subtopics`` gets
+    all of them.
+
+    Parameters
+    ----------
+    n_subtopics : int, optional
+        The number of subtopics to select for each node, by default 64.
+    null_topic : np.ndarray, optional
+        Subtracted from the name embeddings before selection. This is typically the
+        mean embedding of all layer 0 names. If None, nothing is subtracted.
+    submodular_function : {"facility_location", "saturated_coverage"}, optional
+        The submodular function to optimise, by default "facility_location".
+
+    Raises
+    ------
+    ValueError
+        If ``submodular_function`` is not one of the supported values.
+    """
+
+    inputs = ("subtopic_names", "subtopic_vectors")
+    outputs = ("subtopics",)
+    algorithm_input_type = {
+        "subtopic_names": DescendantsInput(source="topic_names"),
+        "subtopic_vectors": DescendantsInput(source="topic_name_embeddings"),
+    }
+    algorithm_output_type = "node"
+
+    def __init__(
+        self,
+        n_subtopics: int = 64,
+        null_topic: Optional[np.ndarray] = None,
+        submodular_function: str = "facility_location",
+    ):
+        self.n_subtopics = n_subtopics
+        self.null_topic = null_topic
+        self.submodular_function = submodular_function
+        if submodular_function == "facility_location":
+            self.selector = FacilityLocationSelection(
+                n_subtopics, metric="cosine", optimizer="lazy"
+            )
+        elif submodular_function == "saturated_coverage":
+            self.selector = SaturatedCoverageSelection(
+                n_subtopics, metric="cosine", optimizer="lazy"
+            )
+        else:
+            raise ValueError(
+                f"selection_function={submodular_function} is not a valid selection. Please choose one of (facility_location,saturated_coverage)"
+            )
+
+    def annotate(self, node, *, subtopic_names, subtopic_vectors):
+        """Select subtopics for one node.
+
+        Returns
+        -------
+        dict
+            ``{"subtopics": list of str}``, empty for a node with no named layer 0
+            descendants.
+        """
+        names, vectors = _layer_zero_subtopics(
+            subtopic_names, subtopic_vectors, self.null_topic
+        )
+        if len(names) < self.n_subtopics:
+            return {"subtopics": names}
+        _, chosen = self.selector.fit_transform(vectors, y=np.asarray(names))
+        return {"subtopics": chosen.tolist()}
