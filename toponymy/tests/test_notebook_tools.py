@@ -1,4 +1,5 @@
 import os
+from functools import partial
 from pathlib import Path, PurePosixPath
 
 import httpx
@@ -210,6 +211,26 @@ def test_hf_dataset_urls_are_reachable(hf_url):
     )
     response = httpx.head(url, follow_redirects=True, timeout=10.0)
     assert response.status_code < 400, f"HF URL {url} returned {response.status_code}"
+
+
+def test_run_notebook_reads_utf8_with_windows_default_encoding(tmp_path, monkeypatch):
+    source = "print('caf\u00e9 \U0001f30d')"
+    nb = new_notebook(cells=[new_code_cell(source)])
+    path = tmp_path / "unicode.ipynb"
+    path.write_bytes(nbformat.writes(nb).encode("utf-8"))
+
+    monkeypatch.setattr(
+        "toponymy.tools.notebook_runner.open",
+        partial(open, encoding="cp1252"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "toponymy.tools.notebook_runner.NotebookClient.execute", lambda self: self.nb
+    )
+
+    result = run_notebook(str(path))
+
+    assert result.cells[1].source == source
 
 
 def test_inject_logging_cell_and_run(tmp_path):

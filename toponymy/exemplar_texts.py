@@ -29,6 +29,8 @@ dtypes = [
 sdtypes = [
     "void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
     "void(float32[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
+    "void(float64[:], int64[:], int64[:], float64[:], float64[:], int64[:])",
+    "void(float32[:], int64[:], int64[:], float64[:], float64[:], int64[:])",
 ]
 sieve_dtypes = (
     "void(float64[:,:], int64, float64[:,:], int64[:,:],"
@@ -224,8 +226,9 @@ class FacilityLocationSelection(BaseGraphSelection):
         of the original apricot code to make it more suitable for
         selection of exemplars for clusters in a cluster layer.
 
-        Note that this version is specialized and does no support sparse
-        input, nor does it support streaming via sieve greedy.
+        This version requires dense input and uses a sparse nearest-neighbor
+        graph for datasets larger than 4096 samples. Streaming via sieve
+        greedy is not supported.
 
         Run submodular optimization to select the examples.
 
