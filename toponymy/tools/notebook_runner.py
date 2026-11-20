@@ -132,7 +132,7 @@ def run_notebook(
     Parameters
     ----------
     path : str
-        Path to the .ipynb notebook file to execute.
+        Path to the UTF-8 encoded .ipynb notebook file to execute.
     timeout : int, optional
         Timeout in seconds for notebook execution. Default is 3000.
     kernel_name : str, optional
@@ -156,7 +156,7 @@ def run_notebook(
         Any exception raised by the notebook kernel during execution is re-raised after logging.
     """
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         nb = nbformat.read(f, as_version=4)
 
     _inject_logging_capture_cell(nb)
