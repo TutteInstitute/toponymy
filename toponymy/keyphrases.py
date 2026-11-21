@@ -980,6 +980,147 @@ def central_keyphrases(
     return result
 
 
+class CentralKeyphraseAnnotator:
+    """Select each node's keyphrases as those closest to the node's centroid.
+
+    The centroid of a node is the count weighted average of the vectors of the
+    keyphrases its objects contain, taken relative to the mean of all keyphrase
+    vectors. A diverse subset of the keyphrases closest to it is kept. This is the
+    annotator form of ``central_keyphrases``.
+
+    Parameters
+    ----------
+    builder : KeyphraseBuilder
+        A fitted builder. Its ``object_x_keyphrase_matrix_`` must have one row for
+        each object of the corpus, in the order the clusterer was fitted on.
+    embedding_model : TextEmbedderProtocol, optional
+        Embeds keyphrases that have no vector, and all keyphrases if the builder
+        has no vectors.
+    n_keyphrases : int, optional
+        The number of keyphrases to select for each node, by default 16.
+    diversify_alpha : float, optional
+        The largest alpha to try when diversifying the selection, by default 1.0.
+
+    Attributes
+    ----------
+    inputs : tuple of str
+        ``cluster_object_indices``.
+    outputs : tuple of str
+        ``keyphrases``.
+    algorithm_type : dict
+        The nodes of each layer are annotated together, and the result for a layer
+        is one list of keyphrases for each of its nodes.
+
+    Raises
+    ------
+    sklearn.exceptions.NotFittedError
+        If ``builder`` has not been fitted.
+    ValueError
+        If the builder has no keyphrase vectors and there is no ``embedding_model``.
+
+    Notes
+    -----
+    The matrix, keyphrase list and keyphrase vectors are read from ``builder`` once,
+    when the annotator is made, so fitting the builder again does not change it. The
+    matrix and keyphrase list are shared with ``builder``, so changing them in place
+    does. The vectors are copied because keyphrases without a vector are embedded and
+    stored in them as they are met, and the builder's own vectors are left alone.
+
+    The mean of all keyphrase vectors includes the vectors embedded by earlier runs
+    of the annotator, so a layer annotated after the layers below it can differ from
+    the same layer annotated alone. Running the layers in order on a new annotator
+    matches ``central_keyphrases`` on the legacy layers.
+
+    A run must select whole layers, since ``central_keyphrases`` takes the cluster
+    labels of a whole layer; selecting part of a layer raises ``ValueError``.
+    """
+
+    inputs = ("cluster_object_indices",)
+    outputs = ("keyphrases",)
+    algorithm_type = {
+        "cluster_object_indices": (LayerInput(require_complete=True), "multinode")
+    }
+
+    def __init__(
+        self,
+        builder,
+        embedding_model: Optional[TextEmbedderProtocol] = None,
+        n_keyphrases: int = 16,
+        diversify_alpha: float = 1.0,
+    ):
+        fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
+        missing = [name for name in fitted if not hasattr(builder, name)]
+        if missing:
+            raise NotFittedError(
+                f"the keyphrase builder is missing {missing}; fit it first"
+            )
+        vectors = builder.keyphrase_vectors_
+        if vectors is None:
+            if embedding_model is None:
+                raise ValueError(
+                    "the builder has no keyphrase vectors; give the builder an embedder or pass an embedding_model"
+                )
+            vectors = embedding_model.encode(
+                builder.keyphrase_list_, show_progress_bar=False
+            )
+        self.object_x_keyphrase_matrix = builder.object_x_keyphrase_matrix_
+        self.keyphrase_list = builder.keyphrase_list_
+        self.keyphrase_vectors = np.array(vectors)
+        self.embedding_model = embedding_model
+        self.n_keyphrases = n_keyphrases
+        self.diversify_alpha = diversify_alpha
+
+    def annotate(self, layer_nodes, *, cluster_object_indices):
+        """Select keyphrases for the nodes of one layer.
+
+        Parameters
+        ----------
+        layer_nodes : tuple of NodeId
+            The nodes of one layer.
+        cluster_object_indices : Mapping[NodeId, array-like]
+            For each node of the layer, the positions of its objects in the corpus.
+
+        Returns
+        -------
+        dict
+            ``{"keyphrases": {node: list of str}}``.
+
+        Raises
+        ------
+        ValueError
+            If an object position is beyond the rows of the keyphrase matrix, or if
+            a node of the layer has no objects.
+        """
+        n_objects = self.object_x_keyphrase_matrix.shape[0]
+        top = max(
+            (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
+            default=-1,
+        )
+        if top >= n_objects:
+            raise ValueError(
+                f"object index {top} is beyond the {n_objects} rows of the keyphrase "
+                "matrix; was the builder fitted on the same corpus?"
+            )
+        empty = [node for node, ix in cluster_object_indices.items() if not len(ix)]
+        if empty:
+            raise ValueError(f"nodes {empty} have no objects to take keyphrases from")
+
+        labels = np.full(n_objects, -1, dtype=np.int64)
+        for node, indices in cluster_object_indices.items():
+            labels[indices] = node.cluster
+        keyphrases = central_keyphrases(
+            labels,
+            self.object_x_keyphrase_matrix,
+            self.keyphrase_list,
+            self.keyphrase_vectors,
+            self.embedding_model,
+            n_keyphrases=self.n_keyphrases,
+            diversify_alpha=self.diversify_alpha,
+            verbose=False,
+        )
+        return {"keyphrases": {node: keyphrases[node.cluster] for node in layer_nodes}}
+
+
 def bm25_keyphrases(
     cluster_label_vector: np.ndarray,
     object_x_keyphrase_matrix: scipy.sparse.spmatrix,
