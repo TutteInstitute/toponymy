@@ -6,9 +6,11 @@ from sklearn.exceptions import NotFittedError
 
 from toponymy.annotation import AnnotationStore, Executor, NodeId
 from toponymy.keyphrases import (
+    BM25KeyphraseAnnotator,
     CentralKeyphraseAnnotator,
     InformationWeightedKeyphraseAnnotator,
     KeyphraseBuilder,
+    bm25_keyphrases,
     central_keyphrases,
     information_weighted_keyphrases,
 )
@@ -254,6 +256,128 @@ def test_central_annotator_embeds_the_keyphrases_if_the_builder_has_no_vectors(
 
 def test_central_annotator_rejects_a_partial_layer(builder, store):
     annotator = CentralKeyphraseAnnotator(builder)
+    first = next(iter(store.tree.layer(0)))
+
+    with pytest.raises(ValueError, match="only partly selected"):
+        Executor(store).run(annotator, nodes=[first])
+
+
+BM25_PARAMS = dict(n_keyphrases=8, k1=1.0, b=0.3, diversify_alpha=0.6)
+
+
+def legacy_bm25_keyphrases(layers, builder, embedder):
+    vectors = builder.keyphrase_vectors_.copy()
+    return [
+        bm25_keyphrases(
+            layer.cluster_labels,
+            builder.object_x_keyphrase_matrix_,
+            builder.keyphrase_list_,
+            vectors,
+            embedder,
+            **BM25_PARAMS,
+        )
+        for layer in layers
+    ]
+
+
+@pytest.mark.parametrize("builder_name", ["builder", "builder_with_missing_vectors"])
+def test_bm25_annotator_matches_legacy_bm25_keyphrases(
+    builder_name, request, embedder, store, fitted_clusterer
+):
+    builder = request.getfixturevalue(builder_name)
+    annotator = BM25KeyphraseAnnotator(builder, embedder, **BM25_PARAMS)
+
+    Executor(store).run(annotator)
+
+    expected = legacy_bm25_keyphrases(
+        fitted_clusterer.cluster_layers_, builder, embedder
+    )
+    actual = [
+        [store.keyphrases[n] for n in store.tree.layer(layer_id)]
+        for layer_id in range(len(expected))
+    ]
+    assert actual == expected
+
+
+def test_bm25_annotator_embeds_missing_vectors_into_its_own_copy(
+    builder_with_missing_vectors, embedder, store
+):
+    builder = builder_with_missing_vectors
+    before = builder.keyphrase_vectors_.copy()
+    annotator = BM25KeyphraseAnnotator(builder, embedder)
+
+    Executor(store).run(annotator)
+
+    np.testing.assert_array_equal(builder.keyphrase_vectors_, before)
+    assert not np.array_equal(annotator.keyphrase_vectors, before)
+
+
+def test_bm25_annotator_selects_n_keyphrases_for_each_node(builder, embedder, store):
+    annotator = BM25KeyphraseAnnotator(builder, embedder, n_keyphrases=3)
+
+    failures = Executor(store).run(annotator)
+
+    assert failures == {}
+    assert max(len(keyphrases) for keyphrases in store.keyphrases.values()) == 3
+
+
+def test_bm25_annotator_requires_a_fitted_builder():
+    with pytest.raises(NotFittedError):
+        BM25KeyphraseAnnotator(KeyphraseBuilder())
+
+
+def test_bm25_annotate_rejects_indices_beyond_the_keyphrase_matrix(builder):
+    annotator = BM25KeyphraseAnnotator(builder)
+    n_objects = builder.object_x_keyphrase_matrix_.shape[0]
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([n_objects])}
+
+    with pytest.raises(ValueError, match="same corpus"):
+        annotator.annotate(tuple(indices), cluster_object_indices=indices)
+
+
+def test_bm25_annotate_matches_legacy_on_a_node_without_objects(builder, embedder):
+    annotator = BM25KeyphraseAnnotator(builder, embedder, **BM25_PARAMS)
+    indices = {
+        NodeId(0, 0): np.arange(20),
+        NodeId(0, 1): np.array([], dtype=int),
+        NodeId(0, 2): np.arange(20, 40),
+    }
+    labels = np.full(builder.object_x_keyphrase_matrix_.shape[0], -1)
+    labels[:20] = 0
+    labels[20:40] = 2
+
+    result = annotator.annotate(tuple(indices), cluster_object_indices=indices)
+
+    expected = bm25_keyphrases(
+        labels,
+        builder.object_x_keyphrase_matrix_,
+        builder.keyphrase_list_,
+        builder.keyphrase_vectors_.copy(),
+        embedder,
+        **BM25_PARAMS,
+    )
+    assert expected[1] == ["No notable keyphrases"]
+    assert list(result["keyphrases"].values()) == expected
+
+
+def test_bm25_annotator_needs_an_embedding_model_if_the_builder_has_no_vectors(
+    builder_without_vectors,
+):
+    with pytest.raises(ValueError, match="no keyphrase vectors"):
+        BM25KeyphraseAnnotator(builder_without_vectors)
+
+
+def test_bm25_annotator_embeds_the_keyphrases_if_the_builder_has_no_vectors(
+    builder_without_vectors, embedder
+):
+    annotator = BM25KeyphraseAnnotator(builder_without_vectors, embedder)
+
+    n_keyphrases = len(builder_without_vectors.keyphrase_list_)
+    assert annotator.keyphrase_vectors.shape[0] == n_keyphrases
+
+
+def test_bm25_annotator_rejects_a_partial_layer(builder, store):
+    annotator = BM25KeyphraseAnnotator(builder)
     first = next(iter(store.tree.layer(0)))
 
     with pytest.raises(ValueError, match="only partly selected"):
