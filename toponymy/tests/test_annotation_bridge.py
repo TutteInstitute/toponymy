@@ -38,13 +38,14 @@ def make_model(llm, embedder, fitted_clusterer):
 
 @pytest.fixture
 def make_counting_model(embedder, fitted_clusterer):
-    def make(namer, clusterer=fitted_clusterer):
+    def make(namer, clusterer=fitted_clusterer, **kwargs):
         return Toponymy(
             namer,
             embedder,
             clusterer,
             keyphrase_builder=KeyphraseBuilder(n_jobs=1, embedder=embedder),
             verbose=False,
+            **kwargs,
         )
 
     return make
@@ -272,9 +273,13 @@ def test_fit_gives_clashing_topics_distinct_names(
     store = model.store_
     names = model.topic_names_[0]
     assert len(set(names)) == len(names)
-    replaced = store.replaced_topic_names.computed(store.tree.layer(0))
-    assert set(replaced.values()) == {"Same topic"}
+    layer_0 = store.tree.layer(0)
+    assert {store.draft_topic_names[node] for node in layer_0} == {"Same topic"}
+    assert {store.disambiguation[node] for node in layer_0} == {"renamed"}
     assert any("Major subtopics" in p["user"] for p in namer.disambiguation_prompts)
+    # Layer 1 is named from the final layer 0 names, not the drafts
+    naming_prompts = [p for p in namer.prompts if p not in namer.disambiguation_prompts]
+    assert any(names[0] in p["user"] for p in naming_prompts)
     # The embeddings, which the subtopics read, are of the final names
     nodes = list(store.topic_name_embeddings)
     np.testing.assert_allclose(
@@ -285,23 +290,22 @@ def test_fit_gives_clashing_topics_distinct_names(
     )
 
 
-@pytest.mark.parametrize("rename, passes", [(True, 1), (False, 2)])
-def test_fit_disambiguates_again_while_a_name_is_shared_by_more_than_two_topics(
+def test_fit_without_disambiguation_names_topics_directly(
     make_counting_model,
-    make_prefit_clusterer,
     all_sentences,
     object_vectors,
     clusterable_vectors,
-    rename,
-    passes,
 ):
-    # Every topic of the single layer is in the one group
-    namer = CountingNamer(name="Same topic", rename=rename)
-    make_counting_model(namer, make_prefit_clusterer(1)).fit(
+    namer = CountingNamer(name="Same topic")
+    model = make_counting_model(namer, disambiguate=False).fit(
         all_sentences, object_vectors, clusterable_vectors
     )
 
-    assert len(namer.disambiguation_prompts) == passes
+    assert not namer.disambiguation_prompts
+    assert "draft_topic_names" not in model.store_
+    assert "disambiguation" not in model.store_
+    assert set(model.topic_names_[0]) == {"Same topic"}
+    assert len(model.store_.topic_name_embeddings) == len(model.store_.tree)
 
 
 def test_fit_leaves_unnamed_layer_0_topics_out_of_the_subtopics(

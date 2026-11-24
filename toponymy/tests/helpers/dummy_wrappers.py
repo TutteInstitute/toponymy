@@ -1,6 +1,9 @@
 import itertools
 import json
 import re
+import zlib
+
+import numpy as np
 
 from toponymy.llm_wrappers import AsyncLLMWrapper, LLMWrapper
 
@@ -78,6 +81,26 @@ class CountingNamer(DummySingleWrapper):
 
 class DummyAsyncProviderError(Exception):
     pass
+
+
+class NameEmbedder:
+    """Embeds each text as a random vector seeded by the text, so equal texts embed equally."""
+
+    def __init__(self, dimension=8):
+        self.dimension = dimension
+        self.calls = 0
+
+    def encode(self, texts, show_progress_bar=None):
+        self.calls += 1
+        # crc32 is a fast hash that, unlike hash(), is stable across runs
+        return np.array(
+            [
+                np.random.default_rng(zlib.crc32(text.encode())).normal(
+                    size=self.dimension
+                )
+                for text in texts
+            ]
+        )
 
 
 class DummyAsyncFailFastWrapper(AsyncLLMWrapper):

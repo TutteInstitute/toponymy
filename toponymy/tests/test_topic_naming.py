@@ -16,6 +16,7 @@ from toponymy.llm_wrappers import (
     AsyncLLMWrapper,
 )
 from toponymy.templates import PROMPT_TEMPLATES
+from toponymy.tests.helpers.dummy_wrappers import NameEmbedder
 from toponymy.tools.notebook_data_load import load_small_newsgroups
 from toponymy.topic_naming import TopicNameAnnotator, TopicNamerTemplate
 
@@ -79,6 +80,7 @@ def make_topic_name_annotator(executor, namer):
     return TopicNameAnnotator(
         llm_namer=namer,
         topic_name_template=template,
+        embedding_model=NameEmbedder(),
     )
 
 
@@ -264,7 +266,7 @@ class TestTopicNamerTemplate:
 
 class TestTopicNameAnnotatorEndtoEnd:
     def assert_topic_name_completion(self, executor, min_completion=0.7):
-        names = executor.store["draft_topics"]
+        names = executor.store["topic_names"]
         completed = sum(bool(name) for name in names.values())
 
         assert completed / len(names) >= min_completion
@@ -333,6 +335,7 @@ def topic_name_annotator(dummy_namer, topic_namer_template):
     return TopicNameAnnotator(
         llm_namer=dummy_namer,
         topic_name_template=topic_namer_template,
+        embedding_model=NameEmbedder(),
     )
 
 
@@ -348,7 +351,9 @@ class TestTopicNameAnnotator:
     def test_topic_name_annotator_sets_execution_mode(
         self, dummy_namer, topic_namer_template
     ):
-        annotator = TopicNameAnnotator(dummy_namer, topic_namer_template)
+        annotator = TopicNameAnnotator(
+            dummy_namer, topic_namer_template, NameEmbedder()
+        )
 
         expected = (
             "async"
@@ -365,6 +370,7 @@ class TestTopicNameAnnotator:
             TopicNameAnnotator(
                 llm_namer=object(),
                 topic_name_template=topic_namer_template,
+                embedding_model=NameEmbedder(),
             )
 
     def test_topic_name_annotator_build_prompt_without_subtopics(
@@ -418,7 +424,11 @@ class TestTopicNameAnnotator:
             output_topics=output_topics,
         )
 
-        assert result == {"draft_topics": "implied topic"}
+        assert result["topic_names"] == "implied topic"
+        np.testing.assert_array_equal(
+            result["topic_name_embeddings"],
+            NameEmbedder().encode(["implied topic"])[0],
+        )
 
     def test_topic_name_annotator_sync_calls_namer(
         self, topic_store, topic_name_annotator, dummy_namer, topic_namer_template
@@ -436,7 +446,7 @@ class TestTopicNameAnnotator:
             keyphrases=["phrase"],
         )
 
-        assert result == {"draft_topics": "test topic"}
+        assert result["topic_names"] == "test topic"
         assert topic_namer_template.parse_calls == [raw_response]
 
         dummy_namer._call_llm_for_prompt.assert_called_once_with(
@@ -463,7 +473,7 @@ class TestTopicNameAnnotator:
             keyphrases=["phrase"],
         )
 
-        assert result == {"draft_topics": "test topic"}
+        assert result["topic_names"] == "test topic"
         assert topic_namer_template.parse_calls == [raw_response]
 
         dummy_namer._acall_llm_for_prompt.assert_awaited_once_with(
@@ -554,7 +564,7 @@ class TestTopicNameAnnotator:
 
         result = topic_name_annotator.annotate(node)
 
-        assert result == {"draft_topics": "skipped topic"}
+        assert result["topic_names"] == "skipped topic"
 
     def test_topic_name_annotator_raises_on_empty_topic_name(
         self, topic_store, topic_name_annotator, dummy_namer

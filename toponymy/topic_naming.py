@@ -1,5 +1,7 @@
-from collections import defaultdict
+import asyncio
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Dict, List
 from warnings import warn
 
@@ -45,19 +47,19 @@ import numpy as np
 NULL_RESPONSE_VALUE = ""
 
 
-def _topic_name_error_callback(retry_state):
+def _topic_name_error_callback(retry_state, routine="generate_topic_name"):
     """Callback function for when all retries are exhausted. Logs the error and returns an empty string."""
     exc = retry_state.outcome.exception()
     if isinstance(exc, (FailFastLLMError, InvalidLLMInputError)):
         raise exc
     raw_response = getattr(exc, "raw_response", None)
-    warn(f"All retries exhausted for generate_topic_name: {type(exc).__name__}: {exc}")
+    warn(f"All retries exhausted for {routine}: {type(exc).__name__}: {exc}")
     return TopicParseResult(
         topic_payload=NULL_RESPONSE_VALUE, error=exc, raw_response=raw_response
     )
 
 
-def topic_name_retry():
+def topic_name_retry(routine="generate_topic_name"):
     return retry(
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(
@@ -67,8 +69,19 @@ def topic_name_retry():
         ),
         retry=retry_if_exception(_should_retry),
         reraise=True,
-        retry_error_callback=_topic_name_error_callback,
+        retry_error_callback=partial(_topic_name_error_callback, routine=routine),
     )
+
+
+def embed_topic_names(embedding_model, topic_names):
+    """Embed a mapping of node to topic name with one encode call; return node to vector."""
+    nodes = list(topic_names)
+    if not nodes:
+        return {}
+    vectors = embedding_model.encode(
+        [topic_names[node] for node in nodes], show_progress_bar=False
+    )
+    return dict(zip(nodes, vectors))
 
 
 def summary_kind(node, tree, lowest_detail_level=0.0, highest_detail_level=1.0):
@@ -200,11 +213,13 @@ class TopicNamerTemplate:
         new_names = extract(
             llm_output_to_result(raw_response, regex), old_names, raw_response
         )
-        if len(new_names) != len(old_names) or not all(new_names):
+        if len(new_names) != len(old_names) or not all(
+            isinstance(name, str) and name for name in new_names
+        ):
             raise ValueError(
                 f"Expected {len(old_names)} nonempty names for {old_names}, got {new_names}"
             )
-        return [str(name) for name in new_names]
+        return list(new_names)
 
 
 class TopicNameAnnotator:
@@ -220,10 +235,11 @@ class TopicNameAnnotator:
         "subtopics",
         "keyphrases",
     ]  # use it if it's there. don't if not.
-    outputs = ["draft_topics"]
+    outputs = ["topic_names", "topic_name_embeddings"]
     algorithm_input_type = {
         "exemplars": "node",
-        "output_topics": DescendantsInput(from_output="draft_topics"),
+        # The final names of the layers below, even when this annotator writes drafts
+        "output_topics": DescendantsInput(source="topic_names"),
         "subtopics": "node",
         "keyphrases": "node",
     }
@@ -233,9 +249,10 @@ class TopicNameAnnotator:
     max_tokens: int | None = None
     temperature: int | None = None
 
-    def __init__(self, llm_namer=None, topic_name_template=None):
+    def __init__(self, llm_namer, topic_name_template, embedding_model):
         self.llm_namer = llm_namer
         self.topic_name_template = topic_name_template
+        self.embedding_model = embedding_model
         if isinstance(self.llm_namer, LLMWrapper):
             self.execution_mode = "sync"
         elif isinstance(self.llm_namer, AsyncLLMWrapper):
@@ -313,6 +330,12 @@ class TopicNameAnnotator:
                 return list(output_topics.values())[0]
         return None
 
+    def _outputs(self, node, topic_name):
+        if topic_name == "":
+            raise ValueError("Failed to generate a valid topic name")
+        embedding = embed_topic_names(self.embedding_model, {node: topic_name})[node]
+        return {"topic_names": topic_name, "topic_name_embeddings": embedding}
+
     @topic_name_retry()
     def _generate_and_parse(self, prompt):
         """
@@ -363,7 +386,7 @@ class TopicNameAnnotator:
 
         implied = self._implied_topic(output_topics)
         if implied is not None:
-            return {"draft_topics": implied}
+            return self._outputs(node, implied)
 
         prompt = self._build_prompt(
             node,
@@ -382,10 +405,7 @@ class TopicNameAnnotator:
         else:
             topic_name = prompt.removeprefix("[!SKIP!]: ")
 
-        if topic_name == "":
-            raise ValueError("Failed to generate a valid topic name")
-
-        return {"draft_topics": topic_name}  # keys have to match outputs
+        return self._outputs(node, topic_name)
 
     async def aannotate(
         self,
@@ -403,7 +423,7 @@ class TopicNameAnnotator:
 
         implied = self._implied_topic(output_topics)
         if implied is not None:
-            return {"draft_topics": implied}
+            return self._outputs(node, implied)
 
         prompt = self._build_prompt(
             node,
@@ -422,19 +442,21 @@ class TopicNameAnnotator:
         else:
             topic_name = prompt.removeprefix("[!SKIP!]: ")
 
-        if topic_name == "":
-            raise ValueError("Failed to generate a valid topic name")
-        return {"draft_topics": topic_name}  # keys have to match outputs
+        return self._outputs(node, topic_name)
 
 
 class TopicDisambiguationAnnotator:
-    """Give distinct names to topics of a layer whose names are too similar.
+    """Turn draft topic names into names that are distinct within each layer.
 
-    The nodes of each layer are grouped by complete linkage clustering of their name
-    embeddings, as the legacy layers do, and each group of up to
-    ``max_topics_per_prompt`` topics is renamed with one LLM call. ``topic_names`` is
-    updated in place, so a group whose call fails keeps its names, and
-    ``replaced_topic_names`` records each grouped node's name before the call.
+    Each layer is one unit. Its topics are grouped by complete linkage clustering of
+    their draft name embeddings, as the legacy layers do, and each group of up to
+    ``max_topics_per_prompt`` topics is renamed with one LLM call. As in the legacy
+    layers, a second pass runs if a name is still shared by more than two topics.
+    Topics that do not clash keep their draft names.
+
+    ``disambiguation`` records what happened to each topic: ``"renamed"``,
+    ``"unchanged"``, or ``"failed: <reason>"`` when the call for its group failed,
+    in which case it keeps its draft name.
 
     Parameters
     ----------
@@ -442,16 +464,18 @@ class TopicDisambiguationAnnotator:
         The LLM that renames the topics.
     topic_name_template : TopicNamerTemplate
         Renders the prompts and parses the responses.
+    embedding_model : TextEmbedderProtocol
+        Embeds the new names.
     max_topics_per_prompt : int, optional
         Larger groups are split into chunks of this size, by default 12.
     """
 
-    inputs = ("topic_names", "topic_name_embeddings")
+    inputs = ("draft_topic_names", "draft_topic_name_embeddings")
     optional_inputs = ("exemplars", "keyphrases", "subtopics", "child_topics")
-    outputs = ("topic_names", "replaced_topic_names")
+    outputs = ("topic_names", "topic_name_embeddings", "disambiguation")
     algorithm_input_type = {
-        "topic_names": MultiNodeInput(from_output="topic_names"),
-        "topic_name_embeddings": MultiNodeInput(groups="clashing_groups"),
+        "draft_topic_names": MultiNodeInput(groups="layers"),
+        "draft_topic_name_embeddings": "multinode",
         "exemplars": "multinode",
         "keyphrases": "multinode",
         "subtopics": "multinode",
@@ -459,8 +483,15 @@ class TopicDisambiguationAnnotator:
     }
     algorithm_output_type = "multinode"
     temperature = 0.4
+    max_passes = 2
 
-    def __init__(self, llm_namer, topic_name_template, max_topics_per_prompt=12):
+    def __init__(
+        self,
+        llm_namer,
+        topic_name_template,
+        embedding_model,
+        max_topics_per_prompt=12,
+    ):
         if isinstance(llm_namer, LLMWrapper):
             self.execution_mode = "sync"
         elif isinstance(llm_namer, AsyncLLMWrapper):
@@ -469,34 +500,43 @@ class TopicDisambiguationAnnotator:
             raise TypeError("llm_namer must be an LLMWrapper or AsyncLLMWrapper")
         self.llm_namer = llm_namer
         self.topic_name_template = topic_name_template
+        self.embedding_model = embedding_model
         self.max_topics_per_prompt = max_topics_per_prompt
         self.max_tokens = getattr(llm_namer, "max_tokens_cluster_names", 1024)
 
-    def clashing_groups(self, topic_name_embeddings):
-        """Group the nodes of each layer whose names embed close together."""
+    def layers(self, draft_topic_names):
+        """One unit per layer, of the topics that have a draft name."""
         by_layer = defaultdict(list)
-        for node in topic_name_embeddings:
+        for node in draft_topic_names:
             by_layer[node.layer].append(node)
+        return [tuple(nodes) for nodes in by_layer.values()]
+
+    def _clashing_groups(self, vectors):
+        """The groups of topics whose names embed close together."""
+        nodes = list(vectors)
+        if len(nodes) < 2:
+            return []
+        clusters, labels = cluster_topic_names_for_renaming(
+            topic_names=[],
+            topic_name_embeddings=np.asarray([vectors[node] for node in nodes]),
+        )
         groups = []
-        for nodes in by_layer.values():
-            if len(nodes) < 2:
-                continue
-            vectors = np.asarray([topic_name_embeddings[node] for node in nodes])
-            clusters, labels = cluster_topic_names_for_renaming(
-                topic_names=[], topic_name_embeddings=vectors
-            )
-            for cluster in clusters:
-                members = [
-                    node for node, label in zip(nodes, labels) if label == cluster
-                ]
-                for start in range(0, len(members), self.max_topics_per_prompt):
-                    chunk = members[start : start + self.max_topics_per_prompt]
-                    if len(chunk) > 1:
-                        groups.append(tuple(chunk))
+        for cluster in clusters:
+            members = [node for node, label in zip(nodes, labels) if label == cluster]
+            for start in range(0, len(members), self.max_topics_per_prompt):
+                chunk = members[start : start + self.max_topics_per_prompt]
+                if len(chunk) > 1:
+                    groups.append(tuple(chunk))
         return groups
 
     def _build_prompt(
-        self, group, old_names, exemplars, keyphrases, subtopics, child_topics
+        self,
+        group,
+        old_names,
+        exemplars=None,
+        keyphrases=None,
+        subtopics=None,
+        child_topics=None,
     ):
         def per_node(values):
             return [values[node] if values else [] for node in group]
@@ -521,13 +561,44 @@ class TopicDisambiguationAnnotator:
             other_subtopics=per_node(subtopics),
         )
 
+    def _requests(self, names, vectors, context):
+        """The (group, old names, prompt) of each group of clashing topics."""
+        requests = []
+        for group in self._clashing_groups(vectors):
+            old_names = [names[node] for node in group]
+            prompt = self._build_prompt(group, old_names, **context)
+            requests.append((group, old_names, prompt))
+        return requests
+
+    def _finish_pass(self, requests, results, names, vectors, failures):
+        """Apply a pass's results; return whether a name is still shared by more than two topics."""
+        renamed = {}
+        for (group, old_names, _), result in zip(requests, results):
+            if result.error:
+                reason = f"failed: {type(result.error).__name__}: {result.error}"
+                failures.update(dict.fromkeys(group, reason))
+                continue
+            for node, old, new in zip(group, old_names, result.topic_payload):
+                if new != old:
+                    renamed[node] = new
+        names.update(renamed)
+        vectors.update(embed_topic_names(self.embedding_model, renamed))
+        return bool(requests) and max(Counter(names.values()).values()) > 2
+
     @staticmethod
-    def _outputs(group, old_names, result):
-        if result.error:
-            raise result.error
+    def _outputs(draft_names, names, vectors, failures):
+        disambiguation = {
+            node: (
+                "renamed"
+                if names[node] != draft_names[node]
+                else failures.get(node, "unchanged")
+            )
+            for node in names
+        }
         return {
-            "topic_names": dict(zip(group, result.topic_payload)),
-            "replaced_topic_names": dict(zip(group, old_names)),
+            "topic_names": names,
+            "topic_name_embeddings": vectors,
+            "disambiguation": disambiguation,
         }
 
     def _parse(self, raw_response, old_names):
@@ -542,7 +613,7 @@ class TopicDisambiguationAnnotator:
             topic_payload=new_names, raw_response=raw_response, error=None
         )
 
-    @topic_name_retry()
+    @topic_name_retry("TopicDisambiguationAnnotator")
     def _generate_and_parse(self, prompt, old_names):
         raw_response = self.llm_namer._call_llm_for_prompt(
             prompt,
@@ -552,7 +623,7 @@ class TopicDisambiguationAnnotator:
         )
         return self._parse(raw_response, old_names)
 
-    @topic_name_retry()
+    @topic_name_retry("TopicDisambiguationAnnotator")
     async def _agenerate_and_parse(self, prompt, old_names):
         raw_response = await self.llm_namer._acall_llm_for_prompt(
             prompt,
@@ -563,38 +634,39 @@ class TopicDisambiguationAnnotator:
         return self._parse(raw_response, old_names)
 
     def annotate(
-        self,
-        group,
-        *,
-        topic_names,
-        topic_name_embeddings,
-        exemplars=None,
-        keyphrases=None,
-        subtopics=None,
-        child_topics=None,
+        self, layer, *, draft_topic_names, draft_topic_name_embeddings, **context
     ):
-        old_names = [topic_names[node] for node in group]
-        prompt = self._build_prompt(
-            group, old_names, exemplars, keyphrases, subtopics, child_topics
+        names, vectors, failures = (
+            dict(draft_topic_names),
+            dict(draft_topic_name_embeddings),
+            {},
         )
-        return self._outputs(
-            group, old_names, self._generate_and_parse(prompt, old_names)
-        )
+        for _ in range(self.max_passes):
+            requests = self._requests(names, vectors, context)
+            results = [
+                self._generate_and_parse(prompt, old_names)
+                for _, old_names, prompt in requests
+            ]
+            if not self._finish_pass(requests, results, names, vectors, failures):
+                break
+        return self._outputs(draft_topic_names, names, vectors, failures)
 
     async def aannotate(
-        self,
-        group,
-        *,
-        topic_names,
-        topic_name_embeddings,
-        exemplars=None,
-        keyphrases=None,
-        subtopics=None,
-        child_topics=None,
+        self, layer, *, draft_topic_names, draft_topic_name_embeddings, **context
     ):
-        old_names = [topic_names[node] for node in group]
-        prompt = self._build_prompt(
-            group, old_names, exemplars, keyphrases, subtopics, child_topics
+        names, vectors, failures = (
+            dict(draft_topic_names),
+            dict(draft_topic_name_embeddings),
+            {},
         )
-        result = await self._agenerate_and_parse(prompt, old_names)
-        return self._outputs(group, old_names, result)
+        for _ in range(self.max_passes):
+            requests = self._requests(names, vectors, context)
+            results = await asyncio.gather(
+                *(
+                    self._agenerate_and_parse(prompt, old_names)
+                    for _, old_names, prompt in requests
+                )
+            )
+            if not self._finish_pass(requests, results, names, vectors, failures):
+                break
+        return self._outputs(draft_topic_names, names, vectors, failures)
