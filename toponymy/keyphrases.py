@@ -887,7 +887,8 @@ def bm25_keyphrases(
     df = (class_count_matrix > 0).sum(axis=0)
     idf = np.log(1 + (N - df + 0.5) / (df + 0.5))
 
-    doc_lengths = count_matrix.sum(axis=1)
+    # Each cluster is one BM25 document, so lengths are per cluster, not per object
+    doc_lengths = np.asarray(class_count_matrix.sum(axis=1)).ravel()
     avg_doc_length = doc_lengths.mean()
 
     for i in range(class_count_matrix.shape[0]):
