@@ -6,8 +6,10 @@ from sklearn.exceptions import NotFittedError
 
 from toponymy.annotation import AnnotationStore, Executor, NodeId
 from toponymy.keyphrases import (
+    CentralKeyphraseAnnotator,
     InformationWeightedKeyphraseAnnotator,
     KeyphraseBuilder,
+    central_keyphrases,
     information_weighted_keyphrases,
 )
 
@@ -147,6 +149,111 @@ def test_annotator_embeds_the_keyphrases_if_the_builder_has_no_vectors(
 
 def test_annotator_rejects_a_partial_layer(builder, store):
     annotator = InformationWeightedKeyphraseAnnotator(builder)
+    first = next(iter(store.tree.layer(0)))
+
+    with pytest.raises(ValueError, match="only partly selected"):
+        Executor(store).run(annotator, nodes=[first])
+
+
+CENTRAL_PARAMS = dict(n_keyphrases=8, diversify_alpha=0.6)
+
+
+def legacy_central_keyphrases(layers, builder, embedder):
+    vectors = builder.keyphrase_vectors_.copy()
+    return [
+        central_keyphrases(
+            layer.cluster_labels,
+            builder.object_x_keyphrase_matrix_,
+            builder.keyphrase_list_,
+            vectors,
+            embedder,
+            **CENTRAL_PARAMS,
+        )
+        for layer in layers
+    ]
+
+
+@pytest.mark.parametrize("builder_name", ["builder", "builder_with_missing_vectors"])
+def test_central_annotator_matches_legacy_central_keyphrases(
+    builder_name, request, embedder, store, fitted_clusterer
+):
+    builder = request.getfixturevalue(builder_name)
+    annotator = CentralKeyphraseAnnotator(builder, embedder, **CENTRAL_PARAMS)
+
+    Executor(store).run(annotator)
+
+    expected = legacy_central_keyphrases(
+        fitted_clusterer.cluster_layers_, builder, embedder
+    )
+    actual = [
+        [store.keyphrases[n] for n in store.tree.layer(layer_id)]
+        for layer_id in range(len(expected))
+    ]
+    assert actual == expected
+
+
+def test_central_annotator_embeds_missing_vectors_into_its_own_copy(
+    builder_with_missing_vectors, embedder, store
+):
+    builder = builder_with_missing_vectors
+    before = builder.keyphrase_vectors_.copy()
+    annotator = CentralKeyphraseAnnotator(builder, embedder)
+
+    Executor(store).run(annotator)
+
+    np.testing.assert_array_equal(builder.keyphrase_vectors_, before)
+    assert not np.array_equal(annotator.keyphrase_vectors, before)
+
+
+def test_central_annotator_selects_n_keyphrases_for_each_node(builder, embedder, store):
+    annotator = CentralKeyphraseAnnotator(builder, embedder, n_keyphrases=3)
+
+    failures = Executor(store).run(annotator)
+
+    assert failures == {}
+    assert max(len(keyphrases) for keyphrases in store.keyphrases.values()) == 3
+
+
+def test_central_annotator_requires_a_fitted_builder():
+    with pytest.raises(NotFittedError):
+        CentralKeyphraseAnnotator(KeyphraseBuilder())
+
+
+def test_central_annotate_rejects_indices_beyond_the_keyphrase_matrix(builder):
+    annotator = CentralKeyphraseAnnotator(builder)
+    n_objects = builder.object_x_keyphrase_matrix_.shape[0]
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([n_objects])}
+
+    with pytest.raises(ValueError, match="same corpus"):
+        annotator.annotate(tuple(indices), cluster_object_indices=indices)
+
+
+def test_central_annotate_rejects_a_node_without_objects(builder):
+    annotator = CentralKeyphraseAnnotator(builder)
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([], dtype=int)}
+
+    with pytest.raises(ValueError, match="no objects"):
+        annotator.annotate(tuple(indices), cluster_object_indices=indices)
+
+
+def test_central_annotator_needs_an_embedding_model_if_the_builder_has_no_vectors(
+    builder_without_vectors,
+):
+    with pytest.raises(ValueError, match="no keyphrase vectors"):
+        CentralKeyphraseAnnotator(builder_without_vectors)
+
+
+def test_central_annotator_embeds_the_keyphrases_if_the_builder_has_no_vectors(
+    builder_without_vectors, embedder
+):
+    annotator = CentralKeyphraseAnnotator(builder_without_vectors, embedder)
+
+    n_keyphrases = len(builder_without_vectors.keyphrase_list_)
+    assert annotator.keyphrase_vectors.shape[0] == n_keyphrases
+
+
+def test_central_annotator_rejects_a_partial_layer(builder, store):
+    annotator = CentralKeyphraseAnnotator(builder)
     first = next(iter(store.tree.layer(0)))
 
     with pytest.raises(ValueError, match="only partly selected"):
