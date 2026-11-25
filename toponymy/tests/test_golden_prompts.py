@@ -60,6 +60,7 @@ class TestGoldenPrompts:
             example_id=example_id,
             verbose=True,
             prompt_templates=prompt_templates,
+            max_tokens=case.max_tokens,
         )
 
         assert_valid_topic_name_result(result, example_id, template_id)
@@ -78,10 +79,16 @@ class TestGoldenPrompts:
         prompt_templates = case.templates
         try:
             sync_result = namer.run_prompt_example(
-                example_id=example_id, verbose=True, prompt_templates=prompt_templates
+                example_id=example_id,
+                verbose=True,
+                prompt_templates=prompt_templates,
+                max_tokens=case.max_tokens,
             )
             async_result = await namer.arun_prompt_example(
-                example_id=example_id, verbose=True, prompt_templates=prompt_templates
+                example_id=example_id,
+                verbose=True,
+                prompt_templates=prompt_templates,
+                max_tokens=case.max_tokens,
             )
         finally:
             await namer.close()

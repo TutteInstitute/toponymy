@@ -5,6 +5,7 @@ import warnings
 
 import pytest
 
+from toponymy.prompt_construction import render_prompt
 from toponymy.templates import MULTILINGUAL_EN_FR_PROMPT_TEMPLATES, SUMMARY_KINDS
 from toponymy.tools.load_prompt_examples import example_ids, load_prompt_params
 
@@ -332,8 +333,8 @@ def test_check_part_enforces_max_paragraphs():
         check_part("Goalie masks.\n\nMore masks.", shape, HOCKEY_EN, (1, None), {})
 
 
-def test_check_part_enforces_pattern_hits():
-    with pytest.raises(AssertionError, match="matched 0"):
+def test_check_part_warns_on_missing_vocabulary():
+    with pytest.warns(UserWarning, match="matched 0"):
         check_part("Ice skating", NAME_SHAPE, HOCKEY_EN, (1, 3), {})
 
 
@@ -423,6 +424,15 @@ def test_missing_vocabulary_is_reported(monkeypatch):
 
 
 @pytest.mark.filterwarnings("ignore::UserWarning")
+def test_french_name_copying_the_english_name_is_rejected():
+    name = " ".join(EN_WORDS[: hockey_name_words()])
+    joined = multilingual_result(name, name)
+    result = topic_name_result(joined["topic_result"], joined["response"])
+    with pytest.raises(AssertionError, match="should not copy"):
+        assert_valid_topic_name_result(result, "hockey_masks", "multilingual_en_fr")
+
+
+@pytest.mark.filterwarnings("ignore::UserWarning")
 def test_analysis_repeating_summary_is_rejected():
     name = " ".join(EN_WORDS[: hockey_name_words()])
     result = topic_name_result((name, SUMMARY_TEXT, SUMMARY_TEXT))
@@ -453,6 +463,17 @@ def test_vocabulary_patterns_compile(example_id):
     for patterns in EXAMPLE_VOCABULARY[example_id].values():
         for pattern in patterns:
             re.compile(pattern)
+
+
+@pytest.mark.parametrize("template_id", TEMPLATE_CASES)
+@pytest.mark.parametrize("example_id", EXAMPLE_VOCABULARY)
+def test_rendered_prompt_contains_the_example_content(example_id, template_id):
+    params = load_prompt_params(example_id)
+    prompt = render_prompt(TEMPLATE_CASES[template_id].templates["layer"], params)
+    for keyword in params["cluster_keywords"][:5]:
+        assert keyword in prompt["user"], (keyword, template_id)
+    for sentence in params["cluster_sentences"]:
+        assert sentence.splitlines()[0] in prompt["user"], template_id
 
 
 @pytest.mark.parametrize("template_id", TEMPLATE_CASES)
