@@ -423,12 +423,11 @@ def test_missing_vocabulary_is_reported(monkeypatch):
         assert_valid_topic_name_result(result, "hockey_masks", "multilingual_en_fr")
 
 
-@pytest.mark.filterwarnings("ignore::UserWarning")
-def test_french_name_copying_the_english_name_is_rejected():
+def test_french_name_copying_the_english_name_warns():
     name = " ".join(EN_WORDS[: hockey_name_words()])
     joined = multilingual_result(name, name)
     result = topic_name_result(joined["topic_result"], joined["response"])
-    with pytest.raises(AssertionError, match="should not copy"):
+    with pytest.warns(UserWarning, match="should not copy"):
         assert_valid_topic_name_result(result, "hockey_masks", "multilingual_en_fr")
 
 

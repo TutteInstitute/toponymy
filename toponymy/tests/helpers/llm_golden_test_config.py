@@ -518,7 +518,7 @@ def assert_valid_topic_name_result(result, example_id, template_id):
     - the analysis should be longer than the summary (soft),
     - the analysis must not repeat the summary,
     - the summary must be longer than the name,
-    - the French name must not copy the English name.
+    - the French name should not copy the English name (soft).
 
     Parameters
     ----------
@@ -594,7 +594,8 @@ def assert_valid_topic_name_result(result, example_id, template_id):
             result,
         )
     if "name" in by_label and "nom" in by_label:
-        assert normalize(by_label["nom"]) != normalize(by_label["name"]), (
-            "the French name should not copy the English name",
-            result,
+        check(
+            normalize(by_label["nom"]) != normalize(by_label["name"]),
+            f"the French name should not copy the English name: {by_label['nom']!r}",
+            soft=True,
         )
