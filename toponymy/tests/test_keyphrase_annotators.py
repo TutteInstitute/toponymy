@@ -89,6 +89,7 @@ def test_annotator_matches_legacy_information_weighted_keyphrases(
         [store.keyphrases[n] for n in store.tree.layer(layer_id)]
         for layer_id in range(len(expected))
     ]
+    assert_plain_keyphrase_lists(actual)
     assert actual == expected
 
 
@@ -193,6 +194,7 @@ def test_central_annotator_matches_legacy_central_keyphrases(
         [store.keyphrases[n] for n in store.tree.layer(layer_id)]
         for layer_id in range(len(expected))
     ]
+    assert_plain_keyphrase_lists(actual)
     assert actual == expected
 
 
@@ -298,6 +300,7 @@ def test_bm25_annotator_matches_legacy_bm25_keyphrases(
         [store.keyphrases[n] for n in store.tree.layer(layer_id)]
         for layer_id in range(len(expected))
     ]
+    assert_plain_keyphrase_lists(actual)
     assert actual == expected
 
 
@@ -405,6 +408,13 @@ def legacy_submodular_keyphrases(layers, builder, embedder, submodular_function)
     ]
 
 
+def assert_plain_keyphrase_lists(layers):
+    for layer in layers:
+        for phrases in layer:
+            assert type(phrases) is list
+            assert all(type(phrase) is str for phrase in phrases)
+
+
 def as_lists(layers_keyphrases):
     return [[list(keyphrases) for keyphrases in layer] for layer in layers_keyphrases]
 
@@ -433,7 +443,8 @@ def test_submodular_annotator_matches_legacy_submodular_keyphrases(
         [store.keyphrases[n] for n in store.tree.layer(layer_id)]
         for layer_id in range(len(expected))
     ]
-    assert as_lists(actual) == as_lists(expected)
+    assert_plain_keyphrase_lists(actual)
+    assert actual == as_lists(expected)
 
 
 def test_submodular_annotator_embeds_missing_vectors_into_its_own_copy(
