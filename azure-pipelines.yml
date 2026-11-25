@@ -192,51 +192,51 @@ stages:
           includeReleaseCandidates: ${{ parameters.includeReleaseCandidates }}
           showCapture: 'stdout'
 
-  - stage: BuildPublishArtifact
-    dependsOn: RunAllTests
-    condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/release-'), eq(variables.triggeredByPullRequest, false), not(canceled()))
-    jobs:
-      - job: BuildArtifacts
-        timeoutInMinutes: 90
-        displayName: Build source dists and wheels
-        pool:
-          vmImage: 'ubuntu-latest'
-        steps:
-        - task: UsePythonVersion@0
-          inputs:
-            versionSpec: '3.12'
-          displayName: 'Use Python 3.12'
+  # - stage: BuildPublishArtifact
+  #   dependsOn: RunAllTests
+  #   condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/tags/release-'), eq(variables.triggeredByPullRequest, false), not(canceled()))
+  #   jobs:
+  #     - job: BuildArtifacts
+  #       timeoutInMinutes: 90
+  #       displayName: Build source dists and wheels
+  #       pool:
+  #         vmImage: 'ubuntu-latest'
+  #       steps:
+  #       - task: UsePythonVersion@0
+  #         inputs:
+  #           versionSpec: '3.12'
+  #         displayName: 'Use Python 3.12'
 
-        - script: |
-            python -m pip install --upgrade pip
-            python -m pip install -U uv
-            uv sync --extra llama --python "$(python -c 'import sys; print(sys.executable)')"
-          displayName: 'Install dependencies'
+  #       - script: |
+  #           python -m pip install --upgrade pip
+  #           python -m pip install -U uv
+  #           uv sync --extra llama --python "$(python -c 'import sys; print(sys.executable)')"
+  #         displayName: 'Install dependencies'
 
-        - script: |
-            uv build --no-sources --sdist --wheel
-          displayName: 'Build package'
+  #       - script: |
+  #           uv build --no-sources --sdist --wheel
+  #         displayName: 'Build package'
 
-        - bash: |
-            export PACKAGE_VERSION="$(uv version --short)"
-            echo "Package Version: ${PACKAGE_VERSION}"
-            echo "##vso[task.setvariable variable=packageVersionFormatted;]release-${PACKAGE_VERSION}"
-          displayName: 'Get package version'
+  #       - bash: |
+  #           export PACKAGE_VERSION="$(uv version --short)"
+  #           echo "Package Version: ${PACKAGE_VERSION}"
+  #           echo "##vso[task.setvariable variable=packageVersionFormatted;]release-${PACKAGE_VERSION}"
+  #         displayName: 'Get package version'
 
-        - script: |
-            echo "Version in git tag $(Build.SourceBranchName) does not match version derived from setup.py $(packageVersionFormatted)"
-            exit 1
-          displayName: Raise error if version doesnt match tag
-          condition: and(succeeded(), ne(variables['Build.SourceBranchName'], variables['packageVersionFormatted']))
+  #       - script: |
+  #           echo "Version in git tag $(Build.SourceBranchName) does not match version derived from setup.py $(packageVersionFormatted)"
+  #           exit 1
+  #         displayName: Raise error if version doesnt match tag
+  #         condition: and(succeeded(), ne(variables['Build.SourceBranchName'], variables['packageVersionFormatted']))
 
-        - task: DownloadSecureFile@1
-          name: PYPIRC_CONFIG
-          displayName: 'Download pypirc'
-          inputs:
-            secureFile: 'pypirc'
+  #       - task: DownloadSecureFile@1
+  #         name: PYPIRC_CONFIG
+  #         displayName: 'Download pypirc'
+  #         inputs:
+  #           secureFile: 'pypirc'
 
-        - script: |
-            uvx twine check dist/*
-            uvx twine upload --repository pypi --config-file $(PYPIRC_CONFIG.secureFilePath) dist/*
-          displayName: 'Upload to PyPI'
-          condition: and(succeeded(), eq(variables['Build.SourceBranchName'], variables['packageVersionFormatted']))
+  #       - script: |
+  #           uvx twine check dist/*
+  #           uvx twine upload --repository pypi --config-file $(PYPIRC_CONFIG.secureFilePath) dist/*
+  #         displayName: 'Upload to PyPI'
+  #         condition: and(succeeded(), eq(variables['Build.SourceBranchName'], variables['packageVersionFormatted']))
