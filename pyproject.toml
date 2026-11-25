@@ -12,14 +12,15 @@ readme = "README.rst"
 keywords = ["topic modeing", "representation", "cluster", "clustering", "large language models", "LLM", "topic naming"]
 license = "MIT"
 classifiers = [
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Development Status :: 4 - Beta",
     "Operating System :: OS Independent",
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "apricot-select",
     "datasets",
@@ -34,6 +35,7 @@ dependencies = [
     "scipy",
     "tenacity",
     "tokenizers",
+    "torch>=2.15.0; python_version >= '3.15'",
     "tqdm",
     "transformers>=4.41.0,<5.0.0", # upper bound transformers for compatibility with sentence-transformers
     "vectorizers",
@@ -41,6 +43,14 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/TutteInstitute/toponymy"
+
+# pylabeladjust (via datamapplot in the dev extra) caps pandas<3. pandas 2.x has no
+# Python 3.15 Windows wheels, so use pandas 3 on 3.15 and keep 2.x elsewhere.
+[tool.uv]
+override-dependencies = [
+    "pandas>=3.0.6; python_version >= '3.15'",
+    "pandas>=1.0,<3; python_version < '3.15'",
+]
 
 [tool.pytest.ini_options]
 markers = [
