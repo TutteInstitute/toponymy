@@ -130,7 +130,7 @@ def test_annotate_rejects_indices_beyond_the_keyphrase_matrix(builder):
 
 def test_annotate_needs_two_nodes_with_objects(builder):
     annotator = InformationWeightedKeyphraseAnnotator(builder)
-    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([], dtype=int)}
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([])}
 
     with pytest.raises(ValueError, match="at least two nodes"):
         annotator.annotate(tuple(indices), cluster_object_indices=indices)
@@ -236,7 +236,7 @@ def test_central_annotate_rejects_indices_beyond_the_keyphrase_matrix(builder):
 
 def test_central_annotate_rejects_a_node_without_objects(builder):
     annotator = CentralKeyphraseAnnotator(builder)
-    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([], dtype=int)}
+    indices = {NodeId(0, 0): np.arange(5), NodeId(0, 1): np.array([])}
 
     with pytest.raises(ValueError, match="no objects"):
         annotator.annotate(tuple(indices), cluster_object_indices=indices)
