@@ -727,6 +727,7 @@ def _checked_object_count(matrix, cluster_object_indices):
 
 
 def _cluster_labels(n_objects, cluster_object_indices):
+    # Objects in no node of the layer, such as noise, keep label -1
     labels = np.full(n_objects, -1, dtype=np.int64)
     for node, indices in cluster_object_indices.items():
         labels[indices] = node.cluster
