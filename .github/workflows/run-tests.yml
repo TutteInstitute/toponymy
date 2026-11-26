@@ -70,7 +70,7 @@ jobs:
         fi
         uv sync "${args[@]}"
     - name: Check Black formatting
-      run: uv run black --check --diff --target-version py310 toponymy/ doc/
+      run: uv run black --check --diff --target-version py311 toponymy/ doc/
 
   PrepareTests:
     runs-on: ubuntu-latest
