@@ -130,6 +130,25 @@ jobs:
         else:
             raise RuntimeError("No Ollama test model could be downloaded")
         PY
+    - name: Print Ollama info
+      if: inputs.suite != 'external'
+      run: |
+        uv run python - <<'PY'
+        import subprocess
+
+        version = subprocess.run(["ollama", "--version"], capture_output=True, text=True)
+        print("----------------------------------")
+        print("VERSION")
+        print("----------------------------------")
+        print(f"{version.stdout}")
+
+        print("----------------------------------")
+        print("Ollama list")
+        print("----------------------------------")
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+        print(f"{result.stdout}")
+        
+        PY
     - name: Inspect disk usage
       if: inputs.suite != 'external'
       run: |
@@ -149,7 +168,7 @@ jobs:
         if [[ "$TEST_SUITE" == "notebooks" ]]; then
           target=toponymy/tests/test_doc_notebooks.py
         fi
-        uv run pytest "$target" -m "not external" --show-capture=no -v --disable-warnings \
+        uv run pytest "$target" -m "not external" --show-capture=no -v \
           --junitxml=junit/test-results.xml \
           --cov=toponymy/ --cov-report=xml --cov-report=html
     - name: Run external tests

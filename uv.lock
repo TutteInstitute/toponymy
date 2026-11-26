@@ -16,6 +16,8 @@ resolution-markers = [
 overrides = [
     { name = "pandas", marker = "python_full_version < '3.15'", specifier = ">=1.0,<3" },
     { name = "pandas", marker = "python_full_version >= '3.15'", specifier = ">=3.0.6" },
+    { name = "torch", marker = "python_full_version < '3.15'", specifier = ">=2.2" },
+    { name = "torch", marker = "python_full_version >= '3.15'", specifier = ">=2.15.0" },
 ]
 
 [[package]]
@@ -6191,7 +6193,6 @@ dependencies = [
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
     { name = "tenacity" },
     { name = "tokenizers" },
-    { name = "torch", marker = "python_full_version >= '3.15'" },
     { name = "tqdm" },
     { name = "transformers" },
     { name = "vectorizers" },
@@ -6290,7 +6291,6 @@ requires-dist = [
     { name = "sphinx-rtd-theme", marker = "extra == 'doc'", specifier = ">=3.1.0" },
     { name = "tenacity" },
     { name = "tokenizers" },
-    { name = "torch", marker = "python_full_version >= '3.15'", specifier = ">=2.15.0" },
     { name = "tqdm" },
     { name = "traitlets", marker = "extra == 'dev'" },
     { name = "transformers", specifier = ">=4.41.0,<5.0.0" },

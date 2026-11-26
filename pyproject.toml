@@ -35,7 +35,6 @@ dependencies = [
     "scipy",
     "tenacity",
     "tokenizers",
-    "torch>=2.15.0; python_version >= '3.15'",
     "tqdm",
     "transformers>=4.41.0,<5.0.0", # upper bound transformers for compatibility with sentence-transformers
     "vectorizers",
@@ -50,6 +49,8 @@ Homepage = "https://github.com/TutteInstitute/toponymy"
 override-dependencies = [
     "pandas>=3.0.6; python_version >= '3.15'",
     "pandas>=1.0,<3; python_version < '3.15'",
+    "torch>=2.15.0; python_version >= '3.15'",
+    "torch>=2.2; python_version < '3.15'",
 ]
 
 [tool.pytest.ini_options]
