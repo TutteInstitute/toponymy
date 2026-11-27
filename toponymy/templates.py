@@ -11,11 +11,12 @@ SUMMARY_KINDS = [
     "simple (1 or 2 word)",
 ]
 
-GET_TOPIC_NAME_REGEX = r'\{\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
-GET_TOPIC_NAME_AND_SUMMARY_REGEX = r'\{\s*"topic_analysis":\s*.*?,\s*"topic_summary":\s*.*?,\s*"topic_name":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}'
-GET_TOPIC_CLUSTER_NAMES_REGEX = (
-    r'\{\s*"new_topic_name_mapping":\s*.*?,\s*"topic_specificities": .*?\}'
+# Prompts ask for specificity scores to nudge models into JSON; parsing doesn't need them
+GET_TOPIC_NAME_REGEX = (
+    r'\{\s*"topic_name":\s*.*?(?:,\s*"topic_specificity":\s*[\w.]+|")\s*\}'
 )
+GET_TOPIC_NAME_AND_SUMMARY_REGEX = r'\{\s*"topic_analysis":\s*.*?,\s*"topic_summary":\s*.*?,\s*"topic_name":\s*.*?(?:,\s*"topic_specificity":\s*[\w.]+|")\s*\}'
+GET_TOPIC_CLUSTER_NAMES_REGEX = r'\{\s*"new_topic_name_mapping":\s*\{.*?"\s*\}(?:\s*,\s*"topic_specificities":\s*\[.*?\])?\s*\}'
 
 
 def default_extract_topic_names(json_response, old_names, topic_name_info_raw):
@@ -276,7 +277,7 @@ Each topic name should be broad and simple enough to capture of overall sense of
 The new names must be in the same order as presented above. There should be no duplicate topic names in the final list. The primary goal is to make each new topic name clearly distinguishable from the others in this list, based on the provided details.
 
 The response should be formatted as JSON in the format 
-    {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
+    {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, "topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
 """),
@@ -389,7 +390,7 @@ The response should be in JSON formatted as {"english_topic_name":<NAME>, "nom_d
 where SCORE is a value in the range 0 to 1.
 """),
         "extract_topic_name": lambda json_response: f'{json_response["english_topic_name"]} / {json_response["nom_du_sujet_en_français"]}',
-        "get_topic_name_regex": r'\{\s*"english_topic_name":\s*.*?,\s*"nom_du_sujet_en_français":\s*.*?,\s*"topic_specificity":\s*[\w.]+\s*\}',
+        "get_topic_name_regex": r'\{\s*"english_topic_name":\s*.*?,\s*"nom_du_sujet_en_français":\s*.*?(?:,\s*"topic_specificity":\s*[\w.]+|")\s*\}',
     },
     "disambiguate_topics": {
         "system": jinja2.Template("""
@@ -505,7 +506,7 @@ Each topic name should be broad and simple enough to capture of overall sense of
 The new names must be in the same order as presented above. There should be no duplicate topic names in the final list. The primary goal is to make each new topic name clearly distinguishable from the others in this list, based on the provided details.
 
 The response should be formatted as JSON in the format 
-    {"new_topic_name_mapping": {<1. OLD_NAME1 / ANCIEN_NOM1>: <NEW_NAME1 / NOUVEAU_NOM1>, <2. OLD_NAME2 / ANCIEN_NOM2>: <NEW_NAME2 / NOUVEAU_NOM2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
+    {"new_topic_name_mapping": {<1. OLD_NAME1 / ANCIEN_NOM1>: <NEW_NAME1 / NOUVEAU_NOM1>, <2. OLD_NAME2 / ANCIEN_NOM2>: <NEW_NAME2 / NOUVEAU_NOM2>, ... }, "topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
 """),
@@ -784,7 +785,7 @@ Each topic name should be broad and simple enough to capture of overall sense of
 The new names must be in the same order as presented above. There should be no duplicate topic names in the final list. The primary goal is to make each new topic name clearly distinguishable from the others in this list, based on the provided details.
 
 The response should be formatted as JSON in the format 
-    {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
+    {"new_topic_name_mapping": {<1. OLD_NAME1>: <NEW_NAME1>, <2. OLD_NAME2>: <NEW_NAME2>, ... }, "topic_specificities": [<NEW_TOPIC_SCORE1>, <NEW_TOPIC_SCORE2>, ...]}
 where SCORE is a value in the range 0 to 1.
 The response must contain only JSON with no preamble and must have one entry for each topic to be renamed.
 """),

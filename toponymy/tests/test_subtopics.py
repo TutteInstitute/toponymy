@@ -2,6 +2,7 @@ from toponymy.subtopics import (
     central_subtopics,
     central_subtopics_from_all_subtopics,
     information_weighted_subtopics,
+    information_weighted_summary_subtopics,
 )
 from toponymy.clustering import centroids_from_labels
 
@@ -9,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import json
+import scipy.sparse
 import sentence_transformers
 
 
@@ -296,3 +298,49 @@ def test_information_weighted_subtopics_bad_params(
             all_subtopics,
             subtopic_label_vector,
         )
+
+
+class ZeroInformationWeights:
+    def __init__(self, **kwargs):
+        pass
+
+    def fit_transform(self, X, y=None):
+        return scipy.sparse.csr_array(X.shape)
+
+
+@pytest.mark.parametrize(
+    "select",
+    [
+        lambda labels, subtopics, sub_labels, vectors, **kw: (
+            information_weighted_subtopics(labels, subtopics, sub_labels, vectors, **kw)
+        ),
+        lambda labels, subtopics, sub_labels, vectors, **kw: (
+            information_weighted_summary_subtopics(
+                labels, subtopics, subtopics, subtopics, sub_labels, vectors, **kw
+            )
+        ),
+    ],
+    ids=["subtopics", "summary_subtopics"],
+)
+def test_information_weighted_subtopics_with_zero_scores(
+    monkeypatch,
+    select,
+    cluster_label_vector,
+    all_subtopics,
+    subtopic_label_vector,
+    subtopic_vectors,
+):
+    monkeypatch.setattr(
+        "toponymy.subtopics.InformationWeightTransformer", ZeroInformationWeights
+    )
+    results = select(
+        cluster_label_vector,
+        all_subtopics,
+        subtopic_label_vector,
+        subtopic_vectors,
+        n_subtopics=3,
+        n_dictionary_vectors=5,
+        n_jobs=None,
+    )
+    assert results == [["No notable keyphrases"]] * len(results)
+    assert len(results) == cluster_label_vector.max() + 1
