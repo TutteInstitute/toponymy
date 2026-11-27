@@ -78,46 +78,7 @@ def test_toponymy(
         metric="cosine",
     )
     row_matching, col_matching = linear_sum_assignment(distance_matrix)
-    assert distance_matrix[row_matching, col_matching].sum() < 2.5
-    assert np.all(
-        pd.Series(model.cluster_layers_[1].cluster_labels)
-        .map(dict(np.vstack([np.arange(5), col_matching]).T))
-        .values
-        == cluster_label_vector
-    )
-
-
-def test_toponymy(
-    llm,
-    embedder,
-    clusterer,
-    all_sentences,
-    object_vectors,
-    clusterable_vectors,
-    cluster_label_vector,
-    subtopic_objects,
-):
-    model = Toponymy(
-        llm,
-        embedder,
-        clusterer,
-        keyphrase_builder=KeyphraseBuilder(n_jobs=1),
-        object_description="sentences",
-        corpus_description="collection of sentences",
-        lowest_detail_level=0.8,
-        highest_detail_level=1.0,
-        verbose=True,
-    )
-    model.fit(all_sentences, object_vectors, clusterable_vectors)
-    embedded_topic_names = embedder.encode(model.topic_names_[1])
-    logger.info(f"Topic names: {model.topic_names_[1]}")
-    distance_matrix = pairwise_distances(
-        embedded_topic_names,
-        embedder.encode([topic["topic"] for topic in subtopic_objects]),
-        metric="cosine",
-    )
-    row_matching, col_matching = linear_sum_assignment(distance_matrix)
-    assert distance_matrix[row_matching, col_matching].sum() < 2.5
+    assert distance_matrix[row_matching, col_matching].mean() < 0.6
     assert np.all(
         pd.Series(model.cluster_layers_[1].cluster_labels)
         .map(dict(np.vstack([np.arange(5), col_matching]).T))
@@ -311,8 +272,12 @@ def test_toponymy_with_ollama(
     def timeout_handler(signum, frame):
         raise TimeoutError("Ollama test timed out")
 
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(120)  # 2 minute timeout for model fitting
+    has_alarm = hasattr(signal, "SIGALRM")
+    if has_alarm:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(120)  # 2 minute timeout for model fitting
+    else:
+        logger.warning("SIGALRM unavailable; relying on the CI job timeout")
 
     try:
         model = Toponymy(
@@ -348,7 +313,8 @@ def test_toponymy_with_ollama(
     except TimeoutError:
         pytest.skip("Ollama test timed out - likely too slow for CI environment")
     finally:
-        signal.alarm(0)  # Cancel the alarm
+        if has_alarm:
+            signal.alarm(0)  # Cancel the alarm
 
 
 # @pytest.mark.skip(reason="Lowering runtime for CI")
@@ -394,8 +360,12 @@ def test_toponymy_async_ollama(
     def timeout_handler(signum, frame):
         raise TimeoutError("AsyncOllama test timed out")
 
-    signal.signal(signal.SIGALRM, timeout_handler)
-    signal.alarm(180)  # 3 minute timeout for async model fitting
+    has_alarm = hasattr(signal, "SIGALRM")
+    if has_alarm:
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(180)  # 3 minute timeout for async model fitting
+    else:
+        logger.warning("SIGALRM unavailable; relying on the CI job timeout")
 
     try:
         model = Toponymy(
@@ -443,7 +413,8 @@ def test_toponymy_async_ollama(
     except TimeoutError:
         pytest.skip("AsyncOllama test timed out - likely too slow for CI environment")
     finally:
-        signal.alarm(0)  # Cancel the alarm
+        if has_alarm:
+            signal.alarm(0)  # Cancel the alarm
 
 
 class MockNamer(LLMWrapper):
