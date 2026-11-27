@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import re
 import pytest
 from unittest.mock import AsyncMock, Mock
 import numpy as np
@@ -130,6 +131,47 @@ class TestTopicNamerTemplate:
         assert captured["corpus_description"] == "newsgroup posts"
         assert captured["exemplar_start_delimiter"] == "<"
         assert captured["exemplar_end_delimiter"] == ">"
+
+    # The inputs are listed in the user and combined renderings, not in system
+    @pytest.mark.parametrize("rendering", ["user", "combined"])
+    def test_topic_namer_template_render_applies_input_limits(
+        self, topic_store, rendering
+    ):
+        def items(kind):
+            return [f"{kind}-{i}" for i in range(1, 6)]
+
+        template = TopicNamerTemplate(
+            object_description="posts",
+            corpus_description="newsgroup posts",
+            tree=topic_store.tree,
+            max_num_keyphrases=2,
+            max_num_subtopics=3,
+            max_num_exemplars=4,
+        )
+
+        prompt = template.render(
+            topic_store.tree.nodes[0],
+            major_subtopics=items("major-subtopic"),
+            minor_subtopics=items("minor-subtopic"),
+            other_subtopics=items("other-subtopic"),
+            exemplars=items("exemplar"),
+            keyphrases=items("keyphrase"),
+        )
+
+        # Each subtopic kind is limited on its own
+        expected = {
+            "keyphrase": items("keyphrase")[:2],
+            "major-subtopic": items("major-subtopic")[:3],
+            "minor-subtopic": items("minor-subtopic")[:3],
+            "other-subtopic": items("other-subtopic")[:3],
+            "exemplar": items("exemplar")[:4],
+        }
+        # Whole items in the order they appear, so "keyphrase-1" never matches a
+        # longer item
+        shown = {
+            kind: re.findall(rf"{kind}-\d+", prompt[rendering]) for kind in expected
+        }
+        assert shown == expected
 
     def test_topic_namer_template_render_defaults_to_empty_inputs(
         self, topic_store, monkeypatch
