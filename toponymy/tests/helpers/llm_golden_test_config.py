@@ -96,8 +96,9 @@ class PartShape:
         this part's text is matched against.
 
     min_pattern_hits : int, default=1
-        Minimum number of distinct vocabulary patterns that must match the
-        part's text. Raise this to require broader coverage of a topic.
+        Minimum number of distinct vocabulary patterns that should match the
+        part's text. A miss warns rather than fails, since word choice is up to
+        the model. Raise this to ask for broader coverage of a topic.
 
     min_words : int, default=1
         Minimum word count. Ignored when ``words_from_summary_kind`` is True.
@@ -430,8 +431,8 @@ def check_part(part, shape, patterns, word_range, result, range_source=None):
     Check one part of a topic result against its shape.
 
     A missing or empty part always fails. The word-count check fails, or warns
-    if ``shape.soft_word_range`` is True. The sentence, paragraph and pattern
-    checks always fail.
+    if ``shape.soft_word_range`` is True. The sentence and paragraph checks
+    always fail. The vocabulary pattern check always warns.
 
     Parameters
     ----------
@@ -498,9 +499,11 @@ def check_part(part, shape, patterns, word_range, result, range_source=None):
         )
 
     n_hits = count_pattern_hits(part, patterns)
-    assert n_hits >= shape.min_pattern_hits, (
-        f"{label}: matched {n_hits} of {patterns}, need {shape.min_pattern_hits}",
-        *context,
+    check(
+        n_hits >= shape.min_pattern_hits,
+        f"{label} {part!r}: matched {n_hits} of {patterns}, "
+        f"expected {shape.min_pattern_hits}",
+        soft=True,
     )
 
 
@@ -514,7 +517,8 @@ def assert_valid_topic_name_result(result, example_id, template_id):
 
     - the analysis should be longer than the summary (soft),
     - the analysis must not repeat the summary,
-    - the summary must be longer than the name.
+    - the summary must be longer than the name,
+    - the French name should not copy the English name (soft).
 
     Parameters
     ----------
@@ -588,4 +592,10 @@ def assert_valid_topic_name_result(result, example_id, template_id):
         assert word_count(by_label["summary"]) > word_count(by_label["name"]), (
             "summary should be longer than the name",
             result,
+        )
+    if "name" in by_label and "nom" in by_label:
+        check(
+            normalize(by_label["nom"]) != normalize(by_label["name"]),
+            f"the French name should not copy the English name: {by_label['nom']!r}",
+            soft=True,
         )

@@ -3,11 +3,14 @@ import pytest
 import json
 import numpy as np
 from toponymy.exemplar_texts import (
+    calculate_gains_,
+    calculate_gains_sparse_,
     random_exemplars,
     diverse_exemplars,
     submodular_selection_exemplars,
 )
 from pathlib import Path
+from scipy.sparse import csr_matrix
 import sentence_transformers
 
 from toponymy.clustering import (
@@ -164,8 +167,6 @@ def test_empty_cluster_random(test_object_cluster_label_vector, all_topic_object
 
 
 def test_facility_location_calculate_gains():
-    from toponymy.exemplar_texts import calculate_gains_
-
     X_pairwise = np.random.rand(4, 4)
     X_pairwise = X_pairwise + X_pairwise.T
     gains = np.zeros(4, dtype=np.float64)
@@ -179,3 +180,40 @@ def test_facility_location_calculate_gains():
     )
     assert gains.shape == (4,)
     assert np.all(gains == np.sum(np.maximum(X_pairwise, current_values), axis=1))
+
+
+@pytest.mark.parametrize("data_dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("index_dtype", [np.int32, np.int64])
+def test_facility_location_sparse_calculate_gains(data_dtype, index_dtype):
+    similarities = np.array(
+        [[1.0, 0.5, 0.0], [0.5, 1.0, 0.25], [0.0, 0.25, 1.0]],
+        dtype=data_dtype,
+    )
+    graph = csr_matrix(similarities)
+    graph.indices = graph.indices.astype(index_dtype)
+    graph.indptr = graph.indptr.astype(index_dtype)
+    current_values = np.array([0.75, 0.0, 0.5], dtype=np.float64)
+    idxs = np.array([2, 0], dtype=np.int64)
+    gains = np.zeros(len(idxs), dtype=np.float64)
+
+    calculate_gains_sparse_(
+        graph.data, graph.indices, graph.indptr, gains, current_values, idxs
+    )
+
+    expected = np.maximum(similarities[idxs] - current_values, 0).sum(axis=1)
+    np.testing.assert_allclose(gains, expected)
+
+
+def test_submodular_exemplar_large_cluster():
+    n_objects = 4097
+    vectors = np.random.default_rng(42).normal(size=(n_objects, 4))
+    objects = [f"object {i}" for i in range(n_objects)]
+
+    exemplars, indices = submodular_selection_exemplars(
+        np.zeros(n_objects, dtype=np.int64), objects, vectors, n_exemplars=8
+    )
+
+    assert len(exemplars) == len(indices) == 1
+    assert len(indices[0]) == len(set(indices[0])) == 8
+    assert all(0 <= i < n_objects for i in indices[0])
+    assert exemplars[0] == [objects[i] for i in indices[0]]
