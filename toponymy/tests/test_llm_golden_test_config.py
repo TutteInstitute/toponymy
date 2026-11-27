@@ -5,11 +5,14 @@ import warnings
 
 import pytest
 
+from toponymy.prompt_construction import render_prompt
 from toponymy.templates import MULTILINGUAL_EN_FR_PROMPT_TEMPLATES, SUMMARY_KINDS
 from toponymy.tools.load_prompt_examples import example_ids, load_prompt_params
+import toponymy.tests.helpers.llm_golden_test_config as config
 
 from toponymy.tests.helpers.llm_golden_test_config import (
     EXAMPLE_VOCABULARY,
+    SOFT_FRENCH_VOCABULARY,
     TEMPLATE_CASES,
     PartShape,
     assert_valid_topic_name_result,
@@ -332,9 +335,71 @@ def test_check_part_enforces_max_paragraphs():
         check_part("Goalie masks.\n\nMore masks.", shape, HOCKEY_EN, (1, None), {})
 
 
-def test_check_part_enforces_pattern_hits():
+def test_check_part_vocabulary_miss_fails_by_default():
     with pytest.raises(AssertionError, match="matched 0"):
         check_part("Ice skating", NAME_SHAPE, HOCKEY_EN, (1, 3), {})
+
+
+IDS = {"example_id": "hockey_masks", "template_id": "default"}
+
+
+def test_check_part_known_bad_answer_warns(monkeypatch):
+    entry = ("hockey_masks", "default", "name", "Ice skating")
+    monkeypatch.setattr(config, "KNOWN_BAD_ANSWERS", {entry})
+    with pytest.warns(UserWarning, match="matched 0"):
+        check_part("Ice skating", NAME_SHAPE, HOCKEY_EN, (1, 3), {}, **IDS)
+
+
+def test_check_part_known_bad_answer_ignores_case_and_punctuation(monkeypatch):
+    entry = ("hockey_masks", "default", "name", "Ice skating")
+    monkeypatch.setattr(config, "KNOWN_BAD_ANSWERS", {entry})
+    with pytest.warns(UserWarning, match="matched 0"):
+        check_part("ice skating.", NAME_SHAPE, HOCKEY_EN, (1, 3), {}, **IDS)
+
+
+def test_check_part_different_answer_still_fails(monkeypatch):
+    entry = ("hockey_masks", "default", "name", "Ice skating")
+    monkeypatch.setattr(config, "KNOWN_BAD_ANSWERS", {entry})
+    with pytest.raises(AssertionError, match="matched 0"):
+        check_part("Ice dancing", NAME_SHAPE, HOCKEY_EN, (1, 3), {}, **IDS)
+
+
+def test_check_part_soft_vocabulary_warns():
+    shape = PartShape("nom", "fr", soft_vocabulary=True)
+    patterns = EXAMPLE_VOCABULARY["hockey_masks"]["fr"]
+    with pytest.warns(UserWarning, match="matched 0"):
+        check_part("Patinage", shape, patterns, (1, 3), {})
+
+
+def test_soft_french_vocabulary_switch(monkeypatch):
+    patterns = EXAMPLE_VOCABULARY["hockey_masks"]["fr"]
+
+    monkeypatch.setattr(config, "SOFT_FRENCH_VOCABULARY", False)
+    shape = PartShape(
+        "nom",
+        "fr",
+        soft_vocabulary=config.SOFT_FRENCH_VOCABULARY,
+    )
+    with pytest.raises(AssertionError, match="matched 0"):
+        check_part("Patinage", shape, patterns, (1, 3), {})
+
+    monkeypatch.setattr(config, "SOFT_FRENCH_VOCABULARY", True)
+    shape = PartShape(
+        "nom",
+        "fr",
+        soft_vocabulary=config.SOFT_FRENCH_VOCABULARY,
+    )
+    with pytest.warns(UserWarning, match="matched 0"):
+        check_part("Patinage", shape, patterns, (1, 3), {})
+
+
+def test_known_bad_answers_refer_to_real_parts():
+    for example_id, template_id, label, answer in config.KNOWN_BAD_ANSWERS:
+        assert example_id in EXAMPLE_VOCABULARY, example_id
+        assert template_id in TEMPLATE_CASES, template_id
+        labels = {shape.label for shape in TEMPLATE_CASES[template_id].parts}
+        assert label in labels, (template_id, label)
+        assert isinstance(answer, str) and answer.strip(), answer
 
 
 # assert_valid_topic_name_result
@@ -422,6 +487,39 @@ def test_missing_vocabulary_is_reported(monkeypatch):
         assert_valid_topic_name_result(result, "hockey_masks", "multilingual_en_fr")
 
 
+def test_french_name_copying_the_english_name_warns():
+    name = " ".join(EN_WORDS[: hockey_name_words()])
+    joined = multilingual_result(name, name)
+    result = topic_name_result(joined["topic_result"], joined["response"])
+    with pytest.warns(UserWarning, match="should not copy"):
+        assert_valid_topic_name_result(result, "hockey_masks", "multilingual_en_fr")
+
+
+BAD_FRENCH_NAME = "Patinage artistique"  # misses the French vocabulary, isn't a copy
+
+
+def multilingual_bad_french_result():
+    english = " ".join(EN_WORDS[: hockey_name_words()])
+    joined = multilingual_result(english, BAD_FRENCH_NAME)
+    return topic_name_result(joined["topic_result"], joined["response"])
+
+
+def test_registered_bad_french_answer_warns(monkeypatch):
+    entry = ("hockey_masks", "multilingual_en_fr", "nom", BAD_FRENCH_NAME)
+    monkeypatch.setattr(config, "KNOWN_BAD_ANSWERS", {entry})
+    with pytest.warns(UserWarning, match="nom 'Patinage artistique': matched 0"):
+        assert_valid_topic_name_result(
+            multilingual_bad_french_result(), "hockey_masks", "multilingual_en_fr"
+        )
+
+
+def test_unregistered_bad_french_answer_fails():
+    with pytest.raises(AssertionError, match="KNOWN_BAD_ANSWERS"):
+        assert_valid_topic_name_result(
+            multilingual_bad_french_result(), "hockey_masks", "multilingual_en_fr"
+        )
+
+
 @pytest.mark.filterwarnings("ignore::UserWarning")
 def test_analysis_repeating_summary_is_rejected():
     name = " ".join(EN_WORDS[: hockey_name_words()])
@@ -453,6 +551,17 @@ def test_vocabulary_patterns_compile(example_id):
     for patterns in EXAMPLE_VOCABULARY[example_id].values():
         for pattern in patterns:
             re.compile(pattern)
+
+
+@pytest.mark.parametrize("template_id", TEMPLATE_CASES)
+@pytest.mark.parametrize("example_id", EXAMPLE_VOCABULARY)
+def test_rendered_prompt_contains_the_example_content(example_id, template_id):
+    params = load_prompt_params(example_id)
+    prompt = render_prompt(TEMPLATE_CASES[template_id].templates["layer"], params)
+    for keyword in params["cluster_keywords"][:5]:
+        assert keyword in prompt["user"], (keyword, template_id)
+    for sentence in params["cluster_sentences"]:
+        assert sentence.splitlines()[0] in prompt["user"], template_id
 
 
 @pytest.mark.parametrize("template_id", TEMPLATE_CASES)

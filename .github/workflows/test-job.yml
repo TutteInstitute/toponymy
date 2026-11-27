@@ -1,0 +1,211 @@
+name: Run test job
+
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        type: string
+        required: true
+      python-version:
+        type: string
+        required: true
+      suite:
+        type: string
+        required: true
+      timeout-minutes:
+        type: number
+        default: 150
+      includeReleaseCandidates:
+        type: boolean
+        default: false
+      changed-notebooks:
+        type: string
+        default: ''
+    secrets:
+      OPENAI_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+  UV_NO_CACHE: 'true'
+
+jobs:
+  tests:
+    runs-on: ${{ inputs.image-name }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    env:
+      BUILD_REASON: ${{ github.event_name == 'pull_request' && 'PullRequest' || github.event_name }}
+      CHANGED_NOTEBOOKS: ${{ inputs.changed-notebooks }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - name: Install uv and set Python version to "${{ inputs.python-version }}"
+      uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      with:
+        python-version: "${{ inputs.python-version }}"
+        enable-cache: false
+    - name: Install package and dependencies
+      env:
+        PYTHON_VERSION: ${{ inputs.python-version }}
+        TEST_SUITE: ${{ inputs.suite }}
+        INCLUDE_RELEASE_CANDIDATES: ${{ inputs.includeReleaseCandidates }}
+      run: |
+        args=(--extra dev --python "$PYTHON_VERSION")
+        if [[ "$TEST_SUITE" != "external" ]]; then
+          args+=(--extra llama)
+        fi
+        if [[ "$INCLUDE_RELEASE_CANDIDATES" == "true" ]]; then
+          args+=(--prerelease allow)
+        fi
+        uv sync "${args[@]}"
+    - name: Install notebook kernel
+      if: inputs.suite != 'external'
+      run: uv run python -m ipykernel install --user --name toponymy-uv
+    - name: Install Ollama on Linux
+      if: inputs.suite != 'external' && runner.os == 'Linux'
+      run: |
+        curl -fsSL https://ollama.com/install.sh -o "$RUNNER_TEMP/install-ollama.sh"
+        sh "$RUNNER_TEMP/install-ollama.sh"
+    - name: Install Ollama on macOS
+      if: inputs.suite != 'external' && runner.os == 'macOS'
+      run: brew install ollama
+    - name: Install Ollama on Windows
+      if: inputs.suite != 'external' && runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $archive = Join-Path $env:RUNNER_TEMP "ollama-windows-amd64.zip"
+        $destination = Join-Path $env:RUNNER_TEMP "ollama"
+        Invoke-WebRequest -Uri "https://github.com/ollama/ollama/releases/latest/download/ollama-windows-amd64.zip" -OutFile $archive
+        Expand-Archive -Path $archive -DestinationPath $destination
+        Remove-Item -LiteralPath $archive
+        $destination | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    - name: Start Ollama and download a test model
+      if: inputs.suite != 'external'
+      run: |
+        uv run python - <<'PY'
+        import os
+        from pathlib import Path
+        import subprocess
+        import time
+        from urllib.error import URLError
+        from urllib.request import urlopen
+
+        def ready():
+            try:
+                with urlopen("http://localhost:11434/api/version", timeout=2) as response:
+                    return response.status == 200
+            except (URLError, TimeoutError):
+                return False
+
+        temp = Path(os.environ["RUNNER_TEMP"])
+        if not ready():
+            with (temp / "ollama.log").open("w") as log:
+                process = subprocess.Popen(
+                    ["ollama", "serve"], stdout=log, stderr=subprocess.STDOUT
+                )
+            (temp / "ollama.pid").write_text(str(process.pid))
+        for _ in range(30):
+            if ready():
+                break
+            time.sleep(1)
+        else:
+            raise RuntimeError("Ollama failed to start")
+        for model in ("qwen2.5:0.5b", "qwen2:0.5b", "tinydolphin:1.1b"):
+            try:
+                subprocess.run(["ollama", "pull", model], check=True, timeout=300)
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+                print(f"::warning::Could not pull {model}: {error}")
+            else:
+                subprocess.run(["ollama", "list"], check=True)
+                break
+        else:
+            raise RuntimeError("No Ollama test model could be downloaded")
+        PY
+    - name: Print Ollama info
+      if: inputs.suite != 'external'
+      run: |
+        uv run python - <<'PY'
+        import subprocess
+
+        version = subprocess.run(["ollama", "--version"], capture_output=True, text=True)
+        print("----------------------------------")
+        print("VERSION")
+        print("----------------------------------")
+        print(f"{version.stdout}")
+
+        print("----------------------------------")
+        print("Ollama list")
+        print("----------------------------------")
+        result = subprocess.run(["ollama", "list"], capture_output=True, text=True)
+        print(f"{result.stdout}")
+        
+        PY
+    - name: Inspect disk usage
+      if: inputs.suite != 'external'
+      run: |
+        uv run python - <<'PY'
+        import os
+        import shutil
+        total, used, free = shutil.disk_usage(os.environ["RUNNER_TEMP"])
+        print(f"Disk usage: total={total / 1024**3:.1f} GiB, used={used / 1024**3:.1f} GiB, free={free / 1024**3:.1f} GiB")
+        PY
+    - name: Run non-external tests
+      if: inputs.suite != 'external'
+      env:
+        TEST_SUITE: ${{ inputs.suite }}
+        PYTHONFAULTHANDLER: 1
+      run: |
+        target=toponymy/tests
+        if [[ "$TEST_SUITE" == "notebooks" ]]; then
+          target=toponymy/tests/test_doc_notebooks.py
+        fi
+        uv run pytest "$target" -m "not external" --show-capture=no -v \
+          --junitxml=junit/test-results.xml \
+          --cov=toponymy/ --cov-report=xml --cov-report=html
+    - name: Run external tests
+      if: inputs.suite == 'external'
+      env:
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      run: |
+        if [[ -z "$OPENAI_API_KEY" ]]; then
+          echo "::error::Configure the OPENAI_API_KEY Actions secret before running external tests"
+          exit 1
+        fi
+        uv run pytest toponymy/tests -m external --show-capture=stdout -v --disable-warnings \
+          --junitxml=junit/test-results.xml \
+          --cov=toponymy/ --cov-report=xml --cov-report=html
+    - name: Publish test results and coverage
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: test-results-${{ github.run_id }}-${{ inputs.suite }}-${{ inputs.image-name }}-py${{ inputs.python-version }}
+        path: |
+          junit/
+          coverage.xml
+          htmlcov/
+          ${{ runner.temp }}/ollama.log
+        if-no-files-found: warn
+    - name: Stop Ollama started by this job
+      if: always() && inputs.suite != 'external'
+      run: |
+        python - <<'PY'
+        import os
+        from pathlib import Path
+        import signal
+
+        path = Path(os.environ["RUNNER_TEMP"]) / "ollama.pid"
+        if path.exists():
+            try:
+                os.kill(int(path.read_text()), signal.SIGTERM)
+            except ProcessLookupError:
+                print("::notice::Ollama process has already exited")
+        PY

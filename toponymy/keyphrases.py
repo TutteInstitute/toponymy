@@ -138,14 +138,13 @@ def build_count_matrix(
     for doc in docs:
         ngram_counter = {}
         for gram in ngrammer(doc):
-            try:
-                ngram_idx = vocab[gram]
-                if ngram_idx in ngram_counter:
-                    ngram_counter[ngram_idx] += 1
-                else:
-                    ngram_counter[ngram_idx] = 1
-            except KeyError:
+            ngram_idx = vocab.get(gram)
+            if ngram_idx is None:
                 continue
+            if ngram_idx in ngram_counter:
+                ngram_counter[ngram_idx] += 1
+            else:
+                ngram_counter[ngram_idx] = 1
 
         col_indices.extend(ngram_counter.keys())
         data.extend(ngram_counter.values())
@@ -502,16 +501,20 @@ class KeyphraseBuilder:
         )
 
 
-@numba.njit()
+@numba.njit(cache=True)
 def longest_keyphrases(candidate_keyphrases):  # pragma: no cover
     """
     Builds a list of keyphrases that are not substrings of other keyphrases.
     """
     result = []
     for i, phrase in enumerate(candidate_keyphrases):
+        prefixed = " " + phrase
+        suffixed = phrase + " "
         for other in candidate_keyphrases:
-            if f" {phrase}" in other or f"{phrase} " in other:
+            if prefixed in other or suffixed in other:
                 phrase = other
+                prefixed = " " + phrase
+                suffixed = phrase + " "
 
         if phrase not in result:
             candidate_keyphrases[i] = phrase
@@ -621,7 +624,7 @@ def information_weighted_keyphrases(
         contrastive_scores = np.squeeze(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
-        if sum(contrastive_scores) == 0:
+        if not contrastive_scores.any():
             result.append(["No notable keyphrases"])
             continue
 
@@ -660,7 +663,7 @@ def information_weighted_keyphrases(
         chosen_keyphrases = [
             keyphrase_list[column_map[j]]
             for j in reversed(chosen_indices)
-            if j in keyphrases_present_indices
+            if contrastive_scores[j] > 0
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -927,6 +930,8 @@ def central_keyphrases(
         cluster_label_vector, object_x_keyphrase_matrix
     )
 
+    null_topic = np.mean(keyphrase_vectors, axis=0)
+
     result = []
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
@@ -937,14 +942,10 @@ def central_keyphrases(
         position=1,
     ):
         # Sum over the cluster; get the non-zero indices
-        base_candidate_indices = np.where(
-            np.squeeze(
-                np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-            )
-            > 0
-        )[0]
-
-        null_topic = np.mean(keyphrase_vectors, axis=0)
+        cluster_counts = np.squeeze(
+            np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
+        )
+        base_candidate_indices = np.where(cluster_counts > 0)[0]
 
         # Map the indices back to the original vocabulary
         base_candidates = [
@@ -971,9 +972,7 @@ def central_keyphrases(
             np.asarray([keyphrase_vector_mapping[phrase] for phrase in base_candidates])
             - null_topic
         )
-        base_weights = np.squeeze(
-            np.asarray(count_matrix[class_labels == cluster_num].sum(axis=0))
-        )[base_candidate_indices]
+        base_weights = cluster_counts[base_candidate_indices]
         centroid = np.average(base_vectors, axis=0, weights=base_weights)
 
         # Select the central keyphrases as the closest samples to the centroid
@@ -1196,7 +1195,8 @@ def bm25_keyphrases(
     df = (class_count_matrix > 0).sum(axis=0)
     idf = np.log(1 + (N - df + 0.5) / (df + 0.5))
 
-    doc_lengths = count_matrix.sum(axis=1)
+    # Each cluster is one BM25 document, so lengths are per cluster, not per object
+    doc_lengths = np.asarray(class_count_matrix.sum(axis=1)).ravel()
     avg_doc_length = doc_lengths.mean()
 
     for i in range(class_count_matrix.shape[0]):
@@ -1224,7 +1224,7 @@ def bm25_keyphrases(
     ):
         # Sum over the cluster; get the top scoring indices
         contrastive_scores = bm25_matrix[cluster_num].toarray().flatten()
-        if sum(contrastive_scores) == 0:
+        if not contrastive_scores.any():
             result.append(["No notable keyphrases"])
             continue
 
@@ -1263,7 +1263,7 @@ def bm25_keyphrases(
         chosen_keyphrases = [
             keyphrase_list[column_map[j]]
             for j in reversed(chosen_indices)
-            if j in keyphrases_present_indices
+            if contrastive_scores[j] > 0
         ]
 
         # Extract the longest keyphrases, then diversify the selection
@@ -1502,7 +1502,7 @@ def submodular_selection_information_keyphrases(
         contrastive_scores = np.squeeze(
             np.asarray(weighted_matrix[class_labels == cluster_num].sum(axis=0))
         )
-        if sum(contrastive_scores) == 0:
+        if not contrastive_scores.any():
             result.append(["No notable keyphrases"])
             continue
 

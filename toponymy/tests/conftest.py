@@ -13,6 +13,7 @@ import pytest
 import requests
 import shutil
 import subprocess
+import tempfile
 import time
 import umap
 
@@ -102,7 +103,7 @@ def _ollama_sufficient_resources():
     min_disk_gb = 1.5 if is_ci else 2.0
 
     available_memory = psutil.virtual_memory().available / (1024**3)
-    available_disk = shutil.disk_usage("/tmp").free / (1024**3)
+    available_disk = shutil.disk_usage(tempfile.gettempdir()).free / (1024**3)
 
     if available_memory < min_memory_gb:
         pytest.skip(
