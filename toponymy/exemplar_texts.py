@@ -30,6 +30,8 @@ dtypes = [
 sdtypes = [
     "void(float64[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
     "void(float32[:], int32[:], int32[:], float64[:], float64[:], int64[:])",
+    "void(float64[:], int64[:], int64[:], float64[:], float64[:], int64[:])",
+    "void(float32[:], int64[:], int64[:], float64[:], float64[:], int64[:])",
 ]
 sieve_dtypes = (
     "void(float64[:,:], int64, float64[:,:], int64[:,:],"
@@ -225,8 +227,9 @@ class FacilityLocationSelection(BaseGraphSelection):
         of the original apricot code to make it more suitable for
         selection of exemplars for clusters in a cluster layer.
 
-        Note that this version is specialized and does no support sparse
-        input, nor does it support streaming via sieve greedy.
+        This version requires dense input and uses a sparse nearest-neighbor
+        graph for datasets larger than 4096 samples. Streaming via sieve
+        greedy is not supported.
 
         Run submodular optimization to select the examples.
 
@@ -1004,6 +1007,19 @@ def diverse_exemplars(
         method=method,
     )
 
+    if len(cluster_label_vector) != len(object_vectors):
+        raise IndexError(
+            f"cluster_label_vector has {len(cluster_label_vector)} entries but "
+            f"object_vectors has {len(object_vectors)} rows"
+        )
+
+    # Stable sort: each cluster's indices stay ascending, as np.where returned them.
+    object_indices_by_cluster = np.argsort(cluster_label_vector, kind="stable")
+    sorted_labels = cluster_label_vector[object_indices_by_cluster]
+    cluster_ids = np.arange(cluster_label_vector.max() + 1)
+    cluster_starts = np.searchsorted(sorted_labels, cluster_ids, side="left")
+    cluster_ends = np.searchsorted(sorted_labels, cluster_ids, side="right")
+
     for cluster_num in tqdm(
         range(cluster_label_vector.max() + 1),
         desc="Selecting central exemplars",
@@ -1012,11 +1028,12 @@ def diverse_exemplars(
         leave=False,
         position=1,
     ):
-        cluster_mask = cluster_label_vector == cluster_num
-        original_indices = np.where(cluster_mask)[0]
+        original_indices = object_indices_by_cluster[
+            cluster_starts[cluster_num] : cluster_ends[cluster_num]
+        ]
         cluster_objects = [objects[i] for i in original_indices]
         cluster_centroid = centroid_vectors[cluster_num]
-        cluster_object_vectors = object_vectors[cluster_mask]
+        cluster_object_vectors = object_vectors[original_indices]
 
         # TODO: layer=0 is a placeholder. Once integrated with Executor and full tree context,
         # this will the be node object that is passed to the annotator.
