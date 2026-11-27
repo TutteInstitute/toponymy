@@ -43,7 +43,7 @@ ones and accented patterns work.
 SOFT_FRENCH_VOCABULARY = False
 """
 If True, French parts warn instead of fail when they miss their vocabulary,
-regardless of KNOWN_VOCABULARY_MISSES. Use this if keeping French entries in
+regardless of KNOWN_BAD_ANSWERS. Use this if keeping French entries in
 the known-miss list becomes more trouble than it's worth.
 """
 
@@ -555,8 +555,13 @@ def check_part(
         )
 
     known_bad = (example_id, template_id, label, simplify_answer(part)) in {
-        (example_id, template_id, label, simplify_answer(answer))
-        for example_id, template_id, label, answer in KNOWN_BAD_ANSWERS
+        (
+            entry_example_id,
+            entry_template_id,
+            entry_label,
+            simplify_answer(entry_answer),
+        )
+        for entry_example_id, entry_template_id, entry_label, entry_answer in KNOWN_BAD_ANSWERS
     }
 
     n_hits = count_pattern_hits(part, patterns)
@@ -661,7 +666,6 @@ def assert_valid_topic_name_result(result, example_id, template_id):
             template_id=template_id,
         )
 
-    by_label = dict(zip((s.label for s in shapes), parts))
     if "summary" in by_label and "analysis" in by_label:
         summary, analysis = by_label["summary"], by_label["analysis"]
         check(
