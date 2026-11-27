@@ -312,13 +312,13 @@ def information_weighted_subtopics(
         candidate_scores = scores[meta_cluster_label_vector == cluster_num]
         candidate_vectors = subtopic_vectors[meta_cluster_label_vector == cluster_num]
 
-        cluster_centroid = np.average(
-            candidate_vectors, weights=candidate_scores, axis=0
-        )
-
         if sum(candidate_scores) == 0:
             result.append(["No notable keyphrases"])
             continue
+
+        cluster_centroid = np.average(
+            candidate_vectors, weights=candidate_scores, axis=0
+        )
 
         chosen_indices = np.argsort(candidate_scores)[-(n_subtopics**2) :][::-1]
 
@@ -589,13 +589,13 @@ def information_weighted_summary_subtopics(
         candidate_scores = scores[meta_cluster_label_vector == cluster_num]
         candidate_vectors = subtopic_vectors[meta_cluster_label_vector == cluster_num]
 
-        cluster_centroid = np.average(
-            candidate_vectors, weights=candidate_scores, axis=0
-        )
-
         if sum(candidate_scores) == 0:
             result.append(["No notable keyphrases"])
             continue
+
+        cluster_centroid = np.average(
+            candidate_vectors, weights=candidate_scores, axis=0
+        )
 
         chosen_indices = np.argsort(candidate_scores)[-(n_subtopics**2) :][::-1]
 
