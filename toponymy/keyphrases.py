@@ -688,6 +688,56 @@ def information_weighted_keyphrases(
     return result
 
 
+def _fitted_keyphrase_data(builder, embedding_model):
+    fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
+    missing = [name for name in fitted if not hasattr(builder, name)]
+    if missing:
+        raise NotFittedError(
+            f"the keyphrase builder is missing {missing}; fit it first"
+        )
+    vectors = builder.keyphrase_vectors_
+    if vectors is None:
+        if embedding_model is None:
+            raise ValueError(
+                "the builder has no keyphrase vectors; give the builder an embedder or pass an embedding_model"
+            )
+        vectors = embedding_model.encode(
+            builder.keyphrase_list_, show_progress_bar=False
+        )
+    return (
+        builder.object_x_keyphrase_matrix_,
+        builder.keyphrase_list_,
+        np.array(vectors),
+    )
+
+
+def _checked_object_count(matrix, cluster_object_indices):
+    n_objects = matrix.shape[0]
+    top = max(
+        (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
+        default=-1,
+    )
+    if top >= n_objects:
+        raise ValueError(
+            f"object index {top} is beyond the {n_objects} rows of the keyphrase "
+            "matrix; was the builder fitted on the same corpus?"
+        )
+
+    return n_objects
+
+
+def _cluster_labels(n_objects, cluster_object_indices):
+    # Objects in no node of the layer, such as noise, keep label -1
+    labels = np.full(n_objects, -1, dtype=np.int64)
+    for node, indices in cluster_object_indices.items():
+        labels[indices] = node.cluster
+    return labels
+
+
+def _keyphrases_by_node(layer_nodes, keyphrases):
+    return {node: list(map(str, keyphrases[node.cluster])) for node in layer_nodes}
+
+
 class InformationWeightedKeyphraseAnnotator:
     """Select each node's keyphrases by information weighting over its layer.
 
@@ -763,24 +813,11 @@ class InformationWeightedKeyphraseAnnotator:
         min_alpha: float = 0.5,
         alpha_tolerance: float = 0.1,
     ):
-        fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
-        missing = [name for name in fitted if not hasattr(builder, name)]
-        if missing:
-            raise NotFittedError(
-                f"the keyphrase builder is missing {missing}; fit it first"
-            )
-        vectors = builder.keyphrase_vectors_
-        if vectors is None:
-            if embedding_model is None:
-                raise ValueError(
-                    "the builder has no keyphrase vectors; give the builder an embedder or pass an embedding_model"
-                )
-            vectors = embedding_model.encode(
-                builder.keyphrase_list_, show_progress_bar=False
-            )
-        self.object_x_keyphrase_matrix = builder.object_x_keyphrase_matrix_
-        self.keyphrase_list = builder.keyphrase_list_
-        self.keyphrase_vectors = np.array(vectors)
+        (
+            self.object_x_keyphrase_matrix,
+            self.keyphrase_list,
+            self.keyphrase_vectors,
+        ) = _fitted_keyphrase_data(builder, embedding_model)
         self.embedding_model = embedding_model
         self.n_keyphrases = n_keyphrases
         self.prior_strength = prior_strength
@@ -810,16 +847,9 @@ class InformationWeightedKeyphraseAnnotator:
             If an object position is beyond the rows of the keyphrase matrix, or if
             fewer than two nodes of the layer have objects.
         """
-        n_objects = self.object_x_keyphrase_matrix.shape[0]
-        top = max(
-            (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
-            default=-1,
+        n_objects = _checked_object_count(
+            self.object_x_keyphrase_matrix, cluster_object_indices
         )
-        if top >= n_objects:
-            raise ValueError(
-                f"object index {top} is beyond the {n_objects} rows of the keyphrase "
-                "matrix; was the builder fitted on the same corpus?"
-            )
         n_present = sum(1 for ix in cluster_object_indices.values() if len(ix))
         if n_present < 2:
             raise ValueError(
@@ -827,10 +857,7 @@ class InformationWeightedKeyphraseAnnotator:
                 f"layer, got {n_present}"
             )
 
-        # Objects in no node of the layer, such as noise, keep label -1
-        labels = np.full(n_objects, -1, dtype=np.int64)
-        for node, indices in cluster_object_indices.items():
-            labels[indices] = node.cluster
+        labels = _cluster_labels(n_objects, cluster_object_indices)
         keyphrases = information_weighted_keyphrases(
             labels,
             self.object_x_keyphrase_matrix,
@@ -845,7 +872,7 @@ class InformationWeightedKeyphraseAnnotator:
             alpha_tolerance=self.alpha_tolerance,
             verbose=False,
         )
-        return {"keyphrases": {node: keyphrases[node.cluster] for node in layer_nodes}}
+        return {"keyphrases": _keyphrases_by_node(layer_nodes, keyphrases)}
 
 
 def central_keyphrases(
@@ -1048,24 +1075,11 @@ class CentralKeyphraseAnnotator:
         n_keyphrases: int = 16,
         diversify_alpha: float = 1.0,
     ):
-        fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
-        missing = [name for name in fitted if not hasattr(builder, name)]
-        if missing:
-            raise NotFittedError(
-                f"the keyphrase builder is missing {missing}; fit it first"
-            )
-        vectors = builder.keyphrase_vectors_
-        if vectors is None:
-            if embedding_model is None:
-                raise ValueError(
-                    "the builder has no keyphrase vectors; give the builder an embedder or pass an embedding_model"
-                )
-            vectors = embedding_model.encode(
-                builder.keyphrase_list_, show_progress_bar=False
-            )
-        self.object_x_keyphrase_matrix = builder.object_x_keyphrase_matrix_
-        self.keyphrase_list = builder.keyphrase_list_
-        self.keyphrase_vectors = np.array(vectors)
+        (
+            self.object_x_keyphrase_matrix,
+            self.keyphrase_list,
+            self.keyphrase_vectors,
+        ) = _fitted_keyphrase_data(builder, embedding_model)
         self.embedding_model = embedding_model
         self.n_keyphrases = n_keyphrases
         self.diversify_alpha = diversify_alpha
@@ -1091,23 +1105,14 @@ class CentralKeyphraseAnnotator:
             If an object position is beyond the rows of the keyphrase matrix, or if
             a node of the layer has no objects.
         """
-        n_objects = self.object_x_keyphrase_matrix.shape[0]
-        top = max(
-            (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
-            default=-1,
+        n_objects = _checked_object_count(
+            self.object_x_keyphrase_matrix, cluster_object_indices
         )
-        if top >= n_objects:
-            raise ValueError(
-                f"object index {top} is beyond the {n_objects} rows of the keyphrase "
-                "matrix; was the builder fitted on the same corpus?"
-            )
         empty = [node for node, ix in cluster_object_indices.items() if not len(ix)]
         if empty:
             raise ValueError(f"nodes {empty} have no objects to take keyphrases from")
 
-        labels = np.full(n_objects, -1, dtype=np.int64)
-        for node, indices in cluster_object_indices.items():
-            labels[indices] = node.cluster
+        labels = _cluster_labels(n_objects, cluster_object_indices)
         keyphrases = central_keyphrases(
             labels,
             self.object_x_keyphrase_matrix,
@@ -1118,7 +1123,7 @@ class CentralKeyphraseAnnotator:
             diversify_alpha=self.diversify_alpha,
             verbose=False,
         )
-        return {"keyphrases": {node: keyphrases[node.cluster] for node in layer_nodes}}
+        return {"keyphrases": _keyphrases_by_node(layer_nodes, keyphrases)}
 
 
 def bm25_keyphrases(
@@ -1354,24 +1359,11 @@ class BM25KeyphraseAnnotator:
         b: float = 0.75,
         diversify_alpha: float = 1.0,
     ):
-        fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
-        missing = [name for name in fitted if not hasattr(builder, name)]
-        if missing:
-            raise NotFittedError(
-                f"the keyphrase builder is missing {missing}; fit it first"
-            )
-        vectors = builder.keyphrase_vectors_
-        if vectors is None:
-            if embedding_model is None:
-                raise ValueError(
-                    "the builder has no keyphrase vectors; give the builder an embedder or pass an embedding_model"
-                )
-            vectors = embedding_model.encode(
-                builder.keyphrase_list_, show_progress_bar=False
-            )
-        self.object_x_keyphrase_matrix = builder.object_x_keyphrase_matrix_
-        self.keyphrase_list = builder.keyphrase_list_
-        self.keyphrase_vectors = np.array(vectors)
+        (
+            self.object_x_keyphrase_matrix,
+            self.keyphrase_list,
+            self.keyphrase_vectors,
+        ) = _fitted_keyphrase_data(builder, embedding_model)
         self.embedding_model = embedding_model
         self.n_keyphrases = n_keyphrases
         self.k1 = k1
@@ -1398,20 +1390,11 @@ class BM25KeyphraseAnnotator:
         ValueError
             If an object position is beyond the rows of the keyphrase matrix.
         """
-        n_objects = self.object_x_keyphrase_matrix.shape[0]
-        top = max(
-            (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
-            default=-1,
+        n_objects = _checked_object_count(
+            self.object_x_keyphrase_matrix, cluster_object_indices
         )
-        if top >= n_objects:
-            raise ValueError(
-                f"object index {top} is beyond the {n_objects} rows of the keyphrase "
-                "matrix; was the builder fitted on the same corpus?"
-            )
 
-        labels = np.full(n_objects, -1, dtype=np.int64)
-        for node, indices in cluster_object_indices.items():
-            labels[indices] = node.cluster
+        labels = _cluster_labels(n_objects, cluster_object_indices)
         keyphrases = bm25_keyphrases(
             labels,
             self.object_x_keyphrase_matrix,
@@ -1424,7 +1407,7 @@ class BM25KeyphraseAnnotator:
             diversify_alpha=self.diversify_alpha,
             verbose=False,
         )
-        return {"keyphrases": {node: keyphrases[node.cluster] for node in layer_nodes}}
+        return {"keyphrases": _keyphrases_by_node(layer_nodes, keyphrases)}
 
 
 def submodular_selection_information_keyphrases(
@@ -1640,10 +1623,6 @@ class SubmodularKeyphraseAnnotator:
     ``submodular_selection_information_keyphrases`` on each layer in order with one
     shared vector array, as ``Toponymy.fit`` does.
 
-    Each node's keyphrases are returned as the legacy function returns them: an
-    array of strings when the submodular selection ran, and a list when the node had
-    fewer candidate keyphrases than ``n_keyphrases``.
-
     A run must select whole layers, since each node is weighted against the rest of
     its layer; selecting part of a layer raises ``ValueError``.
     """
@@ -1669,24 +1648,11 @@ class SubmodularKeyphraseAnnotator:
                 f"unknown submodular_function {submodular_function!r}; use one of "
                 f"{self.submodular_functions}"
             )
-        fitted = ("object_x_keyphrase_matrix_", "keyphrase_list_", "keyphrase_vectors_")
-        missing = [name for name in fitted if not hasattr(builder, name)]
-        if missing:
-            raise NotFittedError(
-                f"the keyphrase builder is missing {missing}; fit it first"
-            )
-        vectors = builder.keyphrase_vectors_
-        if vectors is None:
-            if embedding_model is None:
-                raise ValueError(
-                    "the builder has no keyphrase vectors; give the builder an embedder or pass an embedding_model"
-                )
-            vectors = embedding_model.encode(
-                builder.keyphrase_list_, show_progress_bar=False
-            )
-        self.object_x_keyphrase_matrix = builder.object_x_keyphrase_matrix_
-        self.keyphrase_list = builder.keyphrase_list_
-        self.keyphrase_vectors = np.array(vectors)
+        (
+            self.object_x_keyphrase_matrix,
+            self.keyphrase_list,
+            self.keyphrase_vectors,
+        ) = _fitted_keyphrase_data(builder, embedding_model)
         self.embedding_model = embedding_model
         self.n_keyphrases = n_keyphrases
         self.prior_strength = prior_strength
@@ -1706,27 +1672,18 @@ class SubmodularKeyphraseAnnotator:
         Returns
         -------
         dict
-            ``{"keyphrases": {node: list or array of str}}``.
+            ``{"keyphrases": {node: list of str}}``.
 
         Raises
         ------
         ValueError
             If an object position is beyond the rows of the keyphrase matrix.
         """
-        n_objects = self.object_x_keyphrase_matrix.shape[0]
-        top = max(
-            (np.max(ix) for ix in cluster_object_indices.values() if len(ix)),
-            default=-1,
+        n_objects = _checked_object_count(
+            self.object_x_keyphrase_matrix, cluster_object_indices
         )
-        if top >= n_objects:
-            raise ValueError(
-                f"object index {top} is beyond the {n_objects} rows of the keyphrase "
-                "matrix; was the builder fitted on the same corpus?"
-            )
 
-        labels = np.full(n_objects, -1, dtype=np.int64)
-        for node, indices in cluster_object_indices.items():
-            labels[indices] = node.cluster
+        labels = _cluster_labels(n_objects, cluster_object_indices)
         keyphrases = submodular_selection_information_keyphrases(
             labels,
             self.object_x_keyphrase_matrix,
@@ -1739,4 +1696,4 @@ class SubmodularKeyphraseAnnotator:
             submodular_function=self.submodular_function,
             verbose=False,
         )
-        return {"keyphrases": {node: keyphrases[node.cluster] for node in layer_nodes}}
+        return {"keyphrases": _keyphrases_by_node(layer_nodes, keyphrases)}
