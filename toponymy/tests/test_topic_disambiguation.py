@@ -62,9 +62,20 @@ def run_on_layer(store, annotator, layer):
     failures = Executor(store).run(annotator, nodes=store.tree.layer(layer))
     assert not failures
     nodes = store.tree.layer(layer)
+    assert_embeddings_follow_names(store, nodes)
     return [store.topic_names[node] for node in nodes], [
-        store.disambiguation[node] for node in nodes
+        store.disambiguation_status[node] for node in nodes
     ]
+
+
+def assert_embeddings_follow_names(store, nodes):
+    """Renamed topics carry their new name's embedding, the rest their draft's."""
+    for node in nodes:
+        if store.disambiguation_status[node] == "renamed":
+            expected = NameEmbedder().encode([store.topic_names[node]])[0]
+        else:
+            expected = store.draft_topic_name_embeddings[node]
+        np.testing.assert_array_equal(store.topic_name_embeddings[node], expected)
 
 
 def test_each_layer_is_one_unit():

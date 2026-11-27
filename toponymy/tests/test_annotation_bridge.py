@@ -275,7 +275,7 @@ def test_fit_gives_clashing_topics_distinct_names(
     assert len(set(names)) == len(names)
     layer_0 = store.tree.layer(0)
     assert {store.draft_topic_names[node] for node in layer_0} == {"Same topic"}
-    assert {store.disambiguation[node] for node in layer_0} == {"renamed"}
+    assert {store.disambiguation_status[node] for node in layer_0} == {"renamed"}
     assert any("Major subtopics" in p["user"] for p in namer.disambiguation_prompts)
     # Layer 1 is named from the final layer 0 names, not the drafts
     naming_prompts = [p for p in namer.prompts if p not in namer.disambiguation_prompts]
@@ -303,7 +303,7 @@ def test_fit_without_disambiguation_names_topics_directly(
 
     assert not namer.disambiguation_prompts
     assert "draft_topic_names" not in model.store_
-    assert "disambiguation" not in model.store_
+    assert "disambiguation_status" not in model.store_
     assert set(model.topic_names_[0]) == {"Same topic"}
     assert len(model.store_.topic_name_embeddings) == len(model.store_.tree)
 

@@ -454,7 +454,7 @@ class TopicDisambiguationAnnotator:
     layers, a second pass runs if a name is still shared by more than two topics.
     Topics that do not clash keep their draft names.
 
-    ``disambiguation`` records what happened to each topic: ``"renamed"``,
+    ``disambiguation_status`` records what happened to each topic: ``"renamed"``,
     ``"unchanged"``, or ``"failed: <reason>"`` when the call for its group failed,
     in which case it keeps its draft name.
 
@@ -472,7 +472,7 @@ class TopicDisambiguationAnnotator:
 
     inputs = ("draft_topic_names", "draft_topic_name_embeddings")
     optional_inputs = ("exemplars", "keyphrases", "subtopics", "child_topics")
-    outputs = ("topic_names", "topic_name_embeddings", "disambiguation")
+    outputs = ("topic_names", "topic_name_embeddings", "disambiguation_status")
     algorithm_input_type = {
         "draft_topic_names": MultiNodeInput(groups="layers"),
         "draft_topic_name_embeddings": "multinode",
@@ -587,7 +587,7 @@ class TopicDisambiguationAnnotator:
 
     @staticmethod
     def _outputs(draft_names, names, vectors, failures):
-        disambiguation = {
+        status = {
             node: (
                 "renamed"
                 if names[node] != draft_names[node]
@@ -598,7 +598,7 @@ class TopicDisambiguationAnnotator:
         return {
             "topic_names": names,
             "topic_name_embeddings": vectors,
-            "disambiguation": disambiguation,
+            "disambiguation_status": status,
         }
 
     def _parse(self, raw_response, old_names):

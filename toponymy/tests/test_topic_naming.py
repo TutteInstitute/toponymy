@@ -448,6 +448,9 @@ class TestTopicNameAnnotator:
 
         assert result["topic_names"] == "test topic"
         assert topic_namer_template.parse_calls == [raw_response]
+        np.testing.assert_array_equal(
+            result["topic_name_embeddings"], NameEmbedder().encode(["test topic"])[0]
+        )
 
         dummy_namer._call_llm_for_prompt.assert_called_once_with(
             "test prompt",
@@ -475,6 +478,9 @@ class TestTopicNameAnnotator:
 
         assert result["topic_names"] == "test topic"
         assert topic_namer_template.parse_calls == [raw_response]
+        np.testing.assert_array_equal(
+            result["topic_name_embeddings"], NameEmbedder().encode(["test topic"])[0]
+        )
 
         dummy_namer._acall_llm_for_prompt.assert_awaited_once_with(
             "test prompt",
@@ -565,6 +571,59 @@ class TestTopicNameAnnotator:
         result = topic_name_annotator.annotate(node)
 
         assert result["topic_names"] == "skipped topic"
+        np.testing.assert_array_equal(
+            result["topic_name_embeddings"],
+            NameEmbedder().encode(["skipped topic"])[0],
+        )
+
+    @pytest.mark.parametrize(
+        "output_names",
+        [
+            None,
+            {
+                "topic_names": "draft_topic_names",
+                "topic_name_embeddings": "draft_topic_name_embeddings",
+            },
+        ],
+        ids=["final", "draft"],
+    )
+    def test_topic_name_annotator_writes_each_nodes_embedding_with_its_name(
+        self, topic_store, dummy_namer, output_names
+    ):
+        class EchoTemplate(FakeTopicNamerTemplate):
+            def render(self, node, **kwargs):
+                return f"prompt for {node}"
+
+            def parse(self, raw_response):
+                return TopicParseResult(
+                    topic_payload=raw_response.replace("prompt", "name"),
+                    raw_response=raw_response,
+                )
+
+        def echo(prompt, **kwargs):
+            return prompt
+
+        dummy_namer._call_llm_for_prompt = Mock(side_effect=echo)
+        dummy_namer._acall_llm_for_prompt = AsyncMock(side_effect=echo)
+        annotator = TopicNameAnnotator(dummy_namer, EchoTemplate(), NameEmbedder())
+        layer_0 = topic_store.tree.layer(0)
+
+        failures = Executor(topic_store).run(
+            annotator, nodes=layer_0, output_names=output_names
+        )
+
+        assert not failures
+        wiring = output_names or {}
+        names = topic_store[wiring.get("topic_names", "topic_names")]
+        vectors = topic_store[
+            wiring.get("topic_name_embeddings", "topic_name_embeddings")
+        ]
+        assert len({names[node] for node in layer_0}) == len(layer_0)
+        for node in layer_0:
+            assert names[node] == f"name for {node}"
+            np.testing.assert_array_equal(
+                vectors[node], NameEmbedder().encode([names[node]])[0]
+            )
 
     def test_topic_name_annotator_raises_on_empty_topic_name(
         self, topic_store, topic_name_annotator, dummy_namer
