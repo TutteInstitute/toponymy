@@ -4,7 +4,7 @@ Configuration, expected patterns, and helper functions for test_golden_prompts.p
 
 import re
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 from toponymy.llm_wrappers import llm_output_to_result
@@ -38,6 +38,25 @@ vocabulary its part is matched against, so every example must provide each
 vocabulary used by the templates it is tested with. Patterns are matched
 case-insensitively against the original text, so word boundaries are the real
 ones and accented patterns work.
+"""
+
+SOFT_FRENCH_VOCABULARY = False
+"""
+If True, French parts warn instead of fail when they miss their vocabulary,
+regardless of KNOWN_VOCABULARY_MISSES. Use this if keeping French entries in
+the known-miss list becomes more trouble than it's worth.
+"""
+
+KNOWN_BAD_ANSWERS: set[tuple[str, str, str, str]] = {
+    ("hockey_masks", "multilingual_en_fr", "nom", "mask et cœurs de goal"),
+    ("hockey_masks", "multilingual_en_fr", "nom", "mouvement de la tête et des yeux"),
+}
+"""
+Known-bad answers, as (example_id, template_id, part_label, answer).
+
+A listed answer that misses its vocabulary warns instead of failing; all
+other checks still apply. Answers match after simplify_answer, so case,
+punctuation and spacing differences are ignored.
 """
 
 SUMMARY_KIND_WORD_RANGE_REGEX = re.compile(r"\((\d+)\s+(?:to|or)\s+(\d+)\s+word\)")
@@ -122,6 +141,9 @@ class PartShape:
         instead of failing the test, so the miss is reported without being
         enforced.
 
+    soft_vocabulary : bool, default=False
+        If True, a vocabulary miss emits a warning instead of failing the test.
+
     min_sentences : int, default=1
         Minimum number of sentences.
 
@@ -140,6 +162,7 @@ class PartShape:
     words_from_summary_kind: bool = False
     word_slack: int = 0
     soft_word_range: bool = False
+    soft_vocabulary: bool = False
     min_sentences: int = 1
     max_sentences: int | None = None
     max_paragraphs: int | None = None
@@ -181,7 +204,12 @@ class PartShape:
 
 NAME_EN = PartShape("name", "en", words_from_summary_kind=True, soft_word_range=True)
 NAME_FR = PartShape(
-    "nom", "fr", words_from_summary_kind=True, word_slack=3, soft_word_range=True
+    "nom",
+    "fr",
+    words_from_summary_kind=True,
+    word_slack=3,
+    soft_word_range=True,
+    soft_vocabulary=SOFT_FRENCH_VOCABULARY,
 )
 SUMMARY = PartShape(
     "summary", "en", min_words=15, max_words=150, max_sentences=6, max_paragraphs=1
@@ -233,6 +261,11 @@ TEMPLATE_CASES: dict[str, TemplateCase] = {
 # ---------------------------------------------------------------------------
 # Checks
 # ---------------------------------------------------------------------------
+
+
+def simplify_answer(text):
+    """Lowercase words, ignoring punctuation and spacing. Used for matching KNOWN_BAD_ANSWERS"""
+    return " ".join(re.findall(r"\w+", text.casefold()))
 
 
 def normalize(text):
@@ -426,13 +459,26 @@ def split_topic_result(result, n_parts, template):
     return tuple(sorted(parts, key=topic_result.index))
 
 
-def check_part(part, shape, patterns, word_range, result, range_source=None):
+def check_part(
+    part,
+    shape,
+    patterns,
+    word_range,
+    result,
+    range_source=None,
+    *,
+    example_id=None,
+    template_id=None,
+):
     """
     Check one part of a topic result against its shape.
 
     A missing or empty part always fails. The word-count check fails, or warns
     if ``shape.soft_word_range`` is True. The sentence and paragraph checks
-    always fail. The vocabulary pattern check always warns.
+    always fail. The vocabulary check fails, or warns if
+    ``shape.soft_vocabulary`` is True or the answer is listed in
+    ``KNOWN_BAD_ANSWERS`` for this example, template and part. A listed answer
+    only softens the vocabulary check; every other check still applies.
 
     Parameters
     ----------
@@ -454,6 +500,16 @@ def check_part(part, shape, patterns, word_range, result, range_source=None):
     range_source : str or None, default=None
         Where the word range came from (e.g. "summary_kind '...'"), appended to
         word-count messages when given.
+
+    example_id : str or None, default=None
+        The example the part was generated from. Together with ``template_id``
+        and ``shape.label``, it identifies the part in ``KNOWN_BAD_ANSWERS``.
+        If None, no answer is treated as known-bad.
+
+    template_id : str or None, default=None
+        The template the part was generated with.  Together with ``example_id``
+        and ``shape.label``, it identifies the part in ``KNOWN_BAD_ANSWERS``.
+        If None, no answer is treated as known-bad.
 
     Raises
     ------
@@ -498,12 +554,24 @@ def check_part(part, shape, patterns, word_range, result, range_source=None):
             *context,
         )
 
+    known_bad = (example_id, template_id, label, simplify_answer(part)) in {
+        (example_id, template_id, label, simplify_answer(answer))
+        for example_id, template_id, label, answer in KNOWN_BAD_ANSWERS
+    }
+
     n_hits = count_pattern_hits(part, patterns)
+    hint = (
+        f". To accept this answer, add "
+        f"{(example_id, template_id, label, part)!r} to KNOWN_BAD_ANSWERS"
+        if not known_bad
+        else ""
+    )
+
     check(
         n_hits >= shape.min_pattern_hits,
         f"{label} {part!r}: matched {n_hits} of {patterns}, "
-        f"expected {shape.min_pattern_hits}",
-        soft=True,
+        f"expected {shape.min_pattern_hits}{hint}",
+        soft=shape.soft_vocabulary or known_bad,
     )
 
 
@@ -518,7 +586,8 @@ def assert_valid_topic_name_result(result, example_id, template_id):
     - the analysis should be longer than the summary (soft),
     - the analysis must not repeat the summary,
     - the summary must be longer than the name,
-    - the French name should not copy the English name (soft).
+    - the French name should not copy the English name (soft); when it does,
+      the French name's vocabulary check also only warns.
 
     Parameters
     ----------
@@ -554,15 +623,29 @@ def assert_valid_topic_name_result(result, example_id, template_id):
     )
     parts = split_topic_result(result, len(shapes), prompt_template)
     assert len(parts) == len(shapes), (
-        f"Expected {[s.label for s in shapes]} for {template_id!r}, got {parts!r}",
+        f"Expected {[s.label for s in shapes]} for {template_id}, got {parts!r}",
         result,
     )
 
+    by_label = dict(zip((s.label for s in shapes), parts))
+
+    french_copies_english = (
+        "name" in by_label
+        and "nom" in by_label
+        and normalize(by_label["nom"]) == normalize(by_label["name"])
+    )
+    check(
+        not french_copies_english,
+        f"the French name should not copy the English name: {by_label.get('nom')!r}",
+        soft=True,
+    )
     for part, shape in zip(parts, shapes):
         assert shape.vocabulary in vocabulary, (
-            f"Example {example_id!r} has no {shape.vocabulary!r} vocabulary, "
-            f"needed by template {template_id!r}"
+            f"Example {example_id} has no {shape.vocabulary!r} vocabulary, "
+            f"needed by template {template_id}"
         )
+        if shape.label == "nom" and french_copies_english:
+            shape = replace(shape, soft_vocabulary=True)
         check_part(
             part,
             shape,
@@ -574,6 +657,8 @@ def assert_valid_topic_name_result(result, example_id, template_id):
                 if shape.words_from_summary_kind
                 else None
             ),
+            example_id=example_id,
+            template_id=template_id,
         )
 
     by_label = dict(zip((s.label for s in shapes), parts))
@@ -592,10 +677,4 @@ def assert_valid_topic_name_result(result, example_id, template_id):
         assert word_count(by_label["summary"]) > word_count(by_label["name"]), (
             "summary should be longer than the name",
             result,
-        )
-    if "name" in by_label and "nom" in by_label:
-        check(
-            normalize(by_label["nom"]) != normalize(by_label["name"]),
-            f"the French name should not copy the English name: {by_label['nom']!r}",
-            soft=True,
         )
