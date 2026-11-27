@@ -356,6 +356,23 @@ def test_bm25_keyphrases(
             )
 
 
+def test_bm25_keyphrases_do_not_depend_on_object_order(
+    cluster_layer, matrix, keyphrases, keyphrase_vectors, embedder
+):
+    order = np.random.default_rng(0).permutation(len(cluster_layer))
+    original = bm25_keyphrases(
+        cluster_layer, matrix, keyphrases, keyphrase_vectors.copy(), embedder
+    )
+    shuffled = bm25_keyphrases(
+        cluster_layer[order],
+        matrix[order],
+        keyphrases,
+        keyphrase_vectors.copy(),
+        embedder,
+    )
+    assert shuffled == original
+
+
 @pytest.mark.parametrize("n_keyphrases", [3, 5])
 @pytest.mark.parametrize("diversify_alpha", [0.0, 0.5, 1.0])
 def test_information_weighted_keyphrases_result_sizes(
