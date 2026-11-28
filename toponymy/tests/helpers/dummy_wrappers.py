@@ -79,6 +79,42 @@ class CountingNamer(DummySingleWrapper):
         return self._respond(prompt)
 
 
+class SummaryCountingNamer(CountingNamer):
+    """A CountingNamer that answers naming prompts in the summary template's format.
+
+    Topic <n> gets "Summary of Topic <n>" and "Analysis of Topic <n>", and, like
+    a real model, the reply is cut off at about four characters per token of
+    ``max_tokens``.
+    """
+
+    analysis_padding = " Long analysis." * 60
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.max_tokens_seen = []
+
+    def _respond_within(self, prompt, max_tokens):
+        self.max_tokens_seen.append(max_tokens)
+        reply = self._respond(prompt)
+        if '"topic_name"' in reply:
+            name = json.loads(reply)["topic_name"]
+            reply = json.dumps(
+                {
+                    "topic_analysis": f"Analysis of {name}." + self.analysis_padding,
+                    "topic_summary": f"Summary of {name}.",
+                    "topic_name": name,
+                    "topic_specificity": 0.9,
+                }
+            )
+        return reply[: 4 * max_tokens]
+
+    def _call_llm(self, prompt, temperature, max_tokens):
+        return self._respond_within(prompt, max_tokens)
+
+    def _call_llm_with_system_prompt(self, prompt, temperature, max_tokens):
+        return self._respond_within(prompt, max_tokens)
+
+
 class DummyAsyncProviderError(Exception):
     pass
 

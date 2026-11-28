@@ -56,13 +56,28 @@ def copy_subtopics_to_layers(store, layers) -> None:
 
 
 def copy_topics_to_layers(store, layers) -> None:
-    """Copies the store's topics onto the layers whose topics were annotated."""
-    for layer_id, layer in enumerate(layers):
-        layer.topic_names = [
-            (
-                store.topic_names[node]
-                if store.topic_names.states[node] == AnnotationState.COMPUTED
-                else ""
-            )
-            for node in store.tree.layer(layer_id)
+    """Copies the store's topics, and any summaries, onto the layers whose topics were annotated."""
+    copied = [
+        (store_name, layer_name)
+        for store_name, layer_name in [
+            ("topic_names", "topic_names"),
+            ("topic_summaries", "topic_summaries"),
+            ("topic_explanations", "topic_explanations"),
         ]
+        if store_name in store
+    ]
+    for layer_id, layer in enumerate(layers):
+        for store_name, layer_name in copied:
+            annotation = store[store_name]
+            setattr(
+                layer,
+                layer_name,
+                [
+                    (
+                        annotation[node]
+                        if annotation.states[node] == AnnotationState.COMPUTED
+                        else ""
+                    )
+                    for node in store.tree.layer(layer_id)
+                ],
+            )

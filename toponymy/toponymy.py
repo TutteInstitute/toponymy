@@ -439,12 +439,10 @@ class Toponymy:
         self.topic_name_vectors_: List[np.ndarray] = [np.array([])] * len(
             self.cluster_layers_
         )
-        if isinstance(self.cluster_layers_[0], ClusterLayerSummaryText):
+        summarize = isinstance(self.cluster_layers_[0], ClusterLayerSummaryText)
+        if summarize:
             self.topic_summaries_: List[List[str]] = [[]] * len(self.cluster_layers_)
             self.topic_explanations_: List[List[str]] = [[]] * len(self.cluster_layers_)
-            _summarize_topics = True
-        else:
-            _summarize_topics = False
 
         detail_levels = np.linspace(
             self.lowest_detail_level,
@@ -537,6 +535,7 @@ class Toponymy:
             llm_namer=self.llm_wrapper,
             topic_name_template=template,
             embedding_model=self.embedding_model,
+            summaries=summarize,
         )
         if self.disambiguate:
             disambiguator = TopicDisambiguationAnnotator(
@@ -565,6 +564,9 @@ class Toponymy:
         for i, layer in enumerate(self.cluster_layers_):
             self.topic_names_[i] = layer.topic_names
             self.topic_name_vectors_[i] = layer.make_topic_name_vector()
+            if summarize:
+                self.topic_summaries_[i] = layer.topic_summaries
+                self.topic_explanations_[i] = layer.topic_explanations
 
             # Compute and cache topic sizes for efficient access and serialization
             self.topic_sizes_ = self._compute_topic_sizes()

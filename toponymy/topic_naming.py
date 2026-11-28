@@ -252,10 +252,26 @@ class TopicNameAnnotator:
     max_tokens: int | None = None
     temperature: int | None = None
 
-    def __init__(self, llm_namer, topic_name_template, embedding_model):
+    def __init__(
+        self, llm_namer, topic_name_template, embedding_model, summaries=False
+    ):
         self.llm_namer = llm_namer
         self.topic_name_template = topic_name_template
         self.embedding_model = embedding_model
+        # With summaries, the template's replies are (name, summary, explanation)
+        # and the prompts show each child's name, summary and explanation
+        self.summaries = summaries
+        if summaries:
+            self.optional_inputs = self.optional_inputs + [
+                "output_summaries",
+                "output_explanations",
+            ]
+            self.outputs = self.outputs + ["topic_summaries", "topic_explanations"]
+            self.algorithm_input_type = {
+                **self.algorithm_input_type,
+                "output_summaries": DescendantsInput(source="topic_summaries"),
+                "output_explanations": DescendantsInput(source="topic_explanations"),
+            }
         if isinstance(self.llm_namer, LLMWrapper):
             self.execution_mode = "sync"
         elif isinstance(self.llm_namer, AsyncLLMWrapper):
@@ -263,9 +279,30 @@ class TopicNameAnnotator:
         else:
             raise TypeError("llm_namer must be an LLMWrapper or AsyncLLMWrapper")
         if self.max_tokens is None:
-            self.max_tokens = 128
+            # A summary reply holds a long analysis before the name
+            self.max_tokens = 2048 if summaries else 128
         if self.temperature is None:
             self.temperature = 0.4
+
+    def _with_summaries(self, output_topics, output_summaries, output_explanations):
+        """Each child's name, summary and explanation, as the summary prompts show them."""
+        if not self.summaries or not output_topics:
+            return output_topics
+        summaries = output_summaries or {}
+        explanations = output_explanations or {}
+        return {
+            child: "\n--\n".join(
+                [name, summaries.get(child, ""), explanations.get(child, "")]
+            )
+            for child, name in output_topics.items()
+        }
+
+    def _payload(self, text):
+        """Split "name\\n--\\nsummary\\n--\\nexplanation" text when naming with summaries."""
+        if not self.summaries:
+            return text
+        parts = text.split("\n--\n", 2)
+        return tuple(parts + [""] * (3 - len(parts)))
 
     def _build_prompt(
         self,
@@ -333,11 +370,20 @@ class TopicNameAnnotator:
                 return list(output_topics.values())[0]
         return None
 
-    def _outputs(self, node, topic_name):
+    def _outputs(self, node, payload):
+        # Summary templates parse to (name, summary, explanation)
+        if isinstance(payload, tuple):
+            topic_name, summary, explanation = payload
+        else:
+            topic_name, summary, explanation = payload, "", ""
         if topic_name == "":
             raise ValueError("Failed to generate a valid topic name")
         embedding = embed_topic_names(self.embedding_model, {node: topic_name})[node]
-        return {"topic_names": topic_name, "topic_name_embeddings": embedding}
+        outputs = {"topic_names": topic_name, "topic_name_embeddings": embedding}
+        if self.summaries:
+            outputs["topic_summaries"] = summary
+            outputs["topic_explanations"] = explanation
+        return outputs
 
     @topic_name_retry()
     def _generate_and_parse(self, prompt):
@@ -381,6 +427,8 @@ class TopicNameAnnotator:
         output_topics=None,
         subtopics=None,
         keyphrases=None,
+        output_summaries=None,
+        output_explanations=None,
     ):
         if exemplars is None:
             exemplars = []
@@ -388,8 +436,11 @@ class TopicNameAnnotator:
             keyphrases = []
 
         implied = self._implied_topic(output_topics)
+        output_topics = self._with_summaries(
+            output_topics, output_summaries, output_explanations
+        )
         if implied is not None:
-            return self._outputs(node, implied)
+            return self._outputs(node, self._payload(*output_topics.values()))
 
         prompt = self._build_prompt(
             node,
@@ -406,7 +457,7 @@ class TopicNameAnnotator:
             else:
                 raise result.error
         else:
-            topic_name = prompt.removeprefix("[!SKIP!]: ")
+            topic_name = self._payload(prompt.removeprefix("[!SKIP!]: "))
 
         return self._outputs(node, topic_name)
 
@@ -418,6 +469,8 @@ class TopicNameAnnotator:
         output_topics=None,
         subtopics=None,
         keyphrases=None,
+        output_summaries=None,
+        output_explanations=None,
     ):
         if exemplars is None:
             exemplars = []
@@ -425,8 +478,11 @@ class TopicNameAnnotator:
             keyphrases = []
 
         implied = self._implied_topic(output_topics)
+        output_topics = self._with_summaries(
+            output_topics, output_summaries, output_explanations
+        )
         if implied is not None:
-            return self._outputs(node, implied)
+            return self._outputs(node, self._payload(*output_topics.values()))
 
         prompt = self._build_prompt(
             node,
@@ -443,7 +499,7 @@ class TopicNameAnnotator:
             else:
                 raise result.error
         else:
-            topic_name = prompt.removeprefix("[!SKIP!]: ")
+            topic_name = self._payload(prompt.removeprefix("[!SKIP!]: "))
 
         return self._outputs(node, topic_name)
 
