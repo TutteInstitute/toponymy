@@ -5,11 +5,11 @@ import pytest
 
 from toponymy._annotation_bridge import copy_layers_to_store
 from toponymy.annotation import Annotation, AnnotationStore, AnnotationTree
-from toponymy.cluster_layer import ClusterLayerText
+from toponymy.cluster_layer import ClusterLayerSummaryText, ClusterLayerText
 from toponymy.clustering import build_cluster_tree, centroids_from_labels
 from toponymy.exemplar_texts import DiverseExemplarAnnotator, diverse_exemplars
 from toponymy.keyphrases import KeyphraseBuilder
-from toponymy.tests.helpers.dummy_wrappers import CountingNamer
+from toponymy.tests.helpers.dummy_wrappers import CountingNamer, SummaryCountingNamer
 from toponymy.toponymy import Toponymy, _with_null_topic
 
 
@@ -56,11 +56,11 @@ def make_prefit_clusterer(fitted_clusterer, object_vectors):
     """Make a prefit clusterer whose layer i joins 2**i layer 0 clusters of the shared one."""
     fine = fitted_clusterer.cluster_layers_[0].cluster_labels
 
-    def make(n_layers):
+    def make(n_layers, layer_class=ClusterLayerText):
         labels = [np.where(fine >= 0, fine // 2**i, -1) for i in range(n_layers)]
         return SimpleNamespace(
             cluster_layers_=[
-                ClusterLayerText(
+                layer_class(
                     layer_labels, centroids_from_labels(layer_labels, object_vectors), i
                 )
                 for i, layer_labels in enumerate(labels)
@@ -306,6 +306,70 @@ def test_fit_without_disambiguation_names_topics_directly(
     assert "disambiguation_status" not in model.store_
     assert set(model.topic_names_[0]) == {"Same topic"}
     assert len(model.store_.topic_name_embeddings) == len(model.store_.tree)
+
+
+@pytest.mark.parametrize("disambiguate", [True, False])
+def test_fit_with_the_summary_layer_names_and_summarizes_every_topic(
+    make_counting_model,
+    make_prefit_clusterer,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+    disambiguate,
+):
+    namer = SummaryCountingNamer()
+    clusterer = make_prefit_clusterer(3, ClusterLayerSummaryText)
+    model = make_counting_model(
+        namer,
+        clusterer,
+        layer_class=ClusterLayerSummaryText,
+        disambiguate=disambiguate,
+    ).fit(all_sentences, object_vectors, clusterable_vectors)
+
+    for layer_id, layer in enumerate(model.cluster_layers_):
+        names = model.topic_names_[layer_id]
+        summaries = model.topic_summaries_[layer_id]
+        explanations = model.topic_explanations_[layer_id]
+        assert (
+            len(names) == len(summaries) == len(explanations) == len(layer.topic_names)
+        )
+        assert all(isinstance(name, str) and name for name in names)
+        # A topic named from its only child inherits the child's summary too
+        assert all(summary.startswith("Summary of Topic") for summary in summaries)
+        assert all(text.startswith("Analysis of Topic") for text in explanations)
+    assert set(namer.max_tokens_seen) - {1024} == {2048}
+
+
+def test_fit_with_the_summary_layer_shows_children_summaries_to_parents(
+    make_counting_model,
+    make_prefit_clusterer,
+    all_sentences,
+    object_vectors,
+    clusterable_vectors,
+):
+    namer = SummaryCountingNamer()
+    model = make_counting_model(
+        namer,
+        make_prefit_clusterer(3, ClusterLayerSummaryText),
+        layer_class=ClusterLayerSummaryText,
+        disambiguate=False,
+    ).fit(all_sentences, object_vectors, clusterable_vectors)
+
+    store, tree = model.store_, model.store_.tree
+    child = next(
+        child
+        for node in tree.layer(1)
+        if len(tree.children(node) or ()) > 1
+        for child in tree.children(node)
+    )
+    child_block = "\n--\n".join(
+        [
+            store.topic_names[child],
+            store.topic_summaries[child],
+            store.topic_explanations[child],
+        ]
+    )
+    assert any(child_block in prompt["user"] for prompt in namer.prompts)
 
 
 def test_fit_leaves_unnamed_layer_0_topics_out_of_the_subtopics(

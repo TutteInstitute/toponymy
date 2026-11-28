@@ -618,6 +618,106 @@ class TestTopicNameAnnotator:
             NameEmbedder().encode(["skipped topic"])[0],
         )
 
+    @staticmethod
+    async def annotate_in_mode(annotator, node, **kwargs):
+        if annotator.execution_mode == "async":
+            return await annotator.aannotate(node, **kwargs)
+        return annotator.annotate(node, **kwargs)
+
+    @pytest.mark.asyncio
+    async def test_summary_annotator_writes_the_parsed_summary_and_explanation(
+        self, topic_store, dummy_namer, topic_namer_template
+    ):
+        configure_sync_namer(dummy_namer)
+        configure_async_namer(dummy_namer)
+        topic_namer_template.parsed_name = ("science", "A summary.", "An analysis.")
+        annotator = TopicNameAnnotator(
+            dummy_namer, topic_namer_template, NameEmbedder(), summaries=True
+        )
+
+        result = await self.annotate_in_mode(annotator, topic_store.tree.nodes[0])
+
+        assert result["topic_names"] == "science"
+        assert result["topic_summaries"] == "A summary."
+        assert result["topic_explanations"] == "An analysis."
+        assert "topic_summaries" in annotator.outputs
+        assert "topic_summaries" not in TopicNameAnnotator.outputs
+        call = (
+            dummy_namer._acall_llm_for_prompt
+            if annotator.execution_mode == "async"
+            else dummy_namer._call_llm_for_prompt
+        )
+        assert call.call_args.kwargs["max_tokens"] == 2048
+
+    @pytest.mark.asyncio
+    async def test_annotator_without_summaries_names_from_a_summary_reply(
+        self, topic_store, topic_name_annotator, dummy_namer, topic_namer_template
+    ):
+        configure_sync_namer(dummy_namer)
+        configure_async_namer(dummy_namer)
+        topic_namer_template.parsed_name = ("science", "A summary.", "An analysis.")
+
+        result = await self.annotate_in_mode(
+            topic_name_annotator, topic_store.tree.nodes[0]
+        )
+
+        assert result["topic_names"] == "science"
+        assert "topic_summaries" not in result
+
+    @pytest.mark.asyncio
+    async def test_summary_annotator_shows_each_childs_summary_and_explanation(
+        self, topic_store, dummy_namer, topic_namer_template
+    ):
+        configure_sync_namer(dummy_namer)
+        configure_async_namer(dummy_namer)
+        topic_namer_template.parsed_name = ("science", "A summary.", "An analysis.")
+        annotator = TopicNameAnnotator(
+            dummy_namer, topic_namer_template, NameEmbedder(), summaries=True
+        )
+        tree = topic_store.tree
+        node = next(n for n in tree.nodes if n.layer >= 1)
+        children = [c for c in tree.nodes if c.layer == node.layer - 1][:2]
+
+        await self.annotate_in_mode(
+            annotator,
+            node,
+            output_topics={child: f"name {i}" for i, child in enumerate(children)},
+            output_summaries={children[0]: "summary 0"},
+            output_explanations={children[0]: "analysis 0"},
+        )
+
+        assert topic_namer_template.render_kwargs["major_subtopics"] == [
+            "name 0\n--\nsummary 0\n--\nanalysis 0",
+            "name 1\n--\n\n--\n",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_summary_annotator_inherits_a_single_childs_summary(
+        self, topic_store, dummy_namer, topic_namer_template
+    ):
+        configure_sync_namer(dummy_namer)
+        configure_async_namer(dummy_namer)
+        annotator = TopicNameAnnotator(
+            dummy_namer, topic_namer_template, NameEmbedder(), summaries=True
+        )
+        tree = topic_store.tree
+        node = next(n for n in tree.nodes if n.layer >= 1)
+        child = next(c for c in tree.nodes if c.layer == node.layer - 1)
+
+        result = await self.annotate_in_mode(
+            annotator,
+            node,
+            output_topics={child: "only child"},
+            output_summaries={child: "its summary"},
+            output_explanations={child: "its analysis"},
+        )
+
+        assert result["topic_names"] == "only child"
+        assert result["topic_summaries"] == "its summary"
+        assert result["topic_explanations"] == "its analysis"
+        dummy_namer._call_llm_for_prompt.assert_not_called()
+        dummy_namer._acall_llm_for_prompt.assert_not_called()
+
     @pytest.mark.parametrize(
         "output_names",
         [
