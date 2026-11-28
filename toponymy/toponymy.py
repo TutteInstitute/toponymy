@@ -8,16 +8,12 @@ from sklearn.utils.validation import check_is_fitted
 from tqdm.auto import tqdm
 
 
-from toponymy.annotation import Annotator, AnnotationStore, Executor, AnnotationState
+from toponymy.annotation import Annotator, AnnotationStore, Executor
 from toponymy.clustering import ToponymyClusterer, Clusterer
 from toponymy.embedding_wrappers import TextEmbedderProtocol
 from toponymy.exemplar_texts import exemplar_annotator
 from toponymy.keyphrases import InformationWeightedKeyphraseAnnotator, KeyphraseBuilder
-from toponymy.subtopics import (
-    CentralSubtopicAnnotator,
-    SubmodularSubtopicAnnotator,
-    TopicNameEmbeddingAnnotator,
-)
+from toponymy.subtopics import CentralSubtopicAnnotator, SubmodularSubtopicAnnotator
 from toponymy.cluster_layer import (
     ClusterLayer,
     ClusterLayerSummaryText,
@@ -25,7 +21,11 @@ from toponymy.cluster_layer import (
 )
 from toponymy.llm_wrappers import LLMWrapper
 from toponymy.templates import PROMPT_TEMPLATES, SUMMARY_PROMPT_TEMPLATES
-from toponymy.topic_naming import TopicNameAnnotator, TopicNamerTemplate
+from toponymy.topic_naming import (
+    TopicDisambiguationAnnotator,
+    TopicNameAnnotator,
+    TopicNamerTemplate,
+)
 from toponymy.topic_tree import TopicTree
 from toponymy._annotation_bridge import (
     copy_exemplars_to_layers,
@@ -64,10 +64,10 @@ def _with_null_topic(annotator, null_topic):
 _SUBTOPIC_METHODS = ("central", "facility_location", "saturated_coverage")
 
 
-def _run_annotators(executor, runs, **wiring):
+def _run_annotators(executor, runs):
     """Runs each (annotator, nodes) pair, raising on the first that has failed nodes."""
     for annotator, nodes in runs:
-        failures = executor.run(annotator, nodes=nodes, **wiring)
+        failures = executor.run(annotator, nodes=nodes)
         if failures:
             node, reason = next(iter(failures.items()))
             raise RuntimeError(
@@ -111,6 +111,10 @@ class Toponymy:
         ``exemplars`` and ``exemplar_original_indices``. An annotator with ``kind = "exemplar"`` and an unset
         ``null_topic`` gets the mean of the embedding vectors. If None, the exemplars are made with the exemplar_method given to fit, using the
         settings of the cluster layers.
+    disambiguate: bool, optional
+        Whether to rename topics whose names clash with others in the same layer. If True (the default),
+        the topic namer writes ``draft_topic_names`` and the disambiguator turns them into ``topic_names``;
+        if False, the topic namer writes ``topic_names`` directly.
 
     Attributes:
     -----------
@@ -178,6 +182,7 @@ class Toponymy:
         verbose: Optional[bool] = None,
         show_progress_bars: Optional[bool] = None,
         annotators: Optional[List[Annotator]] = None,
+        disambiguate: bool = True,
     ):
         self.llm_wrapper = llm_wrapper
         self.embedding_model = text_embedding_model
@@ -190,6 +195,7 @@ class Toponymy:
         self.highest_detail_level = highest_detail_level
         self.exemplar_delimiters = exemplar_delimiters
         self.annotators = annotators
+        self.disambiguate = disambiguate
         self.prompt_template = prompt_template
 
         # Handle verbose parameters
@@ -317,26 +323,14 @@ class Toponymy:
         return runs
 
     def _annotate_subtopics(self, executor, subtopic_method):
-        """Stores the subtopics of the nodes above layer 0, chosen from the layer 0 draft topics."""
+        """Stores the subtopics of the nodes above layer 0, chosen from the layer 0 topic names."""
         tree, layers = self.store_.tree, self.cluster_layers_
-        if len(layers) < 2:
+        if len(layers) < 2 or "topic_name_embeddings" not in self.store_:
             return
-        draft_topics = self.store_.draft_topics
-        named = [
-            node
-            for node in tree.layer(0)
-            if draft_topics.states[node] is AnnotationState.COMPUTED
-        ]
-        if not named:
+        embeddings = self.store_.topic_name_embeddings.computed(tree.layer(0))
+        if not embeddings:
             return
-        _run_annotators(
-            executor,
-            [(TopicNameEmbeddingAnnotator(self.embedding_model), named)],
-            input_names={"topic_names": "draft_topics"},
-            output_names={"topic_name_embeddings": "draft_topic_embeddings"},
-        )
-        embeddings = self.store_.draft_topic_embeddings
-        null_topic = np.mean([embeddings[node] for node in named], axis=0)
+        null_topic = np.mean(list(embeddings.values()), axis=0)
         runs = []
         for i, layer in enumerate(layers[1:], 1):
             if subtopic_method == "central":
@@ -352,14 +346,7 @@ class Toponymy:
                     submodular_function=subtopic_method,
                 )
             runs.append((annotator, tree.layer(i)))
-        _run_annotators(
-            executor,
-            runs,
-            input_names={
-                "subtopic_names": "draft_topics",
-                "subtopic_vectors": "draft_topic_embeddings",
-            },
-        )
+        _run_annotators(executor, runs)
         copy_subtopics_to_layers(self.store_, layers)
 
     def fit(
@@ -549,17 +536,29 @@ class Toponymy:
         topic_annotator = TopicNameAnnotator(
             llm_namer=self.llm_wrapper,
             topic_name_template=template,
+            embedding_model=self.embedding_model,
         )
+        if self.disambiguate:
+            disambiguator = TopicDisambiguationAnnotator(
+                self.llm_wrapper, template, self.embedding_model
+            )
+            draft_outputs = {
+                "topic_names": "draft_topic_names",
+                "topic_name_embeddings": "draft_topic_name_embeddings",
+            }
 
-        # Subtopics come from the layer 0 names, so layer 0 is named first
+        # Each layer is named from the final names of the layers below it
         tree = self.store_.tree
-        executor.run(topic_annotator, nodes=tree.layer(0))
-        self._annotate_subtopics(executor, subtopic_method)
-        upper = [
-            node for i in range(1, len(self.cluster_layers_)) for node in tree.layer(i)
-        ]
-        if upper:
-            executor.run(topic_annotator, nodes=upper)
+        for layer_id in tree.layer_ids:
+            nodes = tree.layer(layer_id)
+            if self.disambiguate:
+                executor.run(topic_annotator, nodes=nodes, output_names=draft_outputs)
+                executor.run(disambiguator, nodes=nodes)
+            else:
+                executor.run(topic_annotator, nodes=nodes)
+            # Every layer's subtopics come from the final layer 0 names, and later prompts read them
+            if layer_id == 0:
+                self._annotate_subtopics(executor, subtopic_method)
 
         copy_topics_to_layers(self.store_, self.cluster_layers_)
 

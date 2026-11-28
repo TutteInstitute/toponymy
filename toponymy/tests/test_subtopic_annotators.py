@@ -6,7 +6,6 @@ from toponymy.clusterers import build_cluster_tree
 from toponymy.subtopics import (
     CentralSubtopicAnnotator,
     SubmodularSubtopicAnnotator,
-    TopicNameEmbeddingAnnotator,
     central_subtopics,
     submodular_subtopics,
 )
@@ -106,30 +105,3 @@ def test_a_node_without_named_descendants_gets_no_subtopics(store):
 def test_submodular_annotator_rejects_an_unknown_function():
     with pytest.raises(ValueError, match="not a valid selection"):
         SubmodularSubtopicAnnotator(submodular_function="nonsense")
-
-
-class CountingEmbedder:
-    def __init__(self):
-        self.calls = 0
-
-    def encode(self, texts, show_progress_bar=None):
-        self.calls += 1
-        return np.array([[len(text), ord(text[-1])] for text in texts], dtype=float)
-
-
-def test_embedding_annotator_embeds_each_layer_in_one_call(store):
-    for node in store.tree.layer(1):
-        store.topic_names[node] = f"broad topic {node.cluster}"
-    embedder = CountingEmbedder()
-
-    failures = Executor(store).run(
-        TopicNameEmbeddingAnnotator(embedder), nodes=store.tree.layer(1)
-    )
-
-    assert not failures
-    assert embedder.calls == 1
-    for node in store.tree.layer(1):
-        name = f"broad topic {node.cluster}"
-        np.testing.assert_array_equal(
-            store.topic_name_embeddings[node], [len(name), ord(name[-1])]
-        )

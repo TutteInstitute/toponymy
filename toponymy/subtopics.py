@@ -8,7 +8,7 @@ from sklearn.decomposition import DictionaryLearning
 from vectorizers.transformers import InformationWeightTransformer
 
 from toponymy.utility_functions import diversify_max_alpha as diversify
-from toponymy.annotation import DescendantsInput, LayerInput
+from toponymy.annotation import DescendantsInput
 from toponymy.exemplar_texts import (
     FacilityLocationSelection,
     SaturatedCoverageSelection,
@@ -616,50 +616,6 @@ def information_weighted_summary_subtopics(
         )
 
     return result
-
-
-class TopicNameEmbeddingAnnotator:
-    """Embed the topic name of each node, with one encode call per layer.
-
-    Parameters
-    ----------
-    embedding_model : TextEmbedderProtocol
-        The model that embeds the names.
-
-    Attributes
-    ----------
-    inputs : tuple of str
-        ``topic_names``.
-    outputs : tuple of str
-        ``topic_name_embeddings``.
-
-    Notes
-    -----
-    Each layer is embedded as a unit, so a layer with a node whose name is missing
-    or failed is not embedded at all.
-    """
-
-    inputs = ("topic_names",)
-    outputs = ("topic_name_embeddings",)
-    algorithm_input_type = {"topic_names": LayerInput()}
-    algorithm_output_type = "multinode"
-
-    def __init__(self, embedding_model: TextEmbedderProtocol):
-        self.embedding_model = embedding_model
-
-    def annotate(self, layer_nodes, *, topic_names):
-        """Embed the names of the selected nodes of one layer.
-
-        Returns
-        -------
-        dict
-            ``{"topic_name_embeddings": {node: vector}}``.
-        """
-        nodes = list(layer_nodes)
-        vectors = self.embedding_model.encode(
-            [topic_names[node] for node in nodes], show_progress_bar=False
-        )
-        return {"topic_name_embeddings": dict(zip(nodes, vectors))}
 
 
 def _layer_zero_subtopics(subtopic_names, subtopic_vectors, null_topic):

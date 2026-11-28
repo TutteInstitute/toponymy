@@ -37,11 +37,17 @@ def default_extract_topic_names(json_response, old_names, topic_name_info_raw):
         return result
     else:
         # Fallback to just parsing the string as best we can
-        mapping = re.findall(
+        mappings = re.findall(
             r'"new_topic_name_mapping":\s*\{(.*?)\}',
             topic_name_info_raw,
             re.DOTALL,
-        )[0]
+        )
+        if not mappings:
+            raise ValueError(
+                f"Malformed new_topic_name_mapping when fixing {old_names}: "
+                f"{json_response['new_topic_name_mapping']!r}"
+            )
+        mapping = mappings[0]
         new_names = re.findall(r'".*?":\s*"(.*?)",?', mapping, re.DOTALL)
         if len(new_names) == len(old_names):
             return new_names

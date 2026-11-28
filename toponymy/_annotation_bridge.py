@@ -60,8 +60,8 @@ def copy_topics_to_layers(store, layers) -> None:
     for layer_id, layer in enumerate(layers):
         layer.topic_names = [
             (
-                store.draft_topics[node]
-                if store.draft_topics.states[node] == AnnotationState.COMPUTED
+                store.topic_names[node]
+                if store.topic_names.states[node] == AnnotationState.COMPUTED
                 else ""
             )
             for node in store.tree.layer(layer_id)
